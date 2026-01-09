@@ -1,8 +1,11 @@
 # RemoteComputerManagement
+
 ## UI
+
 ### Network
 <img width="1949" height="1302" alt="image" src="https://github.com/user-attachments/assets/f3ddcd85-0c4b-439f-805f-2798dc75c288" />
-## Proxies
+
+### Proxies
 <img width="1949" height="1302" alt="image" src="https://github.com/user-attachments/assets/298ae995-0e83-406e-8c8d-a520a0c62319" />
 
 
