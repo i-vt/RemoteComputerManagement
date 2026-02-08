@@ -1,0 +1,27 @@
+{
+  "name": "google_drive_sync",
+  "format_http": true,
+  "user_agent": "APIs-Google; (+https://developers.google.com/webmasters/APIs-Google.html)",
+  "http_get": {
+    "uris": ["/drive/v3/files", "/drive/v3/changes", "/drive/v3/about"],
+    "headers": {
+      "Host": "www.googleapis.com",
+      "Authorization": "Bearer ya29.a0AfH6SM...",
+      "Accept": "application/json"
+    },
+    "data_transform": []
+  },
+  "http_post": {
+    "uris": ["/upload/drive/v3/files"],
+    "headers": {
+      "Host": "www.googleapis.com",
+      "Content-Type": "multipart/related; boundary=foo_bar_baz",
+      "X-Goog-Upload-Protocol": "multipart"
+    },
+    "data_transform": [
+      { "prepend": "--foo_bar_baz\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{\"name\": \"backup.dat\"}\r\n\r\n--foo_bar_baz\r\nContent-Type: application/octet-stream\r\n\r\n" },
+      { "base64": null },
+      { "append": "\r\n--foo_bar_baz--" }
+    ]
+  }
+}

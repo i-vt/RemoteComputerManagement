@@ -1,0 +1,25 @@
+{
+  "name": "cloudflare_doh",
+  "format_http": true,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0",
+  "http_get": {
+    "uris": ["/dns-query"],
+    "headers": {
+      "Host": "cloudflare-dns.com",
+      "Accept": "application/dns-message"
+    },
+    "data_transform": []
+  },
+  "http_post": {
+    "uris": ["/dns-query"],
+    "headers": {
+      "Host": "cloudflare-dns.com",
+      "Content-Type": "application/dns-message"
+    },
+    "data_transform": [
+      { "mask": null },
+      { "prepend": "\u0000\u0000" }, 
+      { "append": "" }
+    ]
+  }
+}

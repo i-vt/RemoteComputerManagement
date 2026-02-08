@@ -1,0 +1,26 @@
+{
+  "name": "slack_api",
+  "format_http": true,
+  "user_agent": "Slack/4.33.0 (win32; x64)",
+  "http_get": {
+    "uris": ["/api/rtm.start", "/api/users.list", "/api/conversations.history"],
+    "headers": {
+      "Host": "slack.com",
+      "Authorization": "Bearer xoxp-1234567890-1234567890-1234567890-ab123cd456",
+      "Accept": "application/json"
+    },
+    "data_transform": []
+  },
+  "http_post": {
+    "uris": ["/api/chat.postMessage"],
+    "headers": {
+      "Host": "slack.com",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "data_transform": [
+      { "prepend": "{\"channel\":\"C12345678\",\"text\":\"" },
+      { "base64": null },
+      { "append": "\",\"as_user\":true}" }
+    ]
+  }
+}

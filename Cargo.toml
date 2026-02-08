@@ -1,0 +1,92 @@
+[package]
+name = "secure_c2"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "secure_c2"
+path = "src/lib.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "builder"
+path = "src/bin/builder.rs"
+
+[dependencies]
+# Async Core
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["compat"] }
+
+# Multiplexing
+yamux = "0.10"
+
+# Security & Utils
+rustls = "0.21"
+tokio-rustls = "0.24"
+rustls-pemfile = "1.0"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.21"
+hex = "0.4"
+uuid = { version = "1.4", features = ["v4"] }
+machine-uid = "0.5"
+hostname = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rustyline = "12.0"
+
+# Database
+rusqlite = { version = "0.29", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.22"
+
+# API Server
+axum = { version = "0.6", features = ["headers"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.4", features = ["auth", "cors"] }
+http = "0.2"
+reqwest = { version = "0.11", features = ["blocking", "socks", "json"] }
+rhai = { version = "1.16", features = ["sync"] }
+walkdir = "2"
+sys-info = "0.9"
+aes-gcm = "0.10"
+
+# Builder Dependencies
+clap = { version = "4.4", features = ["derive"] }
+anyhow = "1.0"
+libc = "0.2"
+
+# Logging & Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time", "local-time"] }
+tracing-appender = "0.2"
+
+# Encrypt runtime strings
+litcrypt = "0.4"
+
+# Media & Clipboard [UPDATED]
+screenshots = "0.8"
+image = "0.24"
+arboard = "3.2"  # <-- Added for Clipboard
+
+[build-dependencies]
+serde_json = "1.0"
+hex = "0.4"
+rand = "0.8"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
