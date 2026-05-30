@@ -1,6 +1,7 @@
 # RCM — Remote Computer Management
 
 A modular command-and-control framework written in Rust.
+<img width="1333" height="773" alt="image" src="https://github.com/user-attachments/assets/e01b1c59-93c3-4ca4-8d19-50737a98c8fc" />
 
 ## Features
 
