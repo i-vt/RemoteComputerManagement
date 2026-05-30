@@ -1,0 +1,89 @@
+# tests/docker/docker-compose.windows.yml
+#
+# Compose OVERRIDE that adds a Windows agent to the test environment.
+# Requires a Windows Docker host (Docker Desktop or Windows Server).
+#
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │ Usage                                                               │
+# ├─────────────────────────────────────────────────────────────────────┤
+# │                                                                     │
+# │ # Linux host (builds Windows binaries, skips Windows container):    │
+# │ docker compose \                                                    │
+# │   -f docker-compose.yml \                                           │
+# │   -f docker-compose.windows.yml \                                   │
+# │   up --build --abort-on-container-exit --exit-code-from test-runner │
+# │                                                                     │
+# │ # Windows host (full suite including Windows agent):                │
+# │ docker compose \                                                    │
+# │   -f docker-compose.yml \                                           │
+# │   -f docker-compose.windows.yml \                                   │
+# │   --profile windows \                                               │
+# │   up --build --abort-on-container-exit --exit-code-from test-runner │
+# │                                                                     │
+# └─────────────────────────────────────────────────────────────────────┘
+#
+# Prerequisites:
+#   - Docker Desktop in "Windows containers" mode with Hyper-V isolation
+#     (Settings → General → "Use the WSL 2 based engine" OFF for native
+#     Windows containers, or use process isolation on Windows Server)
+#   - OR Docker Desktop with containerd + mixed-platform support
+#   - The base image mcr.microsoft.com/windows/servercore:ltsc2022 must
+#     match the host OS build (e.g. Windows Server 2022 / Windows 11)
+#
+# Architecture:
+#   ┌──────────────┐      ┌────────────────┐
+#   │  c2-server   │◀─────│  agent-windows │  (servercore:ltsc2022)
+#   │  (Linux)     │      │  TLS :4443     │
+#   │  API  :8080  │      └────────────────┘
+#   │  TLS  :4443  │
+#   │  HTTP :4480  │
+#   └──────────────┘
+
+services:
+
+  # ── Windows Test Agent (TLS transport) ──────────────────────────────
+  # Only starts with: --profile windows
+  # On Linux hosts, this service is safely skipped.
+  agent-windows:
+    profiles: ["windows"]
+    build:
+      context: ../../
+      dockerfile: tests/docker/Dockerfile.windows
+    hostname: agent-windows
+    platform: windows/amd64
+    # NOTE: Use 'isolation: process' on Windows Server for faster startup,
+    #       or 'isolation: hyperv' if the host OS build doesn't match ltsc2022.
+    #       Omitted here so the file doesn't error on Linux (for validation).
+    volumes:
+      - shared:/shared:ro
+    environment:
+      - AGENT_NAME=agent-windows
+      - AGENT_TRANSPORT=tls
+    depends_on:
+      c2-server:
+        condition: service_healthy
+    networks:
+      - c2net
+
+  # ── Extend the test runner to wait for the Windows agent ────────────
+  test-runner:
+    environment:
+      - C2_URL=http://c2-server:8080
+      - WEBHOOK_URL=http://webhook-sink:9999/hook
+      - WINDOWS_AGENT=1
+    command:
+      - -c
+      - |
+        apk add --no-cache curl jq bash coreutils > /dev/null 2>&1
+        echo "=== Waiting for credentials ==="
+        for i in $$(seq 1 60); do
+          [ -f /shared/admin_creds.json ] && break
+          sleep 1
+        done
+        if [ ! -f /shared/admin_creds.json ]; then
+          echo "FATAL: admin_creds.json never appeared"; exit 1
+        fi
+        echo "=== Waiting for agents (25s — extra time for Windows cold start) ==="
+        sleep 25
+        echo "=== Running integration tests ==="
+        bash /tests/run_tests.sh

@@ -1,0 +1,22 @@
+# tests/docker/Dockerfile.windows
+# Windows agent runtime for integration testing.
+#
+# Requires a Windows Docker host (Docker Desktop in "Windows containers"
+# mode, or Windows Server with Docker EE).
+#
+# The agent binary is cross-compiled in the Linux builder stage and
+# placed on the shared volume. This container picks it up and runs it.
+#
+# Image choice: servercore:ltsc2022 provides the full Win32 API surface
+# needed to exercise AMSI, ETW, process injection, named pipes, and
+# other Windows-specific agent features. nanoserver is too minimal.
+
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop';"]
+
+WORKDIR /agent
+
+COPY tests/docker/scripts/windows-entrypoint.ps1 /entrypoint.ps1
+
+ENTRYPOINT ["powershell", "-ExecutionPolicy", "Bypass", "-File", "C:\\entrypoint.ps1"]

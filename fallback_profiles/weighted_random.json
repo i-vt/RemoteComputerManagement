@@ -1,0 +1,28 @@
+{
+  "_description": "Weighted random: 60% primary, 30% secondary, 10% emergency",
+  "strategy": "random",
+  "dead_time_secs": 300,
+  "endpoints": [
+    {
+      "host": "primary.example.com",
+      "port": 443,
+      "transport": "https",
+      "weight": 6,
+      "max_failures": 5
+    },
+    {
+      "host": "secondary.example.com",
+      "port": 443,
+      "transport": "https",
+      "weight": 3,
+      "max_failures": 5
+    },
+    {
+      "host": "emergency.example.com",
+      "port": 8443,
+      "transport": "tls",
+      "weight": 1,
+      "max_failures": 20
+    }
+  ]
+}
