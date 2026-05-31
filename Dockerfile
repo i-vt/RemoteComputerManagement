@@ -15,7 +15,7 @@ FROM rust:latest
 # - pkg-config:      Helps cargo find system libraries
 # - cmake, clang:    Some crate build scripts need these
 # - musl-tools:      Optional: musl libc for fully static Linux binaries
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
         gcc-mingw-w64-x86-64 \
         g++-mingw-w64-x86-64 \
         mingw-w64 \
@@ -26,7 +26,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         musl-tools \
         ca-certificates \
         curl \
-        && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Environment — set BEFORE rustup so build-time and runtime use the same paths
+# These must come before any `rustup` or `cargo` RUN steps so that the toolchain
+# is installed into /usr/local/cargo and /usr/local/rustup, which is the same
+# location the container will look for them at runtime.
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+ENV CARGO_HOME="/usr/local/cargo"
+ENV RUSTUP_HOME="/usr/local/rustup"
 
 # ── Rust cross-compilation targets ────────────────────────────────────
 # x86_64-unknown-linux-gnu  — native Linux (always available, explicit for clarity)
@@ -37,8 +45,9 @@ RUN rustup target add \
         x86_64-unknown-linux-gnu \
         x86_64-pc-windows-gnu
 
-# Tell cargo to use the mingw linker for Windows targets
-RUN mkdir -p /root/.cargo && cat >> /root/.cargo/config.toml << 'CARGOCONF'
+# Tell cargo to use the mingw linker for Windows targets.
+# Uses $CARGO_HOME so the config lands in the same directory rustup uses.
+RUN mkdir -p "${CARGO_HOME}" && cat >> "${CARGO_HOME}/config.toml" << 'CARGOCONF'
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 ar = "x86_64-w64-mingw32-ar"
@@ -97,17 +106,10 @@ RUN mkdir -p logs downloads data dist
 # uid 1000 matches what start_docker.sh chowns the mounted directories to.
 RUN useradd -u 1000 -m -s /bin/bash rcm \
     && chown -R rcm:rcm /app \
-    && chown -R rcm:rcm /root/.cargo \
-    && chown -R rcm:rcm /usr/local/cargo \
-    && chown -R rcm:rcm /usr/local/rustup
+    && chown -R rcm:rcm "${CARGO_HOME}" \
+    && chown -R rcm:rcm "${RUSTUP_HOME}"
 
 USER rcm
-
-# ── Environment for runtime cargo builds ─────────────────────────────
-# Make sure rustup/cargo are on PATH for the subprocess spawned by builder.
-ENV PATH="/usr/local/cargo/bin:${PATH}"
-ENV CARGO_HOME="/usr/local/cargo"
-ENV RUSTUP_HOME="/usr/local/rustup"
 
 # ── Healthcheck ───────────────────────────────────────────────────────
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
