@@ -13,20 +13,18 @@
 /dist/server_keys.json
 
 # ── TLS certificates and keys ──────────────────────────────────────────
-# Generated at runtime by start_docker.sh — never commit private keys
+# Generated at runtime by start_docker.sh — never commit certs or keys
 /certs/ca.key
+/certs/ca.crt
 /certs/ca.srl
 /certs/server.key
 /certs/server.key.der
+/certs/server.crt
 /certs/server.csr
 /certs/client.key
 /certs/client.key.der
+/certs/client.crt
 /certs/client.csr
-# Public certs are also generated at runtime, but you may choose to commit
-# ca.crt if you want to pin it in agents built from source. Uncomment to exclude:
-# /certs/ca.crt
-# /certs/server.crt
-# /certs/client.crt
 
 # ── Runtime database ───────────────────────────────────────────────────
 # Contains operator credentials, session data, build keys, audit log
