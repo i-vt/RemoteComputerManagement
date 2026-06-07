@@ -5,8 +5,6 @@ rustflags = ["-C", "link-args=-static -static-libgcc -static-libstdc++"]
 
 [build]
 rustflags = [
-    "--remap-path-prefix",
-    "/home/smartbox/.cargo/registry=/cargo",  # Hides dependency paths
-    "--remap-path-prefix",
-    ".=/src"                                  # Hides your source code paths
+    "--remap-path-prefix", "$CARGO_HOME/registry=/cargo",
+    "--remap-path-prefix", ".=/src"
 ]

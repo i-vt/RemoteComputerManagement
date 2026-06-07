@@ -45,12 +45,27 @@ RUN rustup target add \
         x86_64-unknown-linux-gnu \
         x86_64-pc-windows-gnu
 
-# Tell cargo to use the mingw linker for Windows targets.
-# Uses $CARGO_HOME so the config lands in the same directory rustup uses.
+# Tell cargo to use the mingw linker for Windows targets, and remap
+# build-time paths so the compiled binaries don't leak host directory
+# structure in debug info or panic messages.
+#
+# These flags are written into the global Cargo config (not .cargo/config.toml
+# in the repo) so they apply both to the server build below AND to every
+# agent build the builder binary spawns at runtime — a RUSTFLAGS env var
+# set during `docker build` would not carry over to those runtime builds.
+#
+# /usr/local/cargo is the CARGO_HOME set above; this is always the correct
+# path inside the container regardless of who built the image.
 RUN mkdir -p "${CARGO_HOME}" && cat >> "${CARGO_HOME}/config.toml" << 'CARGOCONF'
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 ar = "x86_64-w64-mingw32-ar"
+
+[build]
+rustflags = [
+    "--remap-path-prefix", "/usr/local/cargo/registry=/cargo",
+    "--remap-path-prefix", "/app=/src",
+]
 CARGOCONF
 
 # ── Working directory ─────────────────────────────────────────────────
