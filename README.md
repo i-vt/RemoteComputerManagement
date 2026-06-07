@@ -82,3 +82,4 @@ extensions/         # Rhai extension scripts
 This software is provided for authorized security testing only. Unauthorized access to computer systems is illegal. See the full disclaimer at the bottom of this file.
 
 Users are solely responsible for ensuring their use complies with all applicable laws.
+

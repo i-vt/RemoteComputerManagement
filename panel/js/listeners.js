@@ -47,7 +47,7 @@ window.ListenerManager = {
         const port = parseInt(document.getElementById('new-listener-port')?.value);
         const transport = document.getElementById('new-listener-transport')?.value || 'tls';
 
-        if(!name || !port) return alert('Name and port required');
+        if(!name || !port) { window.Modal.alert('Name and port required', 'warning'); return; }
 
         try {
             const url = window.Auth.url.replace(/\/$/, '');
@@ -57,9 +57,9 @@ window.ListenerManager = {
                 body: JSON.stringify({ name, port, transport })
             });
             const data = await res.json();
-            if(!res.ok) return alert(data.error || 'Failed');
+            if(!res.ok) { window.Modal.alert(data.error || 'Failed to create listener', 'error'); return; }
             this.refresh();
-        } catch(e) { alert('Error: ' + e.message); }
+        } catch(e) { window.Modal.alert('Error: ' + e.message, 'error'); }
     },
 
     async start(id) {
@@ -79,7 +79,7 @@ window.ListenerManager = {
     },
 
     async remove(id) {
-        if(!confirm('Delete this listener?')) return;
+        if(!await window.Modal.confirm('Delete this listener?')) return;
         const url = window.Auth.url.replace(/\/$/, '');
         await fetch(`${url}/api/listeners/${id}`, {
             method: 'DELETE', headers: { 'X-API-KEY': window.Auth.key }

@@ -19,13 +19,13 @@ window.ProxyManager = {
             await window.API.refreshHosts(); 
             this.refreshList();
         } catch(e) {
-            alert("Proxy Error: " + e.message);
+            window.Modal.alert("Proxy Error: " + e.message, 'error');
             if(window.API) window.API.refreshHosts();
         }
     },
 
     async stop(sessionId) {
-        if(!confirm(`Stop proxy for Session #${sessionId}?`)) return;
+        if(!await window.Modal.confirm(`Stop proxy for Session #${sessionId}?`)) return;
         
         try {
             const cleanUrl = window.Auth.url.replace(/\/$/, "");
@@ -39,7 +39,7 @@ window.ProxyManager = {
                 await window.API.refreshHosts();
                 this.refreshList();
             } else {
-                alert("Failed to stop proxy");
+                window.Modal.alert("Failed to stop proxy", 'error');
             }
         } catch(e) { console.error(e); }
     },
@@ -57,7 +57,7 @@ window.ProxyManager = {
             const data = await res.json();
 
             if (res.ok) {
-                // [FIX] Ensure country code exists, default to 'un' (United Nations/Unknown) if empty
+                // Ensure country code exists, default to 'un' (Unknown) if empty
                 const countryCode = data.country_code ? data.country_code.toLowerCase() : 'un';
                 const flagUrl = `https://flagcdn.com/24x18/${countryCode}.png`;
 
@@ -89,7 +89,7 @@ window.ProxyManager = {
     },
 
     async checkAll() {
-        if (this.activeProxies.length === 0) return alert("No active proxies.");
+        if (this.activeProxies.length === 0) { window.Modal.alert("No active proxies to check.", 'info'); return; }
         await Promise.all(this.activeProxies.map(p => this.checkIP(p.session_id)));
         window.UI.addLog("Batch Proxy Check Completed.");
     },

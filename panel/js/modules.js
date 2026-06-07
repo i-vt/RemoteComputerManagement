@@ -15,14 +15,33 @@ window.ModuleManager = {
 
             if (res.ok) {
                 const newModules = await res.json();
-                // Deep compare to avoid unnecessary re-renders
+                // Only re-render if the list actually changed
                 if(JSON.stringify(newModules) !== JSON.stringify(this.availableModules)) {
                     this.availableModules = newModules;
+                    // FIX: push the updated dropdown into every existing host row
+                    // immediately rather than waiting for the next 2-second poll
+                    // cycle. Without this, the "No modules" placeholder sticks
+                    // until the host table happens to re-render.
+                    this._refreshModuleCells();
                 }
             }
         } catch (e) {
             console.error("Module Fetch Error:", e);
         }
+    },
+
+    // Update the Scripts cell of every row already in the host table.
+    _refreshModuleCells() {
+        document.querySelectorAll('[id^="host-row-"]').forEach(row => {
+            const id = parseInt(row.getAttribute('data-id'), 10);
+            if (isNaN(id)) return;
+            const modCell = row.querySelector('.host-modules');
+            if (!modCell) return;
+            // Don't clobber a dropdown that the user currently has open
+            const activeEl = document.activeElement;
+            if (activeEl && activeEl.id === `mod-select-${id}`) return;
+            modCell.innerHTML = this.renderControls(id);
+        });
     },
 
     async run(sessionId) {
@@ -31,7 +50,7 @@ window.ModuleManager = {
         const moduleName = select ? select.value : null;
 
         if (!moduleName) {
-            this.showToast("Please select a module first", "error");
+            window.Notify?.toast("Please select a module first", "error");
             return;
         }
 
@@ -42,7 +61,7 @@ window.ModuleManager = {
             
             try {
                 const cleanUrl = window.Auth.url.replace(/\/$/, "");
-                this.showToast(`Executing ${moduleName}...`, "info");
+                window.Notify?.toast(`Executing ${moduleName}...`, "info");
                 
                 const res = await fetch(`${cleanUrl}/api/hosts/${sessionId}/modules/${moduleName}`, {
                     method: 'POST',
@@ -52,13 +71,13 @@ window.ModuleManager = {
                 const data = await res.json();
 
                 if (res.ok) {
-                    this.showToast(`Success: ${moduleName} executed.`, "success");
+                    window.Notify?.toast(`Success: ${moduleName} executed.`, "success");
                     if(window.UI) window.UI.addLog(`[Module] ${moduleName} run on #${sessionId}. Result: ${data.result.substring(0, 50)}...`);
                 } else {
-                    this.showToast(`Error: ${data.error}`, "error");
+                    window.Notify?.toast(`Error: ${data.error}`, "error");
                 }
             } catch (e) {
-                this.showToast("Network execution failed", "error");
+                window.Notify?.toast("Network execution failed", "error");
             } finally {
                 btn.innerHTML = originalHtml;
                 btn.disabled = false;
@@ -66,7 +85,7 @@ window.ModuleManager = {
         }
     },
 
-    // Generates the dropdown HTML
+    // Generates the dropdown HTML for one host row
     renderControls(sessionId) {
         if (this.availableModules.length === 0) {
             return `<span class="text-xs text-gray-500 italic">No modules</span>`;
@@ -96,25 +115,4 @@ window.ModuleManager = {
             </div>
         `;
     },
-
-    showToast(msg, type = "info") {
-        const colors = { "success": "bg-green-600", "error": "bg-red-600", "info": "bg-blue-600" };
-        const icons = { "success": "fa-check", "error": "fa-times", "info": "fa-info" };
-
-        const toast = document.createElement("div");
-        toast.className = `fixed bottom-5 right-5 ${colors[type]} text-white px-4 py-3 rounded shadow-lg flex items-center gap-3 transform translate-y-10 opacity-0 transition-all duration-300 z-50 text-sm font-bold`;
-        toast.innerHTML = `<i class="fas ${icons[type]}"></i> <span>${escHtml(msg)}</span>`;
-
-        document.body.appendChild(toast);
-        requestAnimationFrame(() => toast.classList.remove("translate-y-10", "opacity-0"));
-        setTimeout(() => {
-            toast.classList.add("translate-y-10", "opacity-0");
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
-    }
 };
-
-// Auto-init on load
-document.addEventListener('DOMContentLoaded', () => {
-    if(window.ModuleManager) window.ModuleManager.init();
-});

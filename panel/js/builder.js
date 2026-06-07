@@ -21,7 +21,7 @@
     function escStr(s) {
         return String(s || '')
             .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-            .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+            .replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
     }
 
     function val(id, def) {
@@ -39,25 +39,161 @@
         return el ? el.checked : false;
     }
 
-    // ── Log pane ───────────────────────────────────────────────────────
-    // The log div has a fixed pixel height set in the HTML (height:360px,
-    // overflow-y:auto). appendLog just appends and scrolls — no growth.
+    // ── Log pane — scrollable ring-buffer with line numbers & filters ─
 
-    function logEl() { return document.getElementById('builder-log'); }
+    var _logLines   = [];   // { type, text, cls } — never exceeds MAX_LINES entries
+    var _logFilter  = 'all';
+    var _lineCounter = 0;   // monotonic; absolute line numbers never reset mid-build
+
+    var MAX_LINES = 50;     // hard cap; oldest row evicted when exceeded
+
+    var LOG_TYPE = {
+        'text-green-400':  'ok',
+        'text-red-400':    'error',
+        'text-yellow-400': 'warn',
+        'text-cyan-400':   'info',
+    };
+
+    function logEl()    { return document.getElementById('builder-log'); }
+    function logTable() { return document.getElementById('builder-log-table'); }
+
+    // Apply (or re-apply) scroll constraints to the log container.
+    // Called from both init() and clearLog() so the container is always
+    // properly sized whether or not a build has started yet.
+    function _applyScrollStyle() {
+        var el = logEl();
+        if (!el) return;
+        // flex:1 in the HTML lets the element grow with its flex parent,
+        // which makes the overflow never fire. Override to a fixed size.
+        el.style.flex        = 'none';
+        el.style.height      = '380px';
+        el.style.maxHeight   = '380px';
+        el.style.overflowY   = 'auto';
+        el.style.overflowX   = 'hidden';
+    }
 
     function clearLog() {
+        _logLines    = [];
+        _logFilter   = 'all';
+        _lineCounter = 0;
+
         var el = logEl();
-        if (el) el.innerHTML = '';
+        if (!el) return;
+
+        el.style.padding = '0';
+        _applyScrollStyle();
+        el.innerHTML = '<table id="builder-log-table" style="width:100%;border-collapse:collapse;table-layout:fixed;"></table>';
+
+        _updateFilterBtns();
+        _showFilters(false);
+    }
+
+    function _showFilters(show) {
+        var bar = document.getElementById('builder-log-filters');
+        if (bar) bar.style.display = show ? 'flex' : 'none';
+    }
+
+    function _updateFilterBtns() {
+        ['all','info','warn','ok'].forEach(function(k) {
+            var btn = document.getElementById('blf-' + k);
+            if (!btn) return;
+            var isActive = (k === _logFilter);
+            btn.style.background  = isActive ? 'var(--bg-hover)'    : '';
+            btn.style.color       = isActive ? 'var(--text-primary)' : '';
+            btn.style.borderColor = isActive ? 'var(--border-light)' : '';
+        });
+    }
+
+    function _isVisible(type) {
+        if (_logFilter === 'all')  return true;
+        if (_logFilter === 'info') return type === 'info' || type === 'dim';
+        if (_logFilter === 'warn') return type === 'warn';
+        if (_logFilter === 'ok')   return type === 'ok' || type === 'error';
+        return true;
     }
 
     function appendLog(text, cls) {
+        var type = LOG_TYPE[cls] || 'dim';
+
+        // Assign an absolute line number before capping so numbers keep
+        // climbing even as old rows are evicted from the front.
+        _lineCounter++;
+        var lineNum = _lineCounter;
+
+        _logLines.push({ type: type, text: text, cls: cls || 'text-gray-300' });
+
+        var tbl = logTable();
+        if (!tbl) {
+            clearLog();
+            tbl = logTable();
+            if (!tbl) { console.error('[Builder]', text); return; }
+        }
+
+        var tr = document.createElement('tr');
+        tr.dataset.ltype = type;
+        if (!_isVisible(type)) tr.style.display = 'none';
+
+        // Line-number cell (narrow, right-aligned, non-selectable)
+        var tdN = document.createElement('td');
+        tdN.style.cssText = [
+            'user-select:none',
+            'text-align:right',
+            'padding:1px 8px 1px 10px',
+            'color:#4b5563',
+            'font-size:11px',
+            'font-family:inherit',
+            'vertical-align:top',
+            'white-space:nowrap',
+            'width:38px',
+        ].join(';');
+        tdN.textContent = lineNum;
+
+        // Text cell — wraps long compiler output, never forces horizontal scroll
+        var tdT = document.createElement('td');
+        tdT.style.cssText = [
+            'padding:1px 12px 1px 0',
+            'font-size:12px',
+            'line-height:1.55',
+            'white-space:pre-wrap',      // preserve indentation, wrap at container edge
+            'word-break:break-all',       // break unbreakable tokens (hex hashes, paths)
+            'overflow-wrap:anywhere',
+        ].join(';');
+        tdT.className = cls || 'text-gray-300';
+        tdT.textContent = text;
+
+        tr.appendChild(tdN);
+        tr.appendChild(tdT);
+        tbl.appendChild(tr);
+
+        // ── Ring-buffer cap: evict the oldest row once we exceed MAX_LINES ──
+        // _logLines is trimmed first so _isVisible stays in sync with the DOM.
+        if (_logLines.length > MAX_LINES) {
+            _logLines.shift();
+            var oldest = tbl.querySelector('tr');
+            if (oldest) oldest.remove();
+        }
+
+        // Show the filter toolbar as soon as the first line arrives
+        if (_logLines.length === 1) _showFilters(true);
+
+        // Auto-scroll to the latest line
         var el = logEl();
-        if (!el) { console.error('[Builder]', text); return; }
-        var div = document.createElement('div');
-        div.className = 'font-mono text-xs leading-5 whitespace-pre-wrap ' + (cls || 'text-gray-300');
-        div.textContent = text;
-        el.appendChild(div);
-        el.scrollTop = el.scrollHeight;
+        if (el) el.scrollTop = el.scrollHeight;
+    }
+
+    function filterLog(f) {
+        _logFilter = f;
+        _updateFilterBtns();
+
+        var tbl = logTable();
+        if (tbl) {
+            tbl.querySelectorAll('tr').forEach(function(tr) {
+                tr.style.display = _isVisible(tr.dataset.ltype) ? '' : 'none';
+            });
+        }
+
+        var el = logEl();
+        if (el) el.scrollTop = el.scrollHeight;
     }
 
     // ── Status badge / button ──────────────────────────────────────────
@@ -81,11 +217,9 @@
     }
 
     // ── Per-job poll registry ──────────────────────────────────────────
-    // We track each job's poll interval separately so multiple jobs can
-    // be monitored independently and new builds don't kill old monitors.
 
-    var polls = {};          // jobId -> intervalId
-    var logCounts = {};      // jobId -> last log line index shown
+    var polls     = {};   // jobId -> intervalId
+    var logCounts = {};   // jobId -> last log line index shown
 
     function stopPolling(jobId) {
         if (polls[jobId]) {
@@ -102,7 +236,7 @@
 
     function build() {
         var apiKey = getApiKey();
-        if (!apiKey) { alert('Not logged in.'); return; }
+        if (!apiKey) { window.Modal.alert('Not logged in.', 'warning'); return; }
 
         var host = val('builder-host', '').trim();
         var port = val('builder-port', '').trim();
@@ -126,14 +260,12 @@
             days:       intVal('builder-days',       0),
         };
 
-        // Reset the active log pane for this new submission
         clearLog();
         appendLog('[*] Submitting build request...', 'text-cyan-400');
         setBadge('', 'hidden');
         var dlRow = document.getElementById('builder-download-row');
         if (dlRow) dlRow.classList.add('hidden');
 
-        // Disable button only during the HTTP submit, re-enable once job is queued
         setBtn('<i class="fas fa-spinner fa-spin mr-2"></i>Submitting...', true);
 
         fetch(getApiUrl() + '/api/builder/build', {
@@ -145,7 +277,7 @@
             return res.text().then(function (t) { return { ok: res.ok, status: res.status, text: t }; });
         })
         .then(function (r) {
-            resetBtn(); // re-enable immediately — user can queue another build
+            resetBtn();
 
             if (!r.ok) {
                 var parsed = safeJson(r.text);
@@ -162,14 +294,13 @@
                 return;
             }
 
-            // Make this the active job (log pane follows it)
-            activeJobId       = data.job_id;
+            activeJobId           = data.job_id;
             logCounts[activeJobId] = 0;
 
             appendLog('[*] Job queued: ' + data.job_id, 'text-cyan-400');
             appendLog('[*] Compiling... (this takes several minutes)', 'text-gray-400');
 
-            startPolling(data.job_id, true /* is active */);
+            startPolling(data.job_id, true);
             refreshJobList();
         })
         .catch(function (err) {
@@ -182,7 +313,7 @@
     // ── Polling ────────────────────────────────────────────────────────
 
     function startPolling(jobId, isActive) {
-        stopPolling(jobId); // clear any existing interval for this job
+        stopPolling(jobId);
         if (!logCounts[jobId]) logCounts[jobId] = 0;
 
         polls[jobId] = setInterval(function () {
@@ -194,7 +325,6 @@
                 var data = safeJson(text);
                 if (!data) return;
 
-                // If this job is the active one, stream new lines into the log pane
                 if (jobId === activeJobId) {
                     var newLines = (data.log || []).slice(logCounts[jobId]);
                     newLines.forEach(function (line) {
@@ -210,9 +340,7 @@
 
                 if (data.status === 'success') {
                     stopPolling(jobId);
-                    if (jobId === activeJobId) {
-                        showSuccess(jobId, data.artifact_name);
-                    }
+                    if (jobId === activeJobId) showSuccess(jobId, data.artifact_name);
                     refreshJobList();
                     if (window.Notify) window.Notify.toast(
                         'Build done: ' + (data.artifact_name || jobId.slice(0,8)), 'success', 8000);
@@ -239,8 +367,6 @@
         var dlRow  = document.getElementById('builder-download-row');
         var dlLink = document.getElementById('builder-download-link');
         if (dlRow && dlLink) {
-            // Store the jobId so the onclick handler can fetch it with the auth header.
-            // We use fetch()+blob rather than a plain href so the X-API-KEY header is sent.
             dlLink.setAttribute('data-job-id', jobId);
             dlLink.onclick = function (e) {
                 e.preventDefault();
@@ -264,7 +390,6 @@
                     throw new Error(t || 'HTTP ' + res.status);
                 });
             }
-            // Extract filename from Content-Disposition header
             var cd       = res.headers.get('Content-Disposition') || '';
             var match    = cd.match(/filename="([^"]+)"/);
             var filename = match ? match[1] : 'agent';
@@ -281,7 +406,7 @@
         })
         .catch(function (err) {
             if (window.Notify) window.Notify.toast('Download failed: ' + err.message, 'error');
-            else alert('Download failed: ' + err.message);
+            else window.Modal.alert('Download failed: ' + err.message, 'error');
         });
     }
 
@@ -346,7 +471,7 @@
                 var sIcon = j.status === 'success' ? 'fa-check-circle'
                           : j.status === 'failed'  ? 'fa-times-circle'
                           : 'fa-spinner fa-spin';
-                var ts    = (j.started_at || '').replace('T', ' ').replace(/\.\d+Z?$/, '');
+                var ts    = (j.started_at  || '').replace('T', ' ').replace(/\.\d+Z?$/, '');
                 var fin   = (j.finished_at || '').replace('T', ' ').replace(/\.\d+Z?$/, '');
                 var art   = j.artifact_name ? escStr(j.artifact_name) : '';
 
@@ -366,8 +491,8 @@
                     + '<td class="p-3 font-mono text-xs text-gray-500">' + escStr(j.job_id.slice(0,8)) + '</td>'
                     + '<td class="p-3"><span class="px-2 py-0.5 rounded text-xs font-bold ' + sCls + '">'
                     +   '<i class="fas ' + sIcon + ' mr-1"></i>' + escStr(j.status) + '</span></td>'
-                    + '<td class="p-3 text-xs text-gray-400 font-mono">' + escStr(ts) + '</td>'
-                    + '<td class="p-3 text-xs text-gray-400 font-mono">' + escStr(fin || '—') + '</td>'
+                    + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + escStr(ts) + '</td>'
+                    + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + escStr(fin || '—') + '</td>'
                     + '<td class="p-3">' + dlBtn + viewBtn + '</td>'
                     + '</tr>';
             }).join('');
@@ -378,11 +503,16 @@
     // ── Public API ─────────────────────────────────────────────────────
 
     window.BuilderManager = {
-        init:           function () {},
+        init: function () {
+            // Constrain the log container immediately on page load so it is
+            // already the right size before any build is started or viewed.
+            _applyScrollStyle();
+        },
         build:          build,
         downloadJob:    downloadJob,
         viewJob:        viewJob,
         refreshJobList: refreshJobList,
+        filterLog:      filterLog,
     };
 
 }());

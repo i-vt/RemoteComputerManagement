@@ -38,7 +38,7 @@ window.BeaconManager = {
             btn.innerHTML = originalHtml;
             btn.className = originalClass;
             btn.disabled = false;
-            alert("Failed to toggle beacon mode. Check server connection.");
+            window.Modal.alert("Failed to toggle beacon mode. Check server connection.", 'error');
         }
     }
 };

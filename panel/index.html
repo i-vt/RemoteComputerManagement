@@ -1,627 +1,955 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SecureC2 // Command & Control</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="/panel/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#07090f">
+  <title>RCM // C2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="stylesheet" href="/panel/style.css">
 </head>
-<body class="bg-gray-900 text-gray-100 font-sans h-screen flex overflow-hidden selection:bg-green-500 selection:text-black">
+<body>
 
-    <aside class="w-64 bg-gray-800 border-r border-gray-700 flex flex-col justify-between z-20">
-        <div>
-            <div class="h-16 flex items-center justify-center border-b border-gray-700">
-                <h1 class="text-2xl font-bold text-green-500 tracking-wider terminal-font glow-text">SECURE_C2</h1>
-            </div>
-            <nav class="mt-6 space-y-2 px-4">
-                <button onclick="window.Router.navigate('stats')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white bg-gray-700 border-l-4 border-green-500">
-                    <i class="fas fa-chart-pie"></i> Statistics
-                </button>
-                <button onclick="window.Router.navigate('network')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-project-diagram"></i> Network Map
-                </button>
-                <button onclick="window.Router.navigate('control')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-terminal"></i> Control
-                </button>
-                <button onclick="window.Router.navigate('files')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-folder-open"></i> Files
-                </button>
-                <button onclick="window.Router.navigate('proxies')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-network-wired"></i> Proxies
-                </button>
-                <button onclick="window.Router.navigate('tasks')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-tasks"></i> Tasks
-                </button>
-                <button onclick="window.Router.navigate('history')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-history"></i> Global History
-                </button>
-                <button onclick="window.Router.navigate('listeners')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-broadcast-tower"></i> Listeners
-                </button>
-                <button onclick="window.Router.navigate('builder')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-hammer"></i> Builder
-                </button>
-                <button onclick="window.Router.navigate('jobs')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-cogs"></i> Jobs
-                </button>
-                <button onclick="window.Router.navigate('audit')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-gray-700 transition flex items-center gap-3 text-gray-300 hover:text-white">
-                    <i class="fas fa-shield-alt"></i> Audit Log
-                </button>
-            </nav>
+<!-- ══════════════════════════════════════════════════════════════════════
+     LOGIN MODAL
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="login-modal">
+  <div class="login-card">
+    <div class="login-logo">
+      <span class="wordmark glow-text">SECURE_C2</span>
+      <span class="subtitle">COMMAND &amp; CONTROL</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">C2 Server URL</label>
+        <input type="text" id="api-url" value="http://127.0.0.1:8080"
+               class="form-input" autocomplete="url" spellcheck="false">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Username</label>
+        <input type="text" id="login-user" placeholder="admin"
+               class="form-input" autocomplete="username">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Password</label>
+        <input type="password" id="login-pass" placeholder="••••••••"
+               class="form-input" autocomplete="current-password"
+               onkeydown="if(event.key==='Enter') window.Auth.login()">
+      </div>
+      <div id="login-error-msg" style="display:none;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);border-radius:6px;padding:9px 12px;font-size:12px;color:#f87171;"></div>
+      <button onclick="window.Auth.login()" class="btn btn-primary btn-full" style="margin-top:4px;padding:12px;">
+        <i class="fas fa-sign-in-alt"></i> Sign In
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     APP SHELL
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="app-shell">
+
+  <!-- ── Desktop Sidebar ───────────────────────────────────────────── -->
+  <aside id="sidebar">
+    <div class="sidebar-logo">
+      <span class="glow-text">SECURE_C2</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Overview</div>
+      <button class="nav-item active" data-page="stats"
+              onclick="window.Router.navigate('stats',event)">
+        <i class="fas fa-chart-pie"></i><span>Dashboard</span>
+      </button>
+      <button class="nav-item" data-page="network"
+              onclick="window.Router.navigate('network',event)">
+        <i class="fas fa-project-diagram"></i><span>Network Map</span>
+      </button>
+
+      <div class="nav-section-label">Operations</div>
+      <button class="nav-item" data-page="control"
+              onclick="window.Router.navigate('control',event)">
+        <i class="fas fa-terminal"></i><span>Sessions</span>
+      </button>
+      <button class="nav-item" data-page="files"
+              onclick="window.Router.navigate('files',event)">
+        <i class="fas fa-folder-open"></i><span>Files</span>
+      </button>
+      <button class="nav-item" data-page="proxies"
+              onclick="window.Router.navigate('proxies',event)">
+        <i class="fas fa-network-wired"></i><span>Proxies</span>
+      </button>
+      <button class="nav-item" data-page="tasks"
+              onclick="window.Router.navigate('tasks',event)">
+        <i class="fas fa-satellite-dish"></i><span>Broadcast</span>
+      </button>
+
+      <div class="nav-section-label">Infrastructure</div>
+      <button class="nav-item" data-page="listeners"
+              onclick="window.Router.navigate('listeners',event)">
+        <i class="fas fa-broadcast-tower"></i><span>Listeners</span>
+      </button>
+      <button class="nav-item" data-page="builder"
+              onclick="window.Router.navigate('builder',event)">
+        <i class="fas fa-hammer"></i><span>Builder</span>
+      </button>
+
+      <div class="nav-section-label">Logs</div>
+      <button class="nav-item" data-page="history"
+              onclick="window.Router.navigate('history',event)">
+        <i class="fas fa-history"></i><span>History</span>
+      </button>
+      <button class="nav-item" data-page="jobs"
+              onclick="window.Router.navigate('jobs',event)">
+        <i class="fas fa-cogs"></i><span>Jobs</span>
+      </button>
+      <button class="nav-item" data-page="audit"
+              onclick="window.Router.navigate('audit',event)">
+        <i class="fas fa-shield-alt"></i><span>Audit Log</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-row">
+        <div id="user-badge" class="user-badge">
+          <i class="fas fa-user-circle" style="color:var(--accent);font-size:15px;"></i>
+          <span></span>
         </div>
-        <div class="p-4 border-t border-gray-700">
-            <div class="flex items-center justify-between mb-2">
-                <div id="user-badge" class="text-xs text-gray-400"></div>
-                <button id="theme-toggle" onclick="window.Theme.toggle()" class="text-gray-500 hover:text-white text-sm" title="Toggle theme (T)">
-                    <i class="fas fa-sun"></i>
-                </button>
-            </div>
-            <div id="connection-status" class="flex items-center gap-2 text-sm text-red-400">
-                <div class="w-2 h-2 rounded-full bg-red-500"></div> Disconnected
-            </div>
-            <button onclick="window.Auth.logout()" class="mt-4 text-xs text-gray-500 hover:text-white w-full text-left">
-                <i class="fas fa-sign-out-alt"></i> Logout
+        <button id="theme-toggle" class="icon-btn" onclick="window.Theme.toggle()" title="Toggle theme">
+          <i class="fas fa-circle-half-stroke"></i>
+        </button>
+      </div>
+      <div id="connection-status" class="status-row disconnected">
+        <div class="status-dot disconnected"></div>
+        <span>Disconnected</span>
+      </div>
+      <button class="logout-btn" onclick="window.Auth.logout()">
+        <i class="fas fa-sign-out-alt"></i> Sign Out
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Mobile Top Bar ────────────────────────────────────────────── -->
+  <div id="mobile-topbar">
+    <span class="logo-text glow-text">SECURE_C2</span>
+    <div class="topbar-right">
+      <div id="connection-status-mobile" class="status-row" style="font-size:11px;">
+        <div class="status-dot disconnected"></div>
+      </div>
+      <button class="icon-btn" id="theme-toggle-mobile" onclick="window.Theme.toggle()">
+        <i class="fas fa-circle-half-stroke"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Main Content ───────────────────────────────────────────────── -->
+  <main id="main-content">
+    <div class="page-wrapper">
+
+      <!-- ── DASHBOARD ─────────────────────────────────────────────── -->
+      <div id="page-stats">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Dashboard</h1>
+            <p class="page-subtitle">Real-time operator overview</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.API.refreshHosts()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i><span class="hide-mobile">Refresh</span>
             </button>
-        </div>
-    </aside>
-
-    <main class="flex-1 overflow-y-auto relative bg-gray-900">
-        <div id="login-modal" class="absolute inset-0 z-50 bg-gray-900 flex items-center justify-center">
-             <div class="bg-gray-800 p-8 rounded-xl border border-green-500 shadow-2xl w-96">
-                <h2 class="text-xl font-bold mb-4 text-green-500 terminal-font">AUTHENTICATION REQUIRED</h2>
-                <div class="space-y-4">
-                    <div>
-                        <label class="text-xs text-gray-400">C2 Server URL</label>
-                        <input type="text" id="api-url" value="http://127.0.0.1:8080" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white focus:border-green-500 outline-none">
-                    </div>
-                    <div>
-                        <label class="text-xs text-gray-400">Username</label>
-                        <input type="text" id="login-user" placeholder="admin" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white focus:border-green-500 outline-none">
-                    </div>
-                    <div>
-                        <label class="text-xs text-gray-400">Password</label>
-                        <input type="password" id="login-pass" placeholder="••••••••" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white focus:border-green-500 outline-none"
-                               onkeydown="if(event.key==='Enter') window.Auth.login()">
-                    </div>
-                    <button onclick="window.Auth.login()" class="w-full bg-green-600 hover:bg-green-500 text-black font-bold py-2 rounded transition">
-                        LOGIN
-                    </button>
-                </div>
-            </div>
+          </div>
         </div>
 
-        <div class="p-8 max-w-7xl mx-auto h-full flex flex-col">
-
-            <!-- STATS -->
-            <div id="page-stats" class="space-y-6">
-                <h2 class="text-3xl font-light text-white">Dashboard Overview</h2>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
-                        <div class="text-gray-400 text-sm">Active Sessions</div>
-                        <div class="text-4xl font-bold text-white mt-2" id="stat-total">0</div>
-                    </div>
-                    <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
-                        <div class="text-gray-400 text-sm">Windows Targets</div>
-                        <div class="text-4xl font-bold text-blue-400 mt-2" id="stat-win">0</div>
-                    </div>
-                    <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
-                        <div class="text-gray-400 text-sm">Linux Targets</div>
-                        <div class="text-4xl font-bold text-yellow-400 mt-2" id="stat-linux">0</div>
-                    </div>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
-                         <h3 class="text-lg font-bold mb-4">OS Distribution</h3>
-                         <canvas id="osChart"></canvas>
-                    </div>
-                    <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
-                         <h3 class="text-lg font-bold mb-4">Activity Log</h3>
-                         <div id="activity-log" class="h-48 overflow-y-auto text-sm space-y-2 terminal-font text-gray-300"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- NETWORK -->
-            <div id="page-network" class="hidden h-full flex flex-col">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-3xl font-light text-white">Network Topology</h2>
-                    <div class="space-x-2">
-                         <button onclick="window.NetworkManager.init()" class="text-green-500 hover:text-white border border-green-500 px-3 py-1 rounded text-sm transition"><i class="fas fa-sync"></i> Refresh Graph</button>
-                         <button onclick="window.NetworkManager.layout()" class="text-blue-500 hover:text-white border border-blue-500 px-3 py-1 rounded text-sm transition"><i class="fas fa-random"></i> Re-Layout</button>
-                    </div>
-                </div>
-                <div class="flex-1 bg-gray-900 rounded-xl border border-gray-700 shadow-2xl relative overflow-hidden">
-                    <div id="cy" class="absolute inset-0 w-full h-full bg-[#0d1117]"></div>
-                    <div class="absolute bottom-4 right-4 bg-gray-800/80 p-3 rounded border border-gray-600 backdrop-blur-sm text-xs space-y-2 pointer-events-none z-10">
-                        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-red-500"></span> C2 Control</div>
-                        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-blue-500"></span> Windows Agent</div>
-                        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-yellow-500"></span> Linux Agent</div>
-                        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full border-2 border-green-400"></span> Proxy Active</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- CONTROL -->
-            <div id="page-control" class="hidden space-y-6">
-                 <div class="flex justify-between items-center">
-                    <h2 class="text-3xl font-light text-white">Host Control</h2>
-                    <button onclick="window.API.refreshHosts()" class="text-green-500 hover:text-white"><i class="fas fa-sync"></i> Refresh</button>
-                </div>
-                <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="bg-gray-700 text-gray-300 text-xs uppercase tracking-wider">
-                                <th class="p-4">ID</th><th class="p-4">Hostname</th><th class="p-4">IP Address</th>
-                                <th class="p-4">OS</th><th class="p-4">HWID</th><th class="p-4">Scripts</th>
-                                <th class="p-4 text-right">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="hosts-table" class="divide-y divide-gray-700 text-sm"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- FILES -->
-            <div id="page-files" class="hidden flex flex-col h-full space-y-4">
-                <div class="flex justify-between items-center shrink-0">
-                    <h2 class="text-3xl font-light text-white">Interactive File Browser</h2>
-                    <div class="flex items-center gap-4">
-                        <select id="file-session-select" class="bg-gray-800 text-white border border-gray-600 rounded px-3 py-2 text-sm outline-none focus:border-green-500">
-                            <option value="">Select Session...</option>
-                        </select>
-                        <button onclick="window.FileManager.browse()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-bold shadow-lg transition">
-                            <i class="fas fa-sync"></i> Reload
-                        </button>
-                    </div>
-                </div>
-                <div class="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-700 shrink-0">
-                    <button onclick="window.FileManager.up()" class="text-gray-400 hover:text-white px-2"><i class="fas fa-arrow-up"></i></button>
-                    <div class="text-gray-500 font-mono text-sm px-2">Path:</div>
-                    <input type="text" id="file-path-input" class="flex-1 bg-transparent text-green-400 font-mono text-sm outline-none" value="/" onkeydown="if(event.key==='Enter') window.FileManager.browse(this.value)">
-                    <button onclick="window.FileManager.browse(document.getElementById('file-path-input').value)" class="text-green-500 hover:text-white px-2"><i class="fas fa-arrow-right"></i></button>
-                </div>
-                <div class="flex-1 bg-gray-800 rounded-xl border border-gray-700 overflow-hidden flex flex-col shadow-inner">
-                    <div class="bg-gray-750 border-b border-gray-700 px-4 py-2 flex text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">
-                        <div class="w-8"></div><div class="flex-1">Name</div>
-                        <div class="w-24 text-right">Size</div><div class="w-20 text-center">Perms</div>
-                        <div class="w-32 text-right">Modified</div>
-                    </div>
-                    <div id="file-list-container" class="flex-1 overflow-y-auto p-2 space-y-1">
-                        <div class="text-center text-gray-500 p-10 italic">Select a session to browse files.</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- PROXIES -->
-            <div id="page-proxies" class="hidden space-y-6">
-                <div class="flex justify-between items-center">
-                    <h2 class="text-3xl font-light text-white">Active SOCKS5 Proxies</h2>
-                    <div class="space-x-2">
-                        <button onclick="window.ProxyManager.checkAll()" class="text-blue-400 hover:text-white border border-blue-500 px-3 py-1 rounded text-sm transition"><i class="fas fa-globe"></i> Check All IPs</button>
-                        <button onclick="window.ProxyManager.refreshList()" class="text-green-500 hover:text-white border border-green-500 px-3 py-1 rounded text-sm transition"><i class="fas fa-sync"></i> Refresh</button>
-                    </div>
-                </div>
-                <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden mt-4">
-                    <table class="w-full text-left border-collapse">
-                        <thead><tr class="bg-gray-700 text-gray-300 text-xs uppercase tracking-wider">
-                            <th class="p-4">Session ID</th><th class="p-4">Tunnel Port (C2)</th>
-                            <th class="p-4">SOCKS5 Port (Local)</th><th class="p-4 text-center">Public IP</th>
-                            <th class="p-4 text-right">Action</th>
-                        </tr></thead>
-                        <tbody id="proxies-table" class="divide-y divide-gray-700 text-sm"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- TASKS -->
-            <div id="page-tasks" class="hidden space-y-6">
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <div>
-                        <h2 class="text-3xl font-light text-white">Task Operations</h2>
-                        <p class="text-sm text-gray-400">Manage global broadcasts and audit execution history.</p>
-                    </div>
-                </div>
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div class="lg:col-span-1 space-y-6">
-                        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg relative overflow-hidden">
-                            <h3 class="text-lg font-bold mb-1 text-white"><i class="fas fa-bullhorn text-red-500 mr-2"></i>New Broadcast</h3>
-                            <div class="flex bg-gray-900 p-1 rounded-lg mb-4 border border-gray-700">
-                                <button onclick="window.TaskManager.toggleMode('command')" id="btn-mode-cmd" class="flex-1 py-1 text-xs font-bold rounded-md bg-gray-700 text-white shadow transition">Shell Command</button>
-                                <button onclick="window.TaskManager.toggleMode('module')" id="btn-mode-mod" class="flex-1 py-1 text-xs font-bold rounded-md text-gray-400 hover:text-white transition">Module</button>
-                            </div>
-                            <div class="space-y-4">
-                                <div id="input-group-cmd">
-                                    <label class="block text-xs uppercase text-gray-500 font-bold mb-2">Command String</label>
-                                    <div class="relative">
-                                        <span class="absolute left-3 top-2.5 text-gray-500 font-mono">$</span>
-                                        <input type="text" id="broadcast-input" placeholder="whoami /all" class="w-full bg-gray-900 border border-gray-600 rounded-lg py-2 pl-8 pr-4 text-white focus:border-red-500 outline-none transition font-mono">
-                                    </div>
-                                </div>
-                                <div id="input-group-mod" class="hidden space-y-3">
-                                    <div>
-                                        <label class="block text-xs uppercase text-gray-500 font-bold mb-2">Select Module</label>
-                                        <select id="broadcast-module-select" class="w-full bg-gray-900 border border-gray-600 rounded-lg py-2 px-3 text-white focus:border-red-500 outline-none transition text-sm">
-                                            <option value="" disabled selected>Loading modules...</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label class="block text-xs uppercase text-gray-500 font-bold mb-2">Arguments (Optional)</label>
-                                        <input type="text" id="broadcast-module-args" placeholder="e.g. -v target.txt" class="w-full bg-gray-900 border border-gray-600 rounded-lg py-2 px-3 text-white focus:border-red-500 outline-none transition font-mono text-sm">
-                                    </div>
-                                </div>
-                                <button id="broadcast-btn" onclick="window.TaskManager.executeBroadcast()" class="w-full bg-gradient-to-r from-red-700 to-red-600 hover:from-red-600 hover:to-red-500 text-white font-bold py-3 rounded-lg shadow-lg transform active:scale-95 transition-all">
-                                    <i class="fas fa-play mr-2"></i> EXECUTE
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="lg:col-span-2">
-                        <div class="bg-gray-800 rounded-xl border border-gray-700 shadow-lg flex flex-col h-[600px]">
-                            <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800/50">
-                                <h3 class="font-bold text-gray-300"><i class="fas fa-history mr-2"></i>Local Audit Log</h3>
-                                <button onclick="window.TaskManager.clearHistory()" class="text-gray-500 hover:text-white px-2 transition"><i class="fas fa-trash-alt"></i></button>
-                            </div>
-                            <div class="flex-1 overflow-y-auto scrollbar-hide">
-                                <table class="w-full text-left border-collapse">
-                                    <tbody id="tasks-table-body" class="divide-y divide-gray-700 text-sm"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- HISTORY -->
-            <div id="page-history" class="hidden space-y-6">
-                <div class="flex justify-between items-center">
-                    <div>
-                        <h2 class="text-3xl font-light text-white">Global Command History</h2>
-                        <p class="text-sm text-gray-400">Server-side persistent log of all executed commands.</p>
-                    </div>
-                    <button onclick="window.HistoryManager.refresh()" class="text-green-500 hover:text-white border border-green-500 px-3 py-1 rounded text-sm transition"><i class="fas fa-sync"></i> Refresh</button>
-                </div>
-                <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden shadow-lg h-[600px] flex flex-col">
-                    <div class="flex-1 overflow-y-auto">
-                        <table class="w-full text-left border-collapse">
-                            <thead class="sticky top-0 bg-gray-700 shadow-md z-10">
-                                <tr class="text-gray-300 text-xs uppercase tracking-wider">
-                                    <th class="p-4 w-48">Timestamp</th><th class="p-4 w-24 text-center">Session</th>
-                                    <th class="p-4 w-64">Command</th><th class="p-4">Output</th><th class="p-4 w-24">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody id="global-history-body" class="divide-y divide-gray-700 text-sm font-mono text-gray-300">
-                                <tr><td colspan="5" class="p-4 text-center text-gray-500">Loading...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- LISTENERS -->
-            <div id="page-listeners" class="hidden space-y-6">
-                <div class="flex justify-between items-center">
-                    <div>
-                        <h2 class="text-3xl font-light text-white">Listeners</h2>
-                        <p class="text-sm text-gray-400">Manage C2 listeners. Create, start, and stop without restarting the server.</p>
-                    </div>
-                    <button onclick="window.ListenerManager.refresh()" class="text-green-500 hover:text-white border border-green-500 px-3 py-1 rounded text-sm transition"><i class="fas fa-sync"></i> Refresh</button>
-                </div>
-                <div class="bg-gray-800 rounded-xl border border-gray-700 p-6 shadow-lg">
-                    <h3 class="text-lg font-bold text-white mb-4">New Listener</h3>
-                    <div class="flex gap-4 items-end">
-                        <div class="flex-1"><label class="text-xs text-gray-400">Name</label><input type="text" id="new-listener-name" placeholder="https_main" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white text-sm"></div>
-                        <div class="w-32"><label class="text-xs text-gray-400">Port</label><input type="number" id="new-listener-port" placeholder="443" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white text-sm"></div>
-                        <div class="w-32"><label class="text-xs text-gray-400">Transport</label>
-                            <select id="new-listener-transport" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white text-sm">
-                                <option value="tls">TLS (raw)</option><option value="tcp_plain">TCP Plain</option>
-                                <option value="https">HTTPS</option><option value="http">HTTP</option>
-                            </select>
-                        </div>
-                        <button onclick="window.ListenerManager.create()" class="bg-green-600 hover:bg-green-500 text-black font-bold px-4 py-2 rounded text-sm transition">Create</button>
-                    </div>
-                </div>
-                <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden shadow-lg">
-                    <table class="w-full text-left">
-                        <thead class="bg-gray-700"><tr class="text-gray-300 text-xs uppercase tracking-wider">
-                            <th class="p-3">ID</th><th class="p-3">Name</th><th class="p-3">Port</th>
-                            <th class="p-3">Transport</th><th class="p-3">Status</th><th class="p-3 text-right">Actions</th>
-                        </tr></thead>
-                        <tbody id="listeners-tbody" class="text-sm"><tr><td colspan="6" class="p-4 text-center text-gray-500">Loading...</td></tr></tbody>
-                    </table>
-                </div>
-                <div class="bg-gray-800 rounded-xl border border-gray-700 p-6 shadow-lg">
-                    <div class="flex justify-between items-center mb-4">
-                        <div><h3 class="text-lg font-bold text-white">Auto-Recon</h3><p class="text-xs text-gray-400">Commands run automatically on every new session check-in.</p></div>
-                        <button onclick="window.ReconConfig.refresh()" class="text-green-500 hover:text-white text-xs border border-green-500 px-2 py-1 rounded"><i class="fas fa-sync"></i></button>
-                    </div>
-                    <div class="flex gap-2 mb-4">
-                        <input type="text" id="recon-cmd-input" placeholder="whoami /all" class="flex-1 bg-gray-900 border border-gray-700 rounded p-2 text-white text-sm font-mono" onkeydown="if(event.key==='Enter') ReconConfig.add()">
-                        <button onclick="window.ReconConfig.add()" class="bg-green-600 hover:bg-green-500 text-black font-bold px-4 py-2 rounded text-sm">Add</button>
-                    </div>
-                    <table class="w-full text-left">
-                        <thead class="bg-gray-700/50"><tr class="text-gray-400 text-xs uppercase"><th class="p-2 w-12">#</th><th class="p-2">Command</th><th class="p-2 w-12"></th></tr></thead>
-                        <tbody id="recon-tbody"><tr><td colspan="3" class="p-3 text-center text-gray-500 text-sm">Click refresh to load</td></tr></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- BUILDER PAGE ─────────────────────────────────────────────── -->
-            <div id="page-builder" class="hidden space-y-6">
-                <div class="flex justify-between items-center">
-                    <div>
-                        <h2 class="text-3xl font-light text-white">Agent Builder</h2>
-                        <p class="text-sm text-gray-400">Compile and download a new agent binary. Requires <code class="text-green-400">cargo</code> and cross-compilation toolchains in the server environment.</p>
-                    </div>
-                    <button onclick="window.BuilderManager.refreshJobList()" class="text-green-500 hover:text-white border border-green-500 px-3 py-1 rounded text-sm transition">
-                        <i class="fas fa-sync"></i> Refresh Jobs
-                    </button>
-                </div>
-
-                <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-
-                    <!-- LEFT: Build form -->
-                    <div class="bg-gray-800 rounded-xl border border-gray-700 p-6 shadow-lg space-y-5">
-                        <h3 class="text-base font-bold text-white border-b border-gray-700 pb-3">Build Configuration</h3>
-
-                        <!-- C2 connection -->
-                        <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">C2 Host <span class="text-red-400">*</span></label>
-                                <input type="text" id="builder-host" placeholder="10.0.0.1"
-                                    class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm font-mono focus:border-green-500 outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Port / Pipe Name <span class="text-red-400">*</span></label>
-                                <input type="text" id="builder-port" placeholder="4443"
-                                    class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm font-mono focus:border-green-500 outline-none">
-                            </div>
-                        </div>
-
-                        <!-- Platform + Transport + Format -->
-                        <div class="grid grid-cols-3 gap-4">
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Platform</label>
-                                <select id="builder-platform" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-green-500 outline-none">
-                                    <option value="linux">Linux x64</option>
-                                    <option value="windows">Windows x64</option>
-                                    <option value="macos">macOS x64</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Transport</label>
-                                <select id="builder-transport" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-green-500 outline-none">
-                                    <option value="tls">TLS (raw)</option>
-                                    <option value="tcp_plain">TCP plain</option>
-                                    <option value="http">HTTP</option>
-                                    <option value="https">HTTPS</option>
-                                    <option value="named_pipe">Named pipe</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Format</label>
-                                <select id="builder-format" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-green-500 outline-none">
-                                    <option value="exe">EXE / ELF</option>
-                                    <option value="dll">DLL</option>
-                                    <option value="service">Windows Service</option>
-                                    <option value="stager">Stager (minimal)</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <!-- Traffic profile -->
-                        <div>
-                            <label class="block text-xs text-gray-400 mb-1">Traffic Profile</label>
-                            <select id="builder-profile" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-green-500 outline-none">
-                                <option value="default">Default (raw length-prefixed)</option>
-                                <option value="http_post">HTTP POST (legacy)</option>
-                                <option value="http_image">HTTP image (GIF masquerade)</option>
-                            </select>
-                        </div>
-
-                        <!-- Sleep / jitter -->
-                        <div class="grid grid-cols-3 gap-4">
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Sleep (seconds)</label>
-                                <input type="number" id="builder-sleep" value="40" min="0"
-                                    class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-green-500 outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Jitter min (%)</label>
-                                <input type="number" id="builder-jitter-min" value="20" min="0" max="100"
-                                    class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-green-500 outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Jitter max (%)</label>
-                                <input type="number" id="builder-jitter-max" value="10" min="0" max="100"
-                                    class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-green-500 outline-none">
-                            </div>
-                        </div>
-
-                        <!-- Bloat + Kill date + Debug -->
-                        <div class="grid grid-cols-3 gap-4">
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Bloat (MB)</label>
-                                <input type="number" id="builder-bloat" value="0" min="0"
-                                    class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-green-500 outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">Kill date (days, 0=none)</label>
-                                <input type="number" id="builder-days" value="0" min="0"
-                                    class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-green-500 outline-none">
-                            </div>
-                            <div class="flex items-end pb-1">
-                                <label class="flex items-center gap-2 cursor-pointer select-none">
-                                    <input type="checkbox" id="builder-debug" class="w-4 h-4 rounded bg-gray-900 border-gray-600 text-green-500 focus:ring-0">
-                                    <span class="text-sm text-gray-300">Debug mode</span>
-                                </label>
-                            </div>
-                        </div>
-
-                        <!-- Build button + status badge -->
-                        <div class="flex items-center gap-4 pt-2">
-                            <button id="builder-btn" onclick="window.BuilderManager.build()"
-                                class="bg-green-600 hover:bg-green-500 text-black font-bold px-6 py-2.5 rounded-lg shadow-lg transition flex items-center gap-2">
-                                <i class="fas fa-hammer"></i> Build Agent
-                            </button>
-                            <span id="builder-status-badge" class="hidden"></span>
-                        </div>
-
-                        <!-- Download row (hidden until build succeeds) -->
-                        <div id="builder-download-row" class="hidden pt-1">
-                            <a id="builder-download-link" href="#" data-job-id=""
-                               class="inline-flex items-center gap-2 bg-blue-700 hover:bg-blue-600 text-white font-bold px-5 py-2 rounded-lg shadow transition text-sm">
-                                <i class="fas fa-download"></i> <span>Download agent</span>
-                            </a>
-                        </div>
-                    </div>
-
-                    <!-- RIGHT: Live build log — fixed height, never grows page -->
-                    <div class="bg-gray-900 rounded-xl border border-gray-700 shadow-inner">
-                        <div class="px-4 py-3 border-b border-gray-700 flex items-center gap-2 text-xs text-gray-400 font-mono">
-                            <i class="fas fa-terminal text-green-500"></i>
-                            <span>Build log</span>
-                        </div>
-                        <div id="builder-log"
-                             class="overflow-y-auto p-4 space-y-0.5"
-                             style="height:380px;">
-                            <div class="text-gray-600 italic font-mono text-xs">Waiting for build to start...</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Previous build jobs -->
-                <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden shadow-lg">
-                    <div class="px-5 py-3 border-b border-gray-700 text-sm font-bold text-gray-300">
-                        <i class="fas fa-history mr-2"></i>Previous Builds
-                    </div>
-                    <table class="w-full text-left">
-                        <thead class="bg-gray-700/50">
-                            <tr class="text-gray-400 text-xs uppercase tracking-wider">
-                                <th class="p-3">Job ID</th>
-                                <th class="p-3">Status</th>
-                                <th class="p-3">Started</th>
-                                <th class="p-3">Finished</th>
-                                <th class="p-3">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="builder-jobs-tbody" class="text-sm divide-y divide-gray-700">
-                            <tr><td colspan="5" class="p-4 text-center text-gray-500 text-sm">No builds yet</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            <!-- END BUILDER PAGE -->
-
-            <!-- JOBS -->
-            <div id="page-jobs" class="hidden space-y-6">
-                <div class="flex justify-between items-center">
-                    <div><h2 class="text-3xl font-light text-white">Background Jobs</h2><p class="text-sm text-gray-400">Active and completed jobs across all sessions.</p></div>
-                    <button onclick="window.JobView.refresh()" class="text-green-500 hover:text-white border border-green-500 px-3 py-1 rounded text-sm transition"><i class="fas fa-sync"></i> Refresh</button>
-                </div>
-                <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden shadow-lg">
-                    <table class="w-full text-left">
-                        <thead class="bg-gray-700"><tr class="text-gray-300 text-xs uppercase tracking-wider">
-                            <th class="p-3">Job</th><th class="p-3">Host</th><th class="p-3">Description</th>
-                            <th class="p-3">Status</th><th class="p-3">Started</th><th class="p-3">Finished</th>
-                            <th class="p-3 text-right">Actions</th>
-                        </tr></thead>
-                        <tbody id="jobs-tbody" class="text-sm"><tr><td colspan="7" class="p-4 text-center text-gray-500">Click Refresh to load jobs</td></tr></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- AUDIT -->
-            <div id="page-audit" class="hidden space-y-6">
-                <div class="flex justify-between items-center">
-                    <div><h2 class="text-3xl font-light text-white">Audit Log</h2><p class="text-sm text-gray-400">Who did what, when, and to which session.</p></div>
-                    <button onclick="window.AuditView.refresh()" class="text-green-500 hover:text-white border border-green-500 px-3 py-1 rounded text-sm transition"><i class="fas fa-sync"></i> Refresh</button>
-                </div>
-                <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden shadow-lg h-[600px] flex flex-col">
-                    <div class="flex-1 overflow-y-auto">
-                        <table class="w-full text-left border-collapse">
-                            <thead class="sticky top-0 bg-gray-700 shadow-md z-10">
-                                <tr class="text-gray-300 text-xs uppercase tracking-wider">
-                                    <th class="p-3 w-44">Timestamp</th><th class="p-3 w-28">Operator</th>
-                                    <th class="p-3 w-36">Action</th><th class="p-3 w-20">Session</th><th class="p-3">Details</th>
-                                </tr>
-                            </thead>
-                            <tbody id="audit-tbody" class="text-sm"><tr><td colspan="5" class="p-4 text-center text-gray-500">Click Refresh to load</td></tr></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-        </div><!-- /p-8 -->
-    </main>
-
-    <!-- TERMINAL MODAL -->
-    <div id="terminal-modal" class="hidden fixed inset-0 z-40 bg-black bg-opacity-80 flex items-center justify-center p-10 backdrop-blur-sm">
-        <div class="bg-gray-900 w-full max-w-4xl h-3/4 rounded-lg border border-gray-600 shadow-2xl flex flex-col font-mono text-sm">
-            <div class="bg-gray-800 p-2 flex justify-between items-center border-b border-gray-700">
-                <span id="term-title" class="text-gray-300 ml-2">Session</span>
-                <button onclick="window.Terminal.close()" class="text-red-400 hover:text-white px-3"><i class="fas fa-times"></i></button>
-            </div>
-            <div id="term-output" class="flex-1 p-4 overflow-y-auto text-green-400 space-y-1"></div>
-            <div class="bg-gray-800 p-2 flex items-center border-t border-gray-700">
-                <span class="text-green-500 mr-2 font-bold">$</span>
-                <input type="text" id="term-input" class="flex-1 bg-transparent outline-none text-white" autocomplete="off" placeholder="Type command...">
-            </div>
+        <div class="stat-grid">
+          <div class="stat-card accent">
+            <div class="stat-label">Active Sessions</div>
+            <div class="stat-value white" id="stat-total">0</div>
+          </div>
+          <div class="stat-card blue">
+            <div class="stat-label">Windows</div>
+            <div class="stat-value blue" id="stat-win">0</div>
+          </div>
+          <div class="stat-card yellow" style="display:none" id="stat-linux-card">
+            <div class="stat-label">Linux</div>
+            <div class="stat-value yellow" id="stat-linux">0</div>
+          </div>
         </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;" class="dashboard-grid-2">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-chart-pie"></i> OS Distribution</span>
+            </div>
+            <div class="card-body" style="max-height:200px;">
+              <canvas id="osChart"></canvas>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-bolt"></i> Activity</span>
+            </div>
+            <div class="card-body" style="padding:12px;">
+              <div id="activity-log" class="log-pane" style="height:160px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── NETWORK MAP ────────────────────────────────────────────── -->
+      <div id="page-network" class="hidden" style="display:none;flex-direction:column;height:calc(100dvh - 120px);">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Network Topology</h1>
+            <p class="page-subtitle">Session graph and pivot chains</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.NetworkManager.init()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i><span class="hide-mobile"> Refresh</span>
+            </button>
+            <button onclick="window.NetworkManager.layout()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-random"></i><span class="hide-mobile"> Re-layout</span>
+            </button>
+          </div>
+        </div>
+        <div class="card" style="flex:1;position:relative;overflow:hidden;">
+          <div id="cy" style="position:absolute;inset:0;width:100%;height:100%;"></div>
+          <div style="position:absolute;bottom:14px;right:14px;background:rgba(13,17,23,0.85);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 14px;font-size:11px;pointer-events:none;display:flex;flex-direction:column;gap:7px;">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--red);display:inline-block;"></span><span style="color:var(--text-secondary)">C2 Server</span></div>
+            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--blue);display:inline-block;"></span><span style="color:var(--text-secondary)">Windows</span></div>
+            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--yellow);display:inline-block;"></span><span style="color:var(--text-secondary)">Linux</span></div>
+            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;border:2px solid var(--accent);display:inline-block;"></span><span style="color:var(--text-secondary)">Proxy On</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SESSIONS / CONTROL ─────────────────────────────────────── -->
+      <div id="page-control" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Sessions</h1>
+            <p class="page-subtitle">Active agent connections</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.API.refreshHosts()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i><span class="hide-mobile"> Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Desktop table -->
+        <div class="card hide-mobile" id="hosts-table-card">
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Hostname</th>
+                  <th>IP Address</th>
+                  <th>OS</th>
+                  <th>HWID</th>
+                  <th>Scripts</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="hosts-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Mobile cards -->
+        <div id="hosts-cards-mobile" style="display:none;flex-direction:column;gap:10px;"></div>
+      </div>
+
+      <!-- ── FILES ──────────────────────────────────────────────────── -->
+      <div id="page-files" class="hidden" style="display:none;flex-direction:column;gap:14px;height:calc(100dvh - 120px);">
+        <div class="page-header" style="margin-bottom:0;">
+          <div>
+            <h1 class="page-title">File Browser</h1>
+            <p class="page-subtitle">Interactive remote filesystem</p>
+          </div>
+          <div class="page-actions">
+            <select id="file-session-select" class="form-select" style="width:auto;font-size:12.5px;padding:7px 28px 7px 10px;">
+              <option value="">Select session...</option>
+            </select>
+            <button onclick="window.FileManager.browse()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="file-toolbar">
+          <button onclick="window.FileManager.up()" class="icon-btn" title="Up"><i class="fas fa-arrow-up"></i></button>
+          <span style="color:var(--text-muted);font-size:12px;font-family:monospace;">PATH</span>
+          <input type="text" id="file-path-input" class="file-path-input" value="/"
+                 onkeydown="if(event.key==='Enter') window.FileManager.browse(this.value)">
+          <button onclick="window.FileManager.browse(document.getElementById('file-path-input').value)"
+                  class="icon-btn" title="Go"><i class="fas fa-chevron-right"></i></button>
+        </div>
+
+        <div class="card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+          <div style="display:flex;align-items:center;padding:9px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);gap:16px;">
+            <span style="width:24px;"></span>
+            <span style="flex:1;">Name</span>
+            <span style="width:70px;text-align:right;" class="hide-mobile">Size</span>
+            <span style="width:60px;text-align:center;" class="hide-mobile">Perms</span>
+            <span style="width:120px;text-align:right;" class="hide-mobile">Modified</span>
+          </div>
+          <div id="file-list-container" style="flex:1;overflow-y:auto;padding:8px;">
+            <div style="text-align:center;color:var(--text-muted);padding:40px 16px;font-size:13px;">
+              Select a session to browse files.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── PROXIES ────────────────────────────────────────────────── -->
+      <div id="page-proxies" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">SOCKS5 Proxies</h1>
+            <p class="page-subtitle">Active tunnel sessions</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.ProxyManager.checkAll()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-globe"></i><span class="hide-mobile"> Check IPs</span>
+            </button>
+            <button onclick="window.ProxyManager.refreshList()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Tunnel Port</th>
+                  <th>SOCKS5 Port</th>
+                  <th class="hide-mobile">Public IP</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="proxies-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── BROADCAST / TASKS ───────────────────────────────────────── -->
+      <div id="page-tasks" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Broadcast</h1>
+            <p class="page-subtitle">Execute commands across all sessions</p>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 2fr;gap:18px;" class="broadcast-grid">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-satellite-dish" style="color:var(--red);"></i> New Broadcast</span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+              <div class="tab-strip">
+                <button class="tab-strip-btn active" id="btn-mode-cmd"
+                        onclick="window.TaskManager.toggleMode('command')">Shell</button>
+                <button class="tab-strip-btn" id="btn-mode-mod"
+                        onclick="window.TaskManager.toggleMode('module')">Module</button>
+              </div>
+
+              <div id="input-group-cmd">
+                <label class="form-label">Command</label>
+                <div style="position:relative;">
+                  <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-family:monospace;font-size:14px;">$</span>
+                  <input type="text" id="broadcast-input" placeholder="whoami /all"
+                         class="form-input form-mono" style="padding-left:26px;">
+                </div>
+              </div>
+
+              <div id="input-group-mod" class="hidden" style="display:none;flex-direction:column;gap:10px;">
+                <div>
+                  <label class="form-label">Module</label>
+                  <select id="broadcast-module-select" class="form-select">
+                    <option value="" disabled selected>Loading...</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label">Arguments</label>
+                  <input type="text" id="broadcast-module-args" placeholder="-v target.txt"
+                         class="form-input form-mono">
+                </div>
+              </div>
+
+              <button id="broadcast-btn" onclick="window.TaskManager.executeBroadcast()"
+                      class="btn btn-full" style="background:var(--red);color:#fff;border:none;padding:12px;">
+                <i class="fas fa-play"></i> Execute on All
+              </button>
+            </div>
+          </div>
+
+          <div class="card" style="display:flex;flex-direction:column;max-height:500px;">
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-scroll"></i> Execution Log</span>
+              <button onclick="window.TaskManager.clearHistory()" class="icon-btn" title="Clear">
+                <i class="fas fa-trash-alt"></i>
+              </button>
+            </div>
+            <div style="flex:1;overflow-y:auto;">
+              <table class="data-table">
+                <tbody id="tasks-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── HISTORY ────────────────────────────────────────────────── -->
+      <div id="page-history" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Command History</h1>
+            <p class="page-subtitle">Server-side log of all executed commands</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.HistoryManager.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+        <div class="card" style="max-height:calc(100dvh - 180px);display:flex;flex-direction:column;">
+          <div style="flex:1;overflow-y:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="hide-mobile">Timestamp</th>
+                  <th>Session</th>
+                  <th>Command</th>
+                  <th class="hide-mobile">Output</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="global-history-body" class="mono">
+                <tr class="empty-row"><td colspan="5">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── LISTENERS ──────────────────────────────────────────────── -->
+      <div id="page-listeners" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Listeners</h1>
+            <p class="page-subtitle">Manage C2 ingress points</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.ListenerManager.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Create form -->
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-plus-circle" style="color:var(--accent);"></i> New Listener</span>
+          </div>
+          <div class="card-body">
+            <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:end;">
+              <div>
+                <label class="form-label">Name</label>
+                <input type="text" id="new-listener-name" placeholder="https_main" class="form-input">
+              </div>
+              <div style="width:90px;">
+                <label class="form-label">Port</label>
+                <input type="number" id="new-listener-port" placeholder="443" class="form-input">
+              </div>
+              <div style="width:150px;" class="hide-mobile">
+                <label class="form-label">Transport</label>
+                <select id="new-listener-transport" class="form-select">
+                  <option value="tls">TLS (raw)</option>
+                  <option value="tcp_plain">TCP plain</option>
+                  <option value="https">HTTPS</option>
+                  <option value="http">HTTP</option>
+                </select>
+              </div>
+              <button onclick="window.ListenerManager.create()" class="btn btn-primary" style="align-self:flex-end;">
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th><th>Name</th><th>Port</th>
+                  <th class="hide-mobile">Transport</th>
+                  <th>Status</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="listeners-tbody">
+                <tr class="empty-row"><td colspan="6">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Auto-Recon -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-robot"></i> Auto-Recon</span>
+            <button onclick="window.ReconConfig.refresh()" class="icon-btn"><i class="fas fa-sync"></i></button>
+          </div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+            <p style="font-size:12px;color:var(--text-muted);">Commands run automatically on each new session check-in.</p>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="recon-cmd-input" placeholder="whoami /all"
+                     class="form-input form-mono" style="flex:1;"
+                     onkeydown="if(event.key==='Enter') window.ReconConfig.add()">
+              <button onclick="window.ReconConfig.add()" class="btn btn-primary btn-sm">Add</button>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr><th style="width:40px;">#</th><th>Command</th><th style="width:40px;"></th></tr>
+              </thead>
+              <tbody id="recon-tbody">
+                <tr class="empty-row"><td colspan="3">Click sync to load</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── BUILDER ────────────────────────────────────────────────── -->
+      <div id="page-builder" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Agent Builder</h1>
+            <p class="page-subtitle">Compile and download implant binaries</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.BuilderManager.refreshJobList()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="builder-grid" style="margin-bottom:18px;">
+          <!-- Form -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-sliders-h"></i> Build Configuration</span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div>
+                  <label class="form-label">C2 Host <span style="color:var(--red);">*</span></label>
+                  <input type="text" id="builder-host" placeholder="10.0.0.1"
+                         class="form-input form-mono">
+                </div>
+                <div>
+                  <label class="form-label">Port / Pipe <span style="color:var(--red);">*</span></label>
+                  <input type="text" id="builder-port" placeholder="4443"
+                         class="form-input form-mono">
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+                <div>
+                  <label class="form-label">Platform</label>
+                  <select id="builder-platform" class="form-select">
+                    <option value="linux">Linux x64</option>
+                    <option value="windows">Windows x64</option>
+                    <option value="macos">macOS x64</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label">Transport</label>
+                  <select id="builder-transport" class="form-select">
+                    <option value="tls">TLS</option>
+                    <option value="tcp_plain">TCP plain</option>
+                    <option value="http">HTTP</option>
+                    <option value="https">HTTPS</option>
+                    <option value="named_pipe">Named pipe</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label">Format</label>
+                  <select id="builder-format" class="form-select">
+                    <option value="exe">EXE / ELF</option>
+                    <option value="dll">DLL</option>
+                    <option value="service">Service</option>
+                    <option value="stager">Stager</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="form-label">Traffic Profile</label>
+                <select id="builder-profile" class="form-select">
+                  <option value="default">Default (raw length-prefixed)</option>
+                  <option value="http_post">HTTP POST</option>
+                  <option value="http_image">HTTP image (GIF mask)</option>
+                </select>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+                <div>
+                  <label class="form-label">Sleep (s)</label>
+                  <input type="number" id="builder-sleep" value="40" min="0" class="form-input">
+                </div>
+                <div>
+                  <label class="form-label">Jitter min %</label>
+                  <input type="number" id="builder-jitter-min" value="20" min="0" max="100" class="form-input">
+                </div>
+                <div>
+                  <label class="form-label">Jitter max %</label>
+                  <input type="number" id="builder-jitter-max" value="10" min="0" max="100" class="form-input">
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end;">
+                <div>
+                  <label class="form-label">Bloat (MB)</label>
+                  <input type="number" id="builder-bloat" value="0" min="0" class="form-input">
+                </div>
+                <div>
+                  <label class="form-label">Kill date (days, 0=off)</label>
+                  <input type="number" id="builder-days" value="0" min="0" class="form-input">
+                </div>
+              </div>
+
+              <label class="check-label">
+                <input type="checkbox" id="builder-debug">
+                Debug mode
+              </label>
+
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <button id="builder-btn" onclick="window.BuilderManager.build()" class="btn btn-primary">
+                  <i class="fas fa-hammer"></i> Build Agent
+                </button>
+                <span id="builder-status-badge" class="hidden"></span>
+              </div>
+
+              <div id="builder-download-row" class="hidden">
+                <a id="builder-download-link" href="#" data-job-id=""
+                   class="btn btn-full" style="background:var(--blue);color:#fff;border-color:var(--blue);">
+                  <i class="fas fa-download"></i> <span>Download agent</span>
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Log -->
+          <div class="card" style="display:flex;flex-direction:column;">
+            <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+              <span class="card-title"><i class="fas fa-terminal" style="color:var(--accent);"></i> Build Log</span>
+              <div id="builder-log-filters" style="display:none;gap:5px;align-items:center;">
+                <button id="blf-all"  class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('all')">All</button>
+                <button id="blf-info" class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('info')">Info</button>
+                <button id="blf-warn" class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('warn')">Warnings</button>
+                <button id="blf-ok"   class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('ok')">Success</button>
+              </div>
+            </div>
+            <div id="builder-log" class="log-pane" style="flex:1;height:380px;border-radius:0 0 var(--r-lg) var(--r-lg);">
+              <div class="log-default" style="font-style:italic;">Waiting for build to start...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Previous builds -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-history"></i> Previous Builds</span>
+          </div>
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Job ID</th><th>Status</th>
+                  <th class="hide-mobile">Started</th>
+                  <th class="hide-mobile">Finished</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="builder-jobs-tbody">
+                <tr class="empty-row"><td colspan="5">No builds yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── JOBS ───────────────────────────────────────────────────── -->
+      <div id="page-jobs" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Background Jobs</h1>
+            <p class="page-subtitle">Long-running tasks across all sessions</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.JobView.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Job</th><th class="hide-mobile">Host</th>
+                  <th class="hide-mobile">Description</th>
+                  <th>Status</th>
+                  <th class="hide-mobile">Started</th>
+                  <th class="hide-mobile">Finished</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="jobs-tbody">
+                <tr class="empty-row"><td colspan="7">Click refresh to load</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── AUDIT LOG ──────────────────────────────────────────────── -->
+      <div id="page-audit" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Audit Log</h1>
+            <p class="page-subtitle">Full operator action history</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.AuditView.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+        <div class="card" style="max-height:calc(100dvh - 180px);display:flex;flex-direction:column;">
+          <div style="flex:1;overflow-y:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="hide-mobile">Timestamp</th>
+                  <th>Operator</th>
+                  <th>Action</th>
+                  <th class="hide-mobile">Session</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="audit-tbody">
+                <tr class="empty-row"><td colspan="5">Click refresh to load</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /page-wrapper -->
+  </main>
+
+  <!-- ── Mobile Bottom Navigation ──────────────────────────────────── -->
+  <nav id="mobile-nav">
+    <div class="mobile-nav-inner">
+      <button class="mobile-nav-btn active" data-page="stats"
+              onclick="window.Router.navigate('stats',event)">
+        <i class="fas fa-chart-pie"></i>
+        <span>Dash</span>
+      </button>
+      <button class="mobile-nav-btn" data-page="control"
+              onclick="window.Router.navigate('control',event)">
+        <i class="fas fa-terminal"></i>
+        <span>Sessions</span>
+      </button>
+      <button class="mobile-nav-btn" data-page="listeners"
+              onclick="window.Router.navigate('listeners',event)">
+        <i class="fas fa-broadcast-tower"></i>
+        <span>Listeners</span>
+      </button>
+      <button class="mobile-nav-btn" data-page="builder"
+              onclick="window.Router.navigate('builder',event)">
+        <i class="fas fa-hammer"></i>
+        <span>Builder</span>
+      </button>
+      <button class="mobile-nav-btn" id="mobile-more-btn"
+              onclick="window.MobileMore.open()">
+        <i class="fas fa-grid-2"></i>
+        <span>More</span>
+      </button>
     </div>
+  </nav>
 
-    <div id="proc-modal" class="hidden fixed inset-0 z-40 bg-black bg-opacity-80 flex items-center justify-center p-10 backdrop-blur-sm">
-        <div class="bg-gray-900 w-full max-w-2xl h-3/4 rounded-lg border border-gray-600 shadow-2xl flex flex-col">
-            <div class="bg-gray-800 p-3 flex justify-between items-center border-b border-gray-700">
-                <span id="proc-title" class="text-gray-300 font-bold text-sm">Processes</span>
-                <button onclick="ProcView.close()" class="text-red-400 hover:text-white px-3"><i class="fas fa-times"></i></button>
-            </div>
-            <div class="flex-1 overflow-y-auto">
-                <table class="w-full text-left">
-                    <thead class="sticky top-0 bg-gray-700"><tr class="text-xs text-gray-400 uppercase"><th class="px-3 py-2 w-20">PID</th><th class="px-3 py-2">Name</th><th class="px-3 py-2 w-16 text-right">Act</th></tr></thead>
-                    <tbody id="proc-tbody"></tbody>
-                </table>
-            </div>
-        </div>
+</div><!-- /app-shell -->
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     MOBILE MORE SHEET
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="mobile-more-sheet">
+  <div class="more-backdrop" onclick="window.MobileMore.close()"></div>
+  <div class="more-drawer">
+    <div class="more-handle"></div>
+    <div class="more-title">All Pages</div>
+    <div class="more-grid">
+      <button class="more-item" data-page="network" onclick="window.Router.navigate('network',event);window.MobileMore.close()">
+        <i class="fas fa-project-diagram"></i><span>Network</span>
+      </button>
+      <button class="more-item" data-page="files" onclick="window.Router.navigate('files',event);window.MobileMore.close()">
+        <i class="fas fa-folder-open"></i><span>Files</span>
+      </button>
+      <button class="more-item" data-page="proxies" onclick="window.Router.navigate('proxies',event);window.MobileMore.close()">
+        <i class="fas fa-network-wired"></i><span>Proxies</span>
+      </button>
+      <button class="more-item" data-page="tasks" onclick="window.Router.navigate('tasks',event);window.MobileMore.close()">
+        <i class="fas fa-satellite-dish"></i><span>Broadcast</span>
+      </button>
+      <button class="more-item" data-page="history" onclick="window.Router.navigate('history',event);window.MobileMore.close()">
+        <i class="fas fa-history"></i><span>History</span>
+      </button>
+      <button class="more-item" data-page="jobs" onclick="window.Router.navigate('jobs',event);window.MobileMore.close()">
+        <i class="fas fa-cogs"></i><span>Jobs</span>
+      </button>
+      <button class="more-item" data-page="audit" onclick="window.Router.navigate('audit',event);window.MobileMore.close()">
+        <i class="fas fa-shield-alt"></i><span>Audit</span>
+      </button>
+      <button class="more-item" onclick="window.Theme.toggle();window.MobileMore.close()">
+        <i class="fas fa-circle-half-stroke"></i><span>Theme</span>
+      </button>
     </div>
-
-    <div id="screenshot-modal" class="hidden fixed inset-0 z-40 bg-black bg-opacity-80 flex items-center justify-center p-10 backdrop-blur-sm">
-        <div class="bg-gray-900 w-full max-w-4xl max-h-[90vh] rounded-lg border border-gray-600 shadow-2xl flex flex-col">
-            <div class="bg-gray-800 p-3 flex justify-between items-center border-b border-gray-700">
-                <span class="text-gray-300 font-bold text-sm"><i class="fas fa-camera"></i> Screenshots</span>
-                <button onclick="ScreenshotView.close()" class="text-red-400 hover:text-white px-3"><i class="fas fa-times"></i></button>
-            </div>
-            <div id="screenshot-container" class="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 gap-4"></div>
-        </div>
+    <div class="more-user-section">
+      <div id="user-badge-mobile" style="font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:8px;">
+        <i class="fas fa-user-circle" style="color:var(--accent);"></i>
+        <span></span>
+      </div>
+      <button class="more-logout" onclick="window.Auth.logout()">
+        <i class="fas fa-sign-out-alt"></i> Sign out
+      </button>
     </div>
+  </div>
+</div>
 
-    <div id="toast-container" class="fixed top-4 right-4 z-[200] flex flex-col gap-2 max-w-sm"></div>
+<!-- ══════════════════════════════════════════════════════════════════════
+     TERMINAL MODAL
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="terminal-modal" class="hidden modal-overlay">
+  <div class="modal-box" style="max-width:960px;height:78dvh;">
+    <div class="modal-header">
+      <div class="modal-title">
+        <i class="fas fa-terminal" style="color:var(--accent);"></i>
+        <span id="term-title">Session</span>
+      </div>
+      <button class="modal-close" onclick="window.Terminal.close()">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div id="term-output" class="term-output"></div>
+    <div class="term-input-row">
+      <span class="term-prompt">$</span>
+      <input type="text" id="term-input" class="term-input-field"
+             autocomplete="off" spellcheck="false" placeholder="Enter command...">
+    </div>
+  </div>
+</div>
 
-    <script src="/panel/js/ui.js"></script>
-    <script src="/panel/js/auth.js"></script>
-    <script src="/panel/js/api.js"></script>
-    <script src="/panel/js/terminal.js"></script>
-    <script src="/panel/js/proxy.js"></script>
-    <script src="/panel/js/pulse.js"></script>
-    <script src="/panel/js/tasks.js"></script>
-    <script src="/panel/js/modules.js"></script>
-    <script src="/panel/js/history.js"></script>
-    <script src="/panel/js/network.js"></script>
-    <script src="/panel/js/files.js"></script>
-    <script src="/panel/js/listeners.js"></script>
-    <script src="/panel/js/jobview.js"></script>
-    <script src="/panel/js/auditview.js"></script>
-    <script src="/panel/js/procview.js"></script>
-    <script src="/panel/js/screenshots.js"></script>
-    <script src="/panel/js/notify.js"></script>
-    <script src="/panel/js/theme.js"></script>
-    <script src="/panel/js/shortcuts.js"></script>
-    <script src="/panel/js/recon.js"></script>
-    <script src="/panel/js/notes.js"></script>
-    <script src="/panel/js/builder.js"></script>
-    <script src="/panel/js/app.js"></script>
+<!-- PROCESS VIEWER MODAL -->
+<div id="proc-modal" class="hidden modal-overlay">
+  <div class="modal-box" style="max-width:540px;max-height:80dvh;">
+    <div class="modal-header">
+      <div class="modal-title"><i class="fas fa-microchip"></i> <span id="proc-title">Processes</span></div>
+      <button class="modal-close" onclick="ProcView.close()"><i class="fas fa-times"></i></button>
+    </div>
+    <div style="flex:1;overflow-y:auto;">
+      <table class="data-table">
+        <thead>
+          <tr><th style="width:70px;">PID</th><th>Name</th><th style="width:60px;text-align:right;">Act</th></tr>
+        </thead>
+        <tbody id="proc-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- SCREENSHOT MODAL -->
+<div id="screenshot-modal" class="hidden modal-overlay">
+  <div class="modal-box" style="max-width:900px;">
+    <div class="modal-header">
+      <div class="modal-title"><i class="fas fa-camera"></i> Screenshots</div>
+      <button class="modal-close" onclick="ScreenshotView.close()"><i class="fas fa-times"></i></button>
+    </div>
+    <div id="screenshot-container"
+         style="flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(2,1fr);gap:14px;">
+    </div>
+  </div>
+</div>
+
+<!-- APP MODAL (replaces browser alert/confirm) -->
+<div id="app-modal" class="hidden modal-overlay" style="z-index:110;" onclick="window.Modal._backdropClick(event)">
+  <div class="modal-box" style="max-width:420px;min-height:unset;">
+    <div class="modal-header">
+      <div class="modal-title">
+        <i id="app-modal-icon" class="fas fa-info-circle text-blue-400"></i>
+        <span id="app-modal-title-text">Info</span>
+      </div>
+      <button class="modal-close" onclick="window.Modal._resolve(false)"><i class="fas fa-times"></i></button>
+    </div>
+    <div id="app-modal-body" style="padding:18px 20px 10px;font-size:13px;color:var(--text-secondary);line-height:1.6;white-space:pre-wrap;word-break:break-word;"></div>
+    <div style="padding:4px 20px 16px;display:flex;justify-content:flex-end;gap:8px;">
+      <button id="app-modal-cancel" class="btn btn-ghost btn-sm" onclick="window.Modal._resolve(false)" style="display:none;">Cancel</button>
+      <button id="app-modal-ok"     class="btn btn-ghost btn-sm" onclick="window.Modal._resolve(true)">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div id="toast-container"></div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SCRIPTS
+     ══════════════════════════════════════════════════════════════════════ -->
+<script>
+// Mobile More Sheet controller
+window.MobileMore = {
+  open()  { document.getElementById('mobile-more-sheet').classList.add('open'); },
+  close() { document.getElementById('mobile-more-sheet').classList.remove('open'); }
+};
+</script>
+
+<script src="/panel/js/ui.js"></script>
+<script src="/panel/js/auth.js"></script>
+<script src="/panel/js/api.js"></script>
+<script src="/panel/js/terminal.js"></script>
+<script src="/panel/js/proxy.js"></script>
+<script src="/panel/js/pulse.js"></script>
+<script src="/panel/js/tasks.js"></script>
+<script src="/panel/js/modules.js"></script>
+<script src="/panel/js/history.js"></script>
+<script src="/panel/js/network.js"></script>
+<script src="/panel/js/files.js"></script>
+<script src="/panel/js/listeners.js"></script>
+<script src="/panel/js/jobview.js"></script>
+<script src="/panel/js/auditview.js"></script>
+<script src="/panel/js/procview.js"></script>
+<script src="/panel/js/screenshots.js"></script>
+<script src="/panel/js/notify.js"></script>
+<script src="/panel/js/theme.js"></script>
+<script src="/panel/js/shortcuts.js"></script>
+<script src="/panel/js/recon.js"></script>
+<script src="/panel/js/notes.js"></script>
+<script src="/panel/js/builder.js"></script>
+<script src="/panel/js/app.js"></script>
 </body>
 </html>

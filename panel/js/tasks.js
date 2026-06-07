@@ -129,27 +129,26 @@ window.TaskManager = {
             if(window.UI) window.UI.addLog(`Broadcast ${this.mode}: "${logSummary}" to ${newTask.targets} targets.`);
 
         } catch (e) {
-            alert("Error: " + e.message);
+            window.Modal.alert("Error: " + e.message, 'error');
         } finally {
             btn.innerHTML = originalHtml;
             btn.disabled = false;
         }
     },
 
-    reRun(id) {
-        // Simple re-run for commands, alert for modules (too complex to reconstruct args easily in this simple view)
+    async reRun(id) {
         const task = this.history.find(t => t.id === id);
         if(!task) return;
 
         if (task.type === 'CMD BROADCAST') {
-            if(confirm(`Re-broadcast command: "${task.command}"?`)) {
+            if(await window.Modal.confirm(`Re-broadcast command:\n"${task.command}"`)) {
                 this.mode = 'command';
                 this.toggleMode('command');
                 document.getElementById('broadcast-input').value = task.command;
                 this.executeBroadcast();
             }
         } else {
-            alert("Please manually re-select the module to re-run.");
+            window.Modal.alert("Please manually re-select the module to re-run.", 'info');
         }
     },
 
@@ -159,8 +158,8 @@ window.TaskManager = {
         this.renderTable();
     },
 
-    clearHistory() {
-        if(confirm("Clear all task history?")) {
+    async clearHistory() {
+        if(await window.Modal.confirm("Clear all task history?")) {
             this.history = [];
             this.save();
             this.renderTable();

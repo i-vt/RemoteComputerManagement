@@ -66,3 +66,64 @@ window.Notify = {
         this._prevSessionCount = hosts.length;
     }
 };
+
+// ── App Modal (replaces browser alert/confirm) ─────────────────────────────
+window.Modal = {
+    _resolveFunc: null,
+
+    _resolve(val) {
+        const overlay = document.getElementById('app-modal');
+        if (overlay) overlay.classList.add('hidden');
+        if (this._resolveFunc) {
+            this._resolveFunc(val);
+            this._resolveFunc = null;
+        }
+    },
+
+    _backdropClick(e) {
+        if (e.target === document.getElementById('app-modal')) {
+            this._resolve(false);
+        }
+    },
+
+    _show(msg, type, isConfirm) {
+        const cfg = {
+            info:    { icon: 'fas fa-info-circle',           cls: 'text-blue-400',   ok: 'btn btn-ghost' },
+            success: { icon: 'fas fa-check-circle',          cls: 'text-green-400',  ok: 'btn btn-primary' },
+            warning: { icon: 'fas fa-exclamation-triangle',  cls: 'text-yellow-400', ok: 'btn btn-ghost' },
+            error:   { icon: 'fas fa-times-circle',          cls: 'text-red-400',    ok: 'btn btn-danger' },
+        }[type] || { icon: 'fas fa-info-circle', cls: 'text-blue-400', ok: 'btn btn-ghost' };
+
+        const safeMsg = String(msg).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const title = type.charAt(0).toUpperCase() + type.slice(1);
+
+        document.getElementById('app-modal-icon').className = cfg.icon + ' ' + cfg.cls;
+        document.getElementById('app-modal-title-text').textContent = title;
+        document.getElementById('app-modal-body').innerHTML = safeMsg;
+
+        const cancelBtn = document.getElementById('app-modal-cancel');
+        const okBtn     = document.getElementById('app-modal-ok');
+        if (cancelBtn) cancelBtn.style.display = isConfirm ? '' : 'none';
+        if (okBtn)     okBtn.className = cfg.ok;
+
+        const overlay = document.getElementById('app-modal');
+        if (overlay) overlay.classList.remove('hidden');
+        setTimeout(() => { if (okBtn) okBtn.focus(); }, 60);
+    },
+
+    // Non-blocking alert — returns Promise resolved with true when dismissed
+    alert(msg, type = 'info') {
+        return new Promise(resolve => {
+            this._resolveFunc = resolve;
+            this._show(msg, type, false);
+        });
+    },
+
+    // Confirmation dialog — returns Promise<boolean>
+    confirm(msg, type = 'warning') {
+        return new Promise(resolve => {
+            this._resolveFunc = resolve;
+            this._show(msg, type, true);
+        });
+    }
+};

@@ -86,6 +86,39 @@ fn find_cargo() -> PathBuf {
     PathBuf::from("cargo")
 }
 
+/// Find the rustup binary. Mirrors find_cargo() — rustup lives alongside
+/// cargo in the same bin directory.
+///
+/// This is used for target verification. `cargo target list` is NOT a valid
+/// cargo subcommand; the correct tool is `rustup target list --installed`.
+fn find_rustup() -> PathBuf {
+    // 1. $CARGO_HOME/bin/rustup  (rustup installs itself here alongside cargo)
+    if let Ok(cargo_home) = std::env::var("CARGO_HOME") {
+        let p = PathBuf::from(&cargo_home).join("bin").join("rustup");
+        if p.is_file() { return p; }
+    }
+
+    // 2. Known absolute paths
+    let known = [
+        "/usr/local/cargo/bin/rustup",
+        "/usr/local/bin/rustup",
+        "/usr/bin/rustup",
+    ];
+    for path in &known {
+        let p = PathBuf::from(path);
+        if p.is_file() { return p; }
+    }
+
+    // 3. ~/.cargo/bin/rustup
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(home).join(".cargo").join("bin").join("rustup");
+        if p.is_file() { return p; }
+    }
+
+    // 4. Fall back to bare name (relies on PATH)
+    PathBuf::from("rustup")
+}
+
 /// Locate the project root — the directory containing Cargo.toml.
 /// Checks (in order):
 ///   1. Current working directory
@@ -277,15 +310,26 @@ fn main() -> Result<()> {
         }
     };
 
-    // Verify the target is installed before wasting time on compilation
+    // Verify the target is installed before wasting time on compilation.
+    //
+    // FIX: the original code called `cargo target list --installed`, but
+    // "cargo target" is not a valid cargo subcommand. cargo exits with an
+    // error, the output is empty, `installed` is always false, and the
+    // bail fires even when the target IS installed.
+    //
+    // The correct tool is `rustup target list --installed`. rustup lives
+    // in $CARGO_HOME/bin/ alongside cargo, so find_rustup() mirrors the
+    // same resolution logic as find_cargo().
     if cli.platform == Platform::Windows {
-        let target_check = Command::new(&cargo_bin)
+        let rustup_bin = find_rustup();
+        let target_check = Command::new(&rustup_bin)
             .args(["target", "list", "--installed"])
-            .current_dir(&project_root)
             .output();
+
         let installed = target_check
             .map(|o| String::from_utf8_lossy(&o.stdout).contains(target))
             .unwrap_or(false);
+
         if !installed {
             anyhow::bail!(
                 "Rust target '{}' is not installed.\n\

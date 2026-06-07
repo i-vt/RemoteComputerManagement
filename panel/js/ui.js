@@ -1,7 +1,7 @@
 // HTML entity escaping to prevent XSS from agent-controlled data
 function escHtml(str) {
     if (!str) return '';
-    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');
 }
 
 window.UI = {
@@ -145,8 +145,21 @@ window.UI = {
             const proxyBtn = h.has_proxy 
                 ? `<button onclick="window.ProxyManager.stop(${h.id})" class="text-red-400 hover:text-white border border-red-500 hover:bg-red-600 px-2 py-1 rounded text-xs transition flex items-center gap-1"><i class="fas fa-stop-circle"></i> Stop Proxy</button>`
                 : `<button onclick="window.ProxyManager.start(${h.id})" class="text-blue-500 hover:text-white border border-blue-500 hover:bg-blue-600 px-2 py-1 rounded text-xs transition flex items-center gap-1"><i class="fas fa-network-wired"></i> Proxy</button>`;
-            
-            const termBtn = `<button onclick="window.Terminal.open(${h.id}, ${JSON.stringify(h.hostname)})" class="bg-gray-900 hover:bg-green-600 border border-green-600 hover:text-white text-green-500 px-3 py-1 rounded text-xs transition flex items-center gap-1 ml-2"><i class="fas fa-terminal"></i> Shell</button>`;
+
+            // FIX: JSON.stringify(hostname) produces a double-quoted string ("hostname")
+            // which terminates the onclick="..." HTML attribute early, leaving truncated
+            // JS like `window.Terminal.open(1, ` with no closing paren. Firefox wraps
+            // onclick handlers in function(event){CONTENT} so the implicit } at the end
+            // of the wrapper becomes the unexpected token → SyntaxError "expected expression,
+            // got '}'" at line 2:1, fired once per click. The modal never opens.
+            //
+            // Fix: store the hostname in a data attribute (HTML-entity-escaped so any
+            // character is safe inside a double-quoted attribute) and read it via
+            // this.dataset.hostname at click time. The browser decodes entities
+            // automatically, so Terminal.open receives the original hostname string.
+            const safeHostname = escHtml(h.hostname || '');
+
+            const termBtn = `<button onclick="window.Terminal.open(${h.id}, this.dataset.hostname)" data-hostname="${safeHostname}" class="bg-gray-900 hover:bg-green-600 border border-green-600 hover:text-white text-green-500 px-3 py-1 rounded text-xs transition flex items-center gap-1 ml-2"><i class="fas fa-terminal"></i> Shell</button>`;
             
             // Beacon Toggle Logic
             let beaconBtn = '';
@@ -171,9 +184,11 @@ window.UI = {
                 </button>`;
             }
 
-            const procBtn = `<button onclick="window.ProcView.load(${h.id})" class="text-gray-500 hover:text-cyan-400 border border-gray-700 hover:border-cyan-500 px-2 py-1 rounded text-xs transition ml-1" title="Process List"><i class="fas fa-list"></i></button>`;
+            const procBtn   = `<button onclick="window.ProcView.load(${h.id})" class="text-gray-500 hover:text-cyan-400 border border-gray-700 hover:border-cyan-500 px-2 py-1 rounded text-xs transition ml-1" title="Process List"><i class="fas fa-list"></i></button>`;
             const screenBtn = `<button onclick="window.ScreenshotView.capture(${h.id})" class="text-gray-500 hover:text-purple-400 border border-gray-700 hover:border-purple-500 px-2 py-1 rounded text-xs transition ml-1" title="Screenshot"><i class="fas fa-camera"></i></button>`;
-            const notesBtn = `<button onclick="window.Notes.show(${h.id}, ${JSON.stringify(h.hostname)})" class="text-gray-500 hover:text-yellow-400 border border-gray-700 hover:border-yellow-500 px-2 py-1 rounded text-xs transition ml-1" title="Notes & Tags"><i class="fas fa-sticky-note"></i></button>`;
+
+            // FIX: same double-quote HTML attribute break as termBtn above.
+            const notesBtn  = `<button onclick="window.Notes.show(${h.id}, this.dataset.hostname)" data-hostname="${safeHostname}" class="text-gray-500 hover:text-yellow-400 border border-gray-700 hover:border-yellow-500 px-2 py-1 rounded text-xs transition ml-1" title="Notes & Tags"><i class="fas fa-sticky-note"></i></button>`;
 
             const actionHtml = `<div class="flex justify-end items-center">${proxyBtn}${beaconBtn}${termBtn}${procBtn}${screenBtn}${notesBtn}</div>`;
             
