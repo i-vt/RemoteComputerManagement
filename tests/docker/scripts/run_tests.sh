@@ -37,7 +37,7 @@ echo ""
 # Full tests need agents connected.
 # Pivot tests need PIVOT_TEST=1.
 SMOKE_TESTS="test_01_auth test_02_rbac test_03_listeners test_05_webhook test_06_audit"
-AGENT_TESTS="test_04_sessions test_07_proxy test_08_windows"
+AGENT_TESTS="test_04_sessions test_07_proxy test_08_windows test_10_builder_features test_11_topology test_12_hibernation"
 PIVOT_TESTS="test_09_pivot_chains"
 
 should_run() {
@@ -61,15 +61,17 @@ if [ "$TEST_SUITE" != "smoke" ]; then
     source "$SCRIPT_DIR/lib.sh"
 
     # Determine expected agent count
-    EXPECTED_AGENTS=2  # agent-1 (TLS) + agent-2 (HTTP)
-    AGENT_TIMEOUT=60
+    EXPECTED_AGENTS=3  # agent-1 (TLS) + agent-2 (HTTP) + agent-hibernation
+    AGENT_TIMEOUT=90  # extra time for hibernation agent first-connect cycle
 
     echo "━━━ Waiting for agents ━━━"
     if wait_agents "$EXPECTED_AGENTS" "$AGENT_TIMEOUT"; then
         SUITE_RESULTS+=("agent-readiness:PASS")
     else
-        echo "  WARNING: Not all agents connected. Tests that need agents may fail."
-        SUITE_RESULTS+=("agent-readiness:WARN")
+        echo "  FAIL: Suite '$TEST_SUITE' requires $EXPECTED_AGENTS agent(s) — cannot skip this."
+        echo "  Check server logs for TLS cert errors or HTTP decoy responses."
+        SUITE_RESULTS+=("agent-readiness:FAIL(0✓ 1✗ 0⊘)")
+        TOTAL_FAIL=$((TOTAL_FAIL + 1))
     fi
 fi
 

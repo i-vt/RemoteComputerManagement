@@ -34,6 +34,7 @@ services:
         BUILD_PIVOT_AGENTS: "true"
 
   test-runner:
+    image: alpine:3.20   # explicit so Docker Compose v2 validates the merge
     environment:
       - C2_URL=http://c2-server:8080
       - WEBHOOK_URL=http://webhook-sink:9999/hook
@@ -59,6 +60,7 @@ services:
   # ════════════════════════════════════════════════════════════════════
 
   c0-hop1:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c0-hop1
@@ -75,6 +77,7 @@ services:
     networks: [c2net]
 
   c0-hop2:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c0-hop2
@@ -91,6 +94,7 @@ services:
     networks: [c2net]
 
   c0-hop3:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c0-hop3
@@ -107,6 +111,7 @@ services:
     networks: [c2net]
 
   c0-hop4:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c0-hop4
@@ -127,6 +132,7 @@ services:
   # ════════════════════════════════════════════════════════════════════
 
   c1-hop1:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot-win"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c1-hop1
@@ -177,6 +183,7 @@ services:
     networks: [c2net]
 
   c1-hop4:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot-win"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c1-hop4
@@ -231,6 +238,7 @@ services:
     networks: [c2net]
 
   c2-hop3:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot-win"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c2-hop3
@@ -247,6 +255,7 @@ services:
     networks: [c2net]
 
   c2-hop4:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot-win"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c2-hop4
@@ -284,6 +293,7 @@ services:
     networks: [c2net]
 
   c3-hop2:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot-win"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c3-hop2
@@ -317,6 +327,7 @@ services:
     networks: [c2net]
 
   c3-hop4:
+    image: docker-agent-1   # pre-built by run_tests.sh; all Linux hop agents share the same stage
     profiles: ["pivot-win"]
     build: { context: ../../, dockerfile: tests/docker/Dockerfile, target: agent }
     hostname: c3-hop4

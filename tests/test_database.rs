@@ -1,7 +1,6 @@
 // tests/test_database.rs — Database CRUD integration tests
 // Uses a temporary SQLite file per test for isolation.
 
-use std::fs;
 use rcm::database;
 
 fn temp_db() -> database::DbPool {
@@ -12,41 +11,43 @@ fn temp_db() -> database::DbPool {
         ));
     let pool = r2d2::Pool::builder().max_size(2).build(manager).unwrap();
 
-    // Run the schema from init() manually since we can't call init() with a custom path
+    // Initialise schema inline (database_schema.sql is not shipped to tests/)
     let conn = pool.get().unwrap();
-    conn.execute_batch(include_str!("../src/database_schema.sql")).unwrap_or_else(|_| {
-        // Fallback: create tables inline
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS operators (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'operator',
-                api_key TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL, last_login TEXT
-             );
-             CREATE TABLE IF NOT EXISTS audit_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, operator_id INTEGER,
-                operator_name TEXT, action TEXT NOT NULL, target_session INTEGER,
-                details TEXT, timestamp TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS auto_recon (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, command TEXT NOT NULL,
-                sort_order INTEGER NOT NULL DEFAULT 0
-             );
-             CREATE TABLE IF NOT EXISTS session_notes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL,
-                tag TEXT, note TEXT NOT NULL, operator TEXT NOT NULL, timestamp TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS listeners (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
-                port INTEGER NOT NULL, transport TEXT NOT NULL DEFAULT 'tls',
-                profile_json TEXT, auto_start INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS session_id_seq (
-                id INTEGER PRIMARY KEY CHECK (id = 1), next_id INTEGER NOT NULL DEFAULT 1
-             );
-             INSERT OR IGNORE INTO session_id_seq (id, next_id) VALUES (1, 1);
-             CREATE TABLE IF NOT EXISTS server_config (key TEXT PRIMARY KEY, value BLOB);"
-        ).unwrap();
-    });
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS operators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'operator',
+            api_key TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL, last_login TEXT
+         );
+         CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, operator_id INTEGER,
+            operator_name TEXT, action TEXT NOT NULL, target_session INTEGER,
+            details TEXT, timestamp TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS auto_recon (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, command TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
+         );
+         CREATE TABLE IF NOT EXISTS session_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL,
+            tag TEXT, note TEXT NOT NULL, operator TEXT NOT NULL, timestamp TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS listeners (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+            port INTEGER NOT NULL, transport TEXT NOT NULL DEFAULT 'tls',
+            profile_json TEXT, auto_start INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS session_id_seq (
+            id INTEGER PRIMARY KEY CHECK (id = 1), next_id INTEGER NOT NULL DEFAULT 1
+         );
+         INSERT OR IGNORE INTO session_id_seq (id, next_id) VALUES (1, 1);
+         CREATE TABLE IF NOT EXISTS server_config (key TEXT PRIMARY KEY, value BLOB);
+         CREATE TABLE IF NOT EXISTS queued_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL,
+            command TEXT NOT NULL, queued_at TEXT NOT NULL, claimed_at TEXT,
+            completed_at TEXT, output TEXT, error TEXT
+         );"
+    ).unwrap();
 
     pool
 }
@@ -56,32 +57,29 @@ fn test_operator_crud() {
     let pool = temp_db();
     let conn = pool.get().unwrap();
 
-    // Create
     let id = database::create_operator(&conn, "alice", "hash123", "admin", "key-alice").unwrap();
     assert!(id > 0);
 
-    // Get by key
     let op = database::get_operator_by_key(&conn, "key-alice").unwrap();
     assert_eq!(op.username, "alice");
     assert_eq!(op.role, "admin");
 
-    // Get by username
+    // api_key is stored as a hash, so don't compare the raw value.
+    // Verify round-trip: the plain-text key still resolves to this operator.
     let op2 = database::get_operator_by_username(&conn, "alice").unwrap();
-    assert_eq!(op2.api_key, "key-alice");
+    assert_eq!(op2.username, "alice");
+    assert!(database::get_operator_by_key(&conn, "key-alice").is_some(),
+        "hashed api_key should still be findable by the plain-text key");
 
-    // List
     let _ = database::create_operator(&conn, "bob", "hash456", "operator", "key-bob").unwrap();
     let ops = database::list_operators(&conn);
     assert_eq!(ops.len(), 2);
 
-    // Count
     assert_eq!(database::operator_count(&conn), 2);
 
-    // Delete
     assert!(database::delete_operator(&conn, id));
     assert_eq!(database::operator_count(&conn), 1);
 
-    // Not found
     assert!(database::get_operator_by_key(&conn, "nonexistent").is_none());
 }
 
@@ -96,7 +94,6 @@ fn test_audit_log() {
 
     let log = database::get_audit_log(&conn, 10);
     assert_eq!(log.len(), 3);
-    // Most recent first
     assert_eq!(log[0].operator_name, "bob");
     assert_eq!(log[0].action, "command");
     assert_eq!(log[0].target_session, Some(3));
@@ -119,7 +116,6 @@ fn test_auto_recon() {
     let entries = database::list_auto_recon(&conn);
     assert_eq!(entries.len(), 3);
 
-    // Remove middle one
     database::remove_auto_recon(&conn, entries[1].id);
     let remaining = database::get_auto_recon(&conn);
     assert_eq!(remaining.len(), 2);
@@ -137,22 +133,19 @@ fn test_session_notes() {
     database::add_session_note(&conn, 1, None, "Initial foothold, don't burn", "alice").unwrap();
     database::add_session_note(&conn, 2, Some("da"), "Also DA", "alice").unwrap();
 
-    // Get notes for session 1
     let notes = database::get_session_notes(&conn, 1);
     assert_eq!(notes.len(), 3);
 
-    // Get tags for session 1
     let tags = database::get_session_tags(&conn, 1);
     assert_eq!(tags.len(), 2);
     assert!(tags.contains(&"da".to_string()));
     assert!(tags.contains(&"creds".to_string()));
 
-    // Delete a note
+    // delete_session_note now requires session_id + note_id
     let note_id = notes[0].id;
-    assert!(database::delete_session_note(&conn, note_id));
+    assert!(database::delete_session_note(&conn, 1, note_id));
     assert_eq!(database::get_session_notes(&conn, 1).len(), 2);
 
-    // Session 2 notes are separate
     assert_eq!(database::get_session_notes(&conn, 2).len(), 1);
 }
 

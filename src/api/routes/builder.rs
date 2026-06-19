@@ -31,8 +31,14 @@ pub struct BuildRequest {
     #[serde(default = "default_jmin")]      pub jitter_min: u32,
     #[serde(default = "default_jmax")]      pub jitter_max: u32,
     #[serde(default)]                       pub bloat:      u64,
-    #[serde(default)]                       pub debug:      bool,
-    #[serde(default)]                       pub days:       i64,
+    #[serde(default)]                       pub debug:           bool,
+    #[serde(default)]                       pub days:            i64,
+    // ── Feature 1: SNI / ALPN overrides ───────────────────────────────
+    #[serde(default)]                       pub sni_override:    Option<String>,
+    #[serde(default)]                       pub alpn_protocols:  Vec<String>,
+    // ── Feature 3: Hibernation / dweller mode ─────────────────────────
+    #[serde(default)]                       pub hibernation_mode: bool,
+    #[serde(default)]                       pub batch_size:       Option<u32>,
 }
 
 fn default_platform()  -> String { "linux".into() }
@@ -156,6 +162,21 @@ pub async fn start_build(
             "--days".into(),        req.days.to_string(),
         ];
         if req.debug { args.push("--debug".into()); }
+        if let Some(sni) = &req.sni_override {
+            args.push("--sni".into());
+            args.push(sni.clone());
+        }
+        if !req.alpn_protocols.is_empty() {
+            args.push("--alpn".into());
+            args.push(req.alpn_protocols.join(","));
+        }
+        if req.hibernation_mode {
+            args.push("--hibernation".into());
+        }
+        if let Some(bs) = req.batch_size {
+            args.push("--batch-size".into());
+            args.push(bs.to_string());
+        }
 
         fn push(jobs: &std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, BuildJob>>>,
                 id: &str, line: String) {

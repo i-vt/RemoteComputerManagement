@@ -24,10 +24,13 @@
 #   │  :9999     │
 #   └────────────┘
 
+name: rcm-integration
+
 services:
 
   # ── Team Server ─────────────────────────────────────────────────────
   c2-server:
+    image: docker-c2-server
     build:
       context: ../../
       dockerfile: tests/docker/Dockerfile
@@ -48,6 +51,7 @@ services:
 
   # ── Test Agent (TLS transport) ──────────────────────────────────────
   agent-1:
+    image: docker-agent-1
     build:
       context: ../../
       dockerfile: tests/docker/Dockerfile
@@ -66,6 +70,7 @@ services:
 
   # ── Test Agent (HTTP transport) ─────────────────────────────────────
   agent-2:
+    image: docker-agent-2
     build:
       context: ../../
       dockerfile: tests/docker/Dockerfile
@@ -76,6 +81,28 @@ services:
     environment:
       - AGENT_NAME=agent-http
       - AGENT_TRANSPORT=http
+    depends_on:
+      c2-server:
+        condition: service_healthy
+    networks:
+      - c2net
+
+  # ── Test Agent (hibernation / dweller mode) ─────────────────────────
+  # Connects every ~5s (sleep=5, jitter=0-2). The short sleep ensures it
+  # appears in /api/hosts before the 90s agent-readiness timeout expires,
+  # giving test_12_hibernation a session with hibernation_mode=true to test.
+  agent-hibernation:
+    image: docker-agent-hibernation
+    build:
+      context: ../../
+      dockerfile: tests/docker/Dockerfile
+      target: agent
+    hostname: agent-hibernation
+    volumes:
+      - shared:/shared:ro
+    environment:
+      - AGENT_NAME=agent-hibernation
+      - AGENT_TRANSPORT=hibernation
     depends_on:
       c2-server:
         condition: service_healthy

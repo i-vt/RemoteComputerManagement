@@ -373,6 +373,8 @@ pub fn handle_connection(
             id: sess_id, computer_id: hello.computer_id, addr, hostname: hello.hostname,
             os: hello.os, tx, signing_key: signing_key.clone(), parent_id,
             last_seen: last_seen.clone(),
+            interfaces: hello.interfaces.clone(),
+            hibernation_mode: hello.hibernation_mode,
         });
 
         // 3b. Auto-recon: fire saved commands on new session

@@ -103,6 +103,11 @@ impl ListenerManager {
             bloat_mb: 0,
             debug: true,
             kill_date: None,
+            sni_override: None,
+            alpn_protocols: vec![],
+            hibernation_mode: false,
+            task_batch_size: 10,
+            dga: None,
         };
 
         // HTTP(S) listeners use the HTTP C2 server instead of raw TCP

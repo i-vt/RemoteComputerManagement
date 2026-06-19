@@ -22,13 +22,15 @@ openssl req -new -nodes \
     -key "$CERTS_DIR/server.key" \
     -subj "/CN=rcm-server/O=RCM/C=US" \
     -out "$CERTS_DIR/server.csr"
+# -extfile is required for X.509v3 — rustls rejects v1/v2 certs outright.
 openssl x509 -req \
     -in  "$CERTS_DIR/server.csr" \
     -CA  "$CERTS_DIR/ca.crt" \
     -CAkey "$CERTS_DIR/ca.key" \
     -CAcreateserial \
     -out "$CERTS_DIR/server.crt" \
-    -days 3650 -sha256
+    -days 3650 -sha256 \
+    -extfile <(printf 'subjectAltName=DNS:c2-server,DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n')
 # Convert server private key to DER format (what the Rust code loads)
 openssl pkcs8 -topk8 -nocrypt \
     -in  "$CERTS_DIR/server.key" \
@@ -47,7 +49,8 @@ openssl x509 -req \
     -CAkey "$CERTS_DIR/ca.key" \
     -CAcreateserial \
     -out "$CERTS_DIR/client.crt" \
-    -days 3650 -sha256
+    -days 3650 -sha256 \
+    -extfile <(printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=clientAuth\n')
 # Convert client private key to DER format
 openssl pkcs8 -topk8 -nocrypt \
     -in  "$CERTS_DIR/client.key" \

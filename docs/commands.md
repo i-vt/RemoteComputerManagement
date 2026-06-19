@@ -11,7 +11,7 @@ All commands are sent to the agent via the terminal or API. Unrecognized command
 | `beacon:mode passive` | Switch back to normal sleep interval |
 | `sys:die` | Self-destruct: delete binary and exit |
 | `exit` | Clean exit without self-destruct |
-| `fallback:config` | Show configured fallback endpoints |
+| `fallback:config` | Show configured fallback endpoints and DGA status |
 
 ## File Operations
 
@@ -98,6 +98,33 @@ Reverse port forwarding is typically managed via the API rather than raw command
 | `POST` | `/api/hosts/:id/rportfwd` | `{"bind_port": 8888, "target_host": "10.1.1.5", "target_port": 3389}` | Bind port 8888 on the team server, tunnel through the agent to 10.1.1.5:3389 |
 | `DELETE` | `/api/hosts/:id/rportfwd` | `{"bind_port": 8888}` | Stop the reverse port forward |
 | `GET` | `/api/rportfwds` | — | List all active reverse port forwards |
+
+## Topology
+
+The topology planner runs on the server using network interface data already reported by agents at check-in. No probe traffic is sent.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/topology/plan?target=<ip_or_cidr>` | Rank connected sessions as pivot candidates toward a target IP or CIDR. Returns candidates sorted by score with a rendered text plan. |
+| `GET` | `/api/topology/snapshot` | Full cross-session interface map: all non-loopback routes, shared subnets, and conflicts. |
+
+Example:
+```bash
+curl -s -H "X-API-KEY: $KEY" \
+  "http://server:8080/api/topology/plan?target=10.10.5.0/24"
+```
+```json
+{
+  "target": "10.10.5.0/24",
+  "rendered": "✔  Session #3 (agent-tls)  via eth0 10.10.5.22/24  [score 85]\n   Session #1 (agent-http) via eth1 10.10.0.5/24   [score 42]",
+  "candidates": [
+    {"session_id": 3, "hostname": "agent-tls", "interface": "eth0",
+     "address": "10.10.5.22/24", "score": 85},
+    {"session_id": 1, "hostname": "agent-http", "interface": "eth1",
+     "address": "10.10.0.5/24", "score": 42}
+  ]
+}
+```
 
 ## Shell
 

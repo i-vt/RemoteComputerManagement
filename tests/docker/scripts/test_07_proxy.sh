@@ -12,7 +12,7 @@ if [ "$HOST_COUNT" -eq 0 ]; then
     return 0 2>/dev/null || exit 0
 fi
 
-SESSION_ID=$(echo "$RESP" | jq -r '.[0].id')
+SESSION_ID=$(echo "$RESP" | jq -r 'sort_by(.last_seen_secs) | .[0].id')
 
 # ── SOCKS Proxy ─────────────────────────────────────────────────────────
 
@@ -46,8 +46,8 @@ RFWD_COUNT=$(echo "$RLIST" | jq 'length')
 assert_ne "rportfwd list not empty" "0" "$RFWD_COUNT"
 
 suite "Rportfwd tunnels traffic to mock service"
-# Give the tunnel a moment to establish
-sleep 3
+# Give the tunnel a moment to establish (8s = ~4 beacon cycles at sleep_interval=2)
+sleep 8
 # Try to reach the mock service through the rportfwd
 MOCK_RESP=$(curl -sf --max-time 5 http://c2-server:18080/ 2>/dev/null || echo "CONNECT_FAILED")
 if echo "$MOCK_RESP" | grep -qF "MOCK_SERVICE_OK"; then

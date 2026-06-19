@@ -1,6 +1,6 @@
 // tests/test_transport.rs — Transport layer tests
 
-use rcm::common::{C2Config, TransportProtocol, MalleableProfile, ProxyConfig, FallbackConfig};
+use rcm::common::{C2Config, DgaConfig, TransportProtocol, MalleableProfile, ProxyConfig, FallbackConfig};
 
 fn make_config(host: &str, port: u16, transport: TransportProtocol) -> C2Config {
     C2Config {
@@ -19,6 +19,12 @@ fn make_config(host: &str, port: u16, transport: TransportProtocol) -> C2Config 
         bloat_mb: 0,
         debug: false,
         kill_date: None,
+        challenge_key: String::new(),
+        sni_override: None,
+        alpn_protocols: vec![],
+        hibernation_mode: false,
+        task_batch_size: 10,
+        dga: None,
     }
 }
 
@@ -26,9 +32,6 @@ fn make_config(host: &str, port: u16, transport: TransportProtocol) -> C2Config 
 fn test_client_transport_stores_sni_from_config() {
     let config = make_config("c2.example.com", 443, TransportProtocol::Tls);
     let transport = rcm::transport::ClientTransport::new(&config);
-    // The transport should store the SNI from config, not hardcode "localhost".
-    // We verify this indirectly by checking that connecting to a non-existent
-    // host doesn't panic (it should return an error).
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(transport.connect());
     assert!(result.is_err()); // Connection fails but doesn't panic
@@ -49,7 +52,6 @@ fn test_client_transport_named_pipe_non_windows() {
     let transport = rcm::transport::ClientTransport::new(&config);
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(transport.connect());
-    // On non-Windows, should return an error, not panic
     if cfg!(not(target_os = "windows")) {
         assert!(result.is_err());
     }
@@ -59,12 +61,10 @@ fn test_client_transport_named_pipe_non_windows() {
 fn test_target_addr_format_tcp() {
     let config = make_config("10.0.0.1", 4443, TransportProtocol::Tls);
     let _transport = rcm::transport::ClientTransport::new(&config);
-    // Should format as "10.0.0.1:4443" internally — no panic
 }
 
 #[test]
 fn test_target_addr_format_named_pipe() {
     let config = make_config("192.168.1.1:msagent", 0, TransportProtocol::NamedPipe);
     let _transport = rcm::transport::ClientTransport::new(&config);
-    // Should store "192.168.1.1:msagent" as-is — no panic
 }

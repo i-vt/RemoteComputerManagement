@@ -15,6 +15,7 @@ cp /opt/rcm/Cargo.lock /shared/Cargo.lock 2>/dev/null || true
 # Copy pre-built agent binaries to shared volume (compiled during Docker build)
 cp /opt/rcm/agent-tls  /shared/agent-tls  2>/dev/null && chmod +x /shared/agent-tls  && echo "[server] TLS agent ready on shared volume"  || echo "[server] WARN: no pre-built TLS agent"
 cp /opt/rcm/agent-http /shared/agent-http 2>/dev/null && chmod +x /shared/agent-http && echo "[server] HTTP agent ready on shared volume" || echo "[server] WARN: no pre-built HTTP agent"
+cp /opt/rcm/agent-hibernation /shared/agent-hibernation 2>/dev/null && chmod +x /shared/agent-hibernation && echo "[server] Hibernation agent ready on shared volume" || echo "[server] WARN: no pre-built hibernation agent"
 cp /opt/rcm/agent-tls.exe  /shared/agent-tls.exe  2>/dev/null && echo "[server] Windows TLS agent ready on shared volume"  || echo "[server] WARN: no pre-built Windows TLS agent"
 cp /opt/rcm/agent-http.exe /shared/agent-http.exe 2>/dev/null && echo "[server] Windows HTTP agent ready on shared volume" || echo "[server] WARN: no pre-built Windows HTTP agent"
 
@@ -24,6 +25,24 @@ if [ -d /opt/rcm/pivot-agents ] && ls /opt/rcm/pivot-agents/c0h* 1>/dev/null 2>&
     chmod +x /shared/c*h* 2>/dev/null || true
     echo "[server] Pivot agents ready on shared volume ($(ls /opt/rcm/pivot-agents/ | grep -v '\.empty' | wc -l) binaries)"
 fi
+
+# ── Clear session tables, preserve build records ─────────────────────────
+# c2_audit.db is baked into the Docker image. The unit-test stage's
+# cargo test run (tests/test_*.rs) leaves session rows and command history
+# in the DB, which pollutes test_04_sessions history assertions.
+# We clear only the session-scoped tables so every run starts clean.
+# The builds table MUST be preserved — it holds the build_id metadata
+# that agents send in ClientHello; wiping it makes the server return
+# decoy_page() to every registration attempt (empty HTTP body error).
+python3 - <<PYEOF 2>/dev/null || true
+import sqlite3
+conn = sqlite3.connect("./c2_audit.db")
+for t in ["sessions","command_history","audit_log","session_notes","queued_tasks"]:
+    try: conn.execute("DELETE FROM " + t)
+    except: pass
+conn.commit(); conn.close()
+print("[server] Session tables cleared (builds table preserved).")
+PYEOF
 
 # ── Start the server in the background and capture first-run output ─────
 ./server 2>&1 | tee /tmp/server.log &

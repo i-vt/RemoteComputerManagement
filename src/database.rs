@@ -132,7 +132,20 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
             operator TEXT NOT NULL,
             timestamp TEXT NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS idx_notes_session ON session_notes(session_id);"
+         CREATE INDEX IF NOT EXISTS idx_notes_session ON session_notes(session_id);
+         CREATE TABLE IF NOT EXISTS queued_tasks (
+            task_id     TEXT PRIMARY KEY,
+            session_id  INTEGER NOT NULL,
+            command     TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'pending',
+            created_at  INTEGER NOT NULL,
+            claimed_at  INTEGER,
+            result      TEXT,
+            error       TEXT,
+            finished_at INTEGER
+         );
+         CREATE INDEX IF NOT EXISTS idx_tasks_session ON queued_tasks(session_id);
+         CREATE INDEX IF NOT EXISTS idx_tasks_status  ON queued_tasks(status);"
     )?;
 
     // Migration for existing DBs
@@ -156,6 +169,27 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
     if ck_count == 0 {
         if let Err(e) = conn.execute("ALTER TABLE build_keys ADD COLUMN challenge_key BLOB", []) {
             warn!("Migration challenge_key column: {}", e);
+        }
+    }
+
+
+    // Migration: add queued_tasks table for hibernation mode
+    let task_count: i32 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='queued_tasks'",
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    if task_count == 0 {
+        if let Err(e) = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS queued_tasks (
+                task_id TEXT PRIMARY KEY, session_id INTEGER NOT NULL,
+                command TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+                created_at INTEGER NOT NULL, claimed_at INTEGER,
+                result TEXT, error TEXT, finished_at INTEGER
+             );
+             CREATE INDEX IF NOT EXISTS idx_tasks_session ON queued_tasks(session_id);
+             CREATE INDEX IF NOT EXISTS idx_tasks_status  ON queued_tasks(status);"
+        ) {
+            warn!("Migration queued_tasks: {}", e);
         }
     }
 
@@ -690,4 +724,344 @@ pub fn delete_session_note(conn: &Connection, session_id: u32, note_id: i64) -> 
         "DELETE FROM session_notes WHERE id = ?1 AND session_id = ?2",
         params![note_id, session_id],
     ).unwrap_or(0) > 0
+}
+
+
+// ── Queued Tasks (Hibernation Mode) ───────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueuedTask {
+    pub task_id: String,
+    pub session_id: i64,
+    pub command: String,
+    pub status: String,
+    pub created_at: i64,
+    pub claimed_at: Option<i64>,
+    pub result: Option<String>,
+    pub error: Option<String>,
+    pub finished_at: Option<i64>,
+}
+
+/// Enqueue a command for a hibernating agent's next check-in.
+/// Returns the task_id (UUID) that was assigned.
+pub fn queue_task(conn: &Connection, session_id: i64, command: &str) -> Result<String, rusqlite::Error> {
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO queued_tasks (task_id, session_id, command, status, created_at)
+         VALUES (?1, ?2, ?3, 'pending', ?4)",
+        params![task_id, session_id, command, now],
+    )?;
+    Ok(task_id)
+}
+
+/// Atomically claim up to `limit` pending tasks for a session.
+///
+/// Uses a single UPDATE with RETURNING (SQLite ≥ 3.35) falling back to a
+/// SELECT + UPDATE pattern. The atomic claim ensures that if a hibernating
+/// agent connects twice simultaneously (e.g. after a network hiccup), each
+/// connection sees a different batch of tasks — never the same task twice.
+pub fn poll_and_claim_tasks(
+    conn: &Connection,
+    session_id: i64,
+    limit: usize,
+) -> Vec<QueuedTask> {
+    let now = chrono::Utc::now().timestamp();
+
+    // Step 1: select pending task IDs
+    let task_ids: Vec<String> = {
+        let mut stmt = match conn.prepare(
+            "SELECT task_id FROM queued_tasks
+              WHERE session_id = ?1 AND status = 'pending'
+              ORDER BY created_at ASC
+              LIMIT ?2"
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        // Bind to a named variable so the MappedRows temporary is dropped
+        // before `stmt` goes out of scope at the end of this block.
+        let x = match stmt.query_map(params![session_id, limit as i64], |r| r.get(0)) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => return vec![],
+        }; x
+    };
+
+    if task_ids.is_empty() {
+        return vec![];
+    }
+
+    // Step 2: claim each task atomically — only transitions pending → running.
+    // A concurrent claim on the same task_id will find status != 'pending' and
+    // update 0 rows, so only one claimer wins.
+    for task_id in &task_ids {
+        let _ = conn.execute(
+            "UPDATE queued_tasks SET status = 'running', claimed_at = ?1
+              WHERE task_id = ?2 AND status = 'pending'",
+            params![now, task_id],
+        );
+    }
+
+    // Step 3: return the tasks we successfully claimed
+    let mut stmt = match conn.prepare(
+        "SELECT task_id, session_id, command, status, created_at,
+                claimed_at, result, error, finished_at
+           FROM queued_tasks
+          WHERE task_id IN (SELECT value FROM json_each(?1))
+            AND status = 'running'
+            AND claimed_at = ?2"
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+
+    let id_json = serde_json::to_string(&task_ids).unwrap_or_else(|_| "[]".into());
+    let x = match stmt.query_map(params![id_json, now], |r| {
+        Ok(QueuedTask {
+            task_id: r.get(0)?,
+            session_id: r.get(1)?,
+            command: r.get(2)?,
+            status: r.get(3)?,
+            created_at: r.get(4)?,
+            claimed_at: r.get(5)?,
+            result: r.get(6)?,
+            error: r.get(7)?,
+            finished_at: r.get(8)?,
+        })
+    }) {
+        Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+        Err(_) => vec![],
+    }; x
+}
+
+/// Mark a task as completed with its output.
+pub fn complete_task(conn: &Connection, task_id: &str, result: &str) {
+    let now = chrono::Utc::now().timestamp();
+    if let Err(e) = conn.execute(
+        "UPDATE queued_tasks SET status = 'completed', result = ?1, finished_at = ?2
+          WHERE task_id = ?3",
+        params![result, now, task_id],
+    ) {
+        error!("complete_task {}: {}", task_id, e);
+    }
+}
+
+/// Mark a task as failed with an error message.
+pub fn fail_task(conn: &Connection, task_id: &str, error_msg: &str) {
+    let now = chrono::Utc::now().timestamp();
+    if let Err(e) = conn.execute(
+        "UPDATE queued_tasks SET status = 'failed', error = ?1, finished_at = ?2
+          WHERE task_id = ?3",
+        params![error_msg, now, task_id],
+    ) {
+        error!("fail_task {}: {}", task_id, e);
+    }
+}
+
+/// List all tasks for a session (for the `tasks` server command).
+pub fn list_tasks(conn: &Connection, session_id: i64) -> Vec<QueuedTask> {
+    let mut stmt = match conn.prepare(
+        "SELECT task_id, session_id, command, status, created_at,
+                claimed_at, result, error, finished_at
+           FROM queued_tasks
+          WHERE session_id = ?1
+          ORDER BY created_at DESC
+          LIMIT 100"
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    let x = match stmt.query_map([session_id], |r| {
+        Ok(QueuedTask {
+            task_id: r.get(0)?,
+            session_id: r.get(1)?,
+            command: r.get(2)?,
+            status: r.get(3)?,
+            created_at: r.get(4)?,
+            claimed_at: r.get(5)?,
+            result: r.get(6)?,
+            error: r.get(7)?,
+            finished_at: r.get(8)?,
+        })
+    }) {
+        Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+        Err(_) => vec![],
+    }; x
+}
+
+/// Delete all tasks for a session (cleanup after teardown).
+pub fn clear_tasks(conn: &Connection, session_id: i64) {
+    if let Err(e) = conn.execute(
+        "DELETE FROM queued_tasks WHERE session_id = ?1",
+        [session_id],
+    ) {
+        warn!("clear_tasks session {}: {}", session_id, e);
+    }
+}
+
+// ── Queued Task Tests ─────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod queued_task_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn in_memory_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE queued_tasks (
+                task_id TEXT PRIMARY KEY,
+                session_id INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at INTEGER NOT NULL,
+                claimed_at INTEGER,
+                result TEXT,
+                error TEXT,
+                finished_at INTEGER
+             );
+             CREATE INDEX idx_tasks_session ON queued_tasks(session_id);
+             CREATE INDEX idx_tasks_status  ON queued_tasks(status);"
+        ).unwrap();
+        conn
+    }
+
+    #[test]
+    fn queue_task_returns_uuid_string() {
+        let conn = in_memory_db();
+        let id = queue_task(&conn, 1, "whoami").unwrap();
+        assert!(!id.is_empty());
+        // Should parse as a UUID
+        assert!(uuid::Uuid::parse_str(&id).is_ok());
+    }
+
+    #[test]
+    fn queue_and_poll_roundtrip() {
+        let conn = in_memory_db();
+        let id = queue_task(&conn, 1, "id").unwrap();
+
+        let tasks = poll_and_claim_tasks(&conn, 1, 10);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task_id, id);
+        assert_eq!(tasks[0].command, "id");
+        assert_eq!(tasks[0].status, "running");
+    }
+
+    #[test]
+    fn poll_claims_correct_session_only() {
+        let conn = in_memory_db();
+        let _id1 = queue_task(&conn, 1, "cmd1").unwrap();
+        let _id2 = queue_task(&conn, 2, "cmd2").unwrap();
+
+        let tasks = poll_and_claim_tasks(&conn, 1, 10);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].session_id, 1);
+    }
+
+    #[test]
+    fn poll_respects_batch_limit() {
+        let conn = in_memory_db();
+        for i in 0..5 {
+            queue_task(&conn, 1, &format!("cmd{}", i)).unwrap();
+        }
+        let tasks = poll_and_claim_tasks(&conn, 1, 3);
+        assert_eq!(tasks.len(), 3);
+    }
+
+    #[test]
+    fn poll_empty_when_no_pending() {
+        let conn = in_memory_db();
+        let tasks = poll_and_claim_tasks(&conn, 1, 10);
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn poll_does_not_return_already_claimed_tasks() {
+        let conn = in_memory_db();
+        queue_task(&conn, 1, "cmd").unwrap();
+
+        // First poll claims it
+        let first = poll_and_claim_tasks(&conn, 1, 10);
+        assert_eq!(first.len(), 1);
+
+        // Second poll finds nothing pending
+        let second = poll_and_claim_tasks(&conn, 1, 10);
+        assert!(second.is_empty(), "already-claimed task should not be returned again");
+    }
+
+    #[test]
+    fn complete_task_sets_status_and_result() {
+        let conn = in_memory_db();
+        let id = queue_task(&conn, 1, "whoami").unwrap();
+        let tasks = poll_and_claim_tasks(&conn, 1, 1);
+        assert_eq!(tasks.len(), 1);
+
+        complete_task(&conn, &id, "root");
+
+        let all = list_tasks(&conn, 1);
+        assert_eq!(all[0].status, "completed");
+        assert_eq!(all[0].result.as_deref(), Some("root"));
+        assert!(all[0].finished_at.is_some());
+    }
+
+    #[test]
+    fn fail_task_sets_status_and_error() {
+        let conn = in_memory_db();
+        let id = queue_task(&conn, 1, "bad_cmd").unwrap();
+        let _ = poll_and_claim_tasks(&conn, 1, 1);
+
+        fail_task(&conn, &id, "command not found");
+
+        let all = list_tasks(&conn, 1);
+        assert_eq!(all[0].status, "failed");
+        assert_eq!(all[0].error.as_deref(), Some("command not found"));
+    }
+
+    #[test]
+    fn list_tasks_returns_all_for_session() {
+        let conn = in_memory_db();
+        queue_task(&conn, 1, "a").unwrap();
+        queue_task(&conn, 1, "b").unwrap();
+        queue_task(&conn, 2, "c").unwrap();
+
+        let tasks = list_tasks(&conn, 1);
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.iter().all(|t| t.session_id == 1));
+    }
+
+    #[test]
+    fn clear_tasks_removes_all_for_session() {
+        let conn = in_memory_db();
+        queue_task(&conn, 1, "a").unwrap();
+        queue_task(&conn, 1, "b").unwrap();
+        queue_task(&conn, 2, "c").unwrap();
+
+        clear_tasks(&conn, 1);
+
+        assert!(list_tasks(&conn, 1).is_empty());
+        assert_eq!(list_tasks(&conn, 2).len(), 1); // session 2 unaffected
+    }
+
+    #[test]
+    fn poll_returns_tasks_in_created_at_order() {
+        let conn = in_memory_db();
+        // Insert with different timestamps
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO queued_tasks (task_id, session_id, command, status, created_at)
+             VALUES ('id-1', 1, 'first', 'pending', ?1)",
+            [now - 10],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO queued_tasks (task_id, session_id, command, status, created_at)
+             VALUES ('id-2', 1, 'second', 'pending', ?1)",
+            [now],
+        ).unwrap();
+
+        let tasks = poll_and_claim_tasks(&conn, 1, 2);
+        assert_eq!(tasks.len(), 2);
+        // Oldest should come first
+        assert_eq!(tasks[0].task_id, "id-1", "oldest task should be claimed first");
+    }
 }

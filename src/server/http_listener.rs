@@ -371,6 +371,8 @@ async fn handle_register(
         signing_key: signing_key.clone(),
         parent_id: None,
         last_seen: last_seen.clone(),
+        interfaces: hello.interfaces.clone(),
+        hibernation_mode: hello.hibernation_mode,
     });
 
     {

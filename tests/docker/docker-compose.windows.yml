@@ -67,6 +67,7 @@ services:
 
   # ── Extend the test runner to wait for the Windows agent ────────────
   test-runner:
+    image: alpine:3.20   # explicit so Docker Compose v2 validates the merge
     environment:
       - C2_URL=http://c2-server:8080
       - WEBHOOK_URL=http://webhook-sink:9999/hook

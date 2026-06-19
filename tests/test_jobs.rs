@@ -90,8 +90,14 @@ async fn test_job_list_json() {
     mgr.spawn("test".into(), 1, |_| async { ("".into(), "".into(), 0) });
 
     let json = mgr.list_json();
-    assert!(json.contains("\"description\":\"test\""));
-    assert!(json.contains("\"status\":\"Running\""));
+
+    // Parse rather than string-search: list_json() uses to_string_pretty()
+    // which emits spaces after colons, breaking compact-form substring checks.
+    let jobs: Vec<serde_json::Value> = serde_json::from_str(&json)
+        .expect("list_json must return valid JSON");
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0]["description"], "test");
+    assert_eq!(jobs[0]["status"], "Running");
 }
 
 #[tokio::test]

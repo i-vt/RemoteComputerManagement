@@ -83,6 +83,14 @@ RUN ./target/release/builder --host c2-server --port 4480 --transport http \
 # Export the lockfile so it can be committed to the repo
 RUN cp Cargo.lock /build/Cargo.lock.export
 
+# Build hibernation (dweller) agent — TLS transport, short sleep so it
+# stays visible in /api/hosts throughout the test suite run.
+RUN rm -f dist/exe_linux_* && \
+    ./target/release/builder --host c2-server --port 4443 --transport tls \
+        --platform linux --sleep 5 --jitter-min 0 --jitter-max 2 --debug \
+        --hibernation --batch-size 3 && \
+    cp dist/exe_linux_* /build/agent-hibernation
+
 # Conditionally build pivot chain agents
 COPY tests/docker/scripts/build-pivot-agents.sh /build/build-pivot-agents.sh
 ARG BUILD_PIVOT_AGENTS=false
@@ -101,6 +109,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /opt/rcm
 COPY --from=agents /build/target/release/server ./server
+COPY --from=agents /build/target/release/builder ./builder
 COPY --from=agents /build/certs/ ./certs/
 COPY --from=agents /build/embedded/ ./embedded/
 COPY --from=agents /build/extensions/ ./extensions/
@@ -108,6 +117,7 @@ COPY --from=agents /build/Cargo.lock.export ./Cargo.lock
 # Pre-built agent binaries
 COPY --from=agents /build/agent-tls ./agent-tls
 COPY --from=agents /build/agent-http ./agent-http
+COPY --from=agents /build/agent-hibernation ./agent-hibernation
 COPY --from=agents /build/agent-tls.exe ./agent-tls.exe
 COPY --from=agents /build/agent-http.exe ./agent-http.exe
 # Build keys DB

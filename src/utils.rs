@@ -529,3 +529,127 @@ pub fn strip_ansi(s: &str) -> String {
     }
     result
 }
+
+
+// ── Network interface enumeration ─────────────────────────────────────────────
+// Used by ClientHello to report agent interface data for topology inference.
+// No network probes are sent — this is a local kernel query only.
+
+use crate::common::NetworkInterface;
+
+/// Enumerate host network interfaces and return them in CIDR notation.
+/// Linux: uses libc::getifaddrs (already in Cargo dependencies).
+/// Other platforms: returns an empty vec (add GetAdaptersAddresses for Windows).
+pub fn get_network_interfaces() -> Vec<NetworkInterface> {
+    #[cfg(target_os = "linux")]
+    {
+        get_interfaces_linux()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        vec![]
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn get_interfaces_linux() -> Vec<NetworkInterface> {
+    use std::collections::HashMap;
+    use std::ffi::CStr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    let mut map: HashMap<String, NetworkInterface> = HashMap::new();
+
+    unsafe {
+        let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+        if libc::getifaddrs(&mut ifap) != 0 {
+            return vec![];
+        }
+
+        let mut ifa = ifap;
+        while !ifa.is_null() {
+            let iface = &*ifa;
+            let name = CStr::from_ptr(iface.ifa_name)
+                .to_string_lossy()
+                .into_owned();
+
+            let entry = map.entry(name.clone()).or_insert_with(|| {
+                let f = iface.ifa_flags;
+                let mut flags = Vec::new();
+                if f & libc::IFF_UP as u32 != 0     { flags.push("UP".to_string()); }
+                if f & libc::IFF_LOOPBACK as u32 != 0 { flags.push("LOOPBACK".to_string()); }
+                if f & libc::IFF_RUNNING as u32 != 0  { flags.push("RUNNING".to_string()); }
+                NetworkInterface { name: name.clone(), addresses: vec![], flags }
+            });
+
+            if !iface.ifa_addr.is_null() {
+                let family = (*(iface.ifa_addr as *const libc::sockaddr)).sa_family as i32;
+
+                if family == libc::AF_INET {
+                    let sin = &*(iface.ifa_addr as *const libc::sockaddr_in);
+                    let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                    let prefix = if !iface.ifa_netmask.is_null() {
+                        let m = &*(iface.ifa_netmask as *const libc::sockaddr_in);
+                        u32::from_be(m.sin_addr.s_addr).count_ones() as u8
+                    } else { 32 };
+                    entry.addresses.push(format!("{}/{}", ip, prefix));
+
+                } else if family == libc::AF_INET6 {
+                    let sin6 = &*(iface.ifa_addr as *const libc::sockaddr_in6);
+                    let ip = Ipv6Addr::from(sin6.sin6_addr.s6_addr);
+                    let prefix = if !iface.ifa_netmask.is_null() {
+                        let m = &*(iface.ifa_netmask as *const libc::sockaddr_in6);
+                        m.sin6_addr.s6_addr.iter().map(|b| b.count_ones()).sum::<u32>() as u8
+                    } else { 128 };
+                    entry.addresses.push(format!("{}/{}", ip, prefix));
+                }
+            }
+
+            ifa = iface.ifa_next;
+        }
+
+        libc::freeifaddrs(ifap);
+    }
+
+    map.into_values().collect()
+}
+
+#[cfg(test)]
+mod interface_tests {
+    use super::*;
+
+    #[test]
+    fn get_network_interfaces_does_not_panic() {
+        let _ = get_network_interfaces();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_has_at_least_loopback() {
+        let ifaces = get_network_interfaces();
+        assert!(!ifaces.is_empty(), "Linux should always have at least 'lo'");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn loopback_has_loopback_flag() {
+        let ifaces = get_network_interfaces();
+        if let Some(lo) = ifaces.iter().find(|i| i.name == "lo") {
+            assert!(
+                lo.flags.iter().any(|f| f == "LOOPBACK"),
+                "'lo' missing LOOPBACK flag; got {:?}", lo.flags
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn loopback_address_starts_with_127() {
+        let ifaces = get_network_interfaces();
+        if let Some(lo) = ifaces.iter().find(|i| i.name == "lo") {
+            assert!(
+                lo.addresses.iter().any(|a| a.starts_with("127.")),
+                "'lo' missing 127.x address; got {:?}", lo.addresses
+            );
+        }
+    }
+}
