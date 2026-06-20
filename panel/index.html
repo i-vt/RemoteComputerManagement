@@ -82,6 +82,10 @@
               onclick="window.Router.navigate('files',event)">
         <i class="fas fa-folder-open"></i><span>Files</span>
       </button>
+      <button class="nav-item" data-page="loot"
+              onclick="window.Router.navigate(\'loot\',event)">
+        <i class="fas fa-box-open"></i> Loot
+      </button>
       <button class="nav-item" data-page="proxies"
               onclick="window.Router.navigate('proxies',event)">
         <i class="fas fa-network-wired"></i><span>Proxies</span>
@@ -310,6 +314,50 @@
       </div>
 
       <!-- ── PROXIES ────────────────────────────────────────────────── -->
+
+      <!-- LOOT PAGE -->
+      <div id="page-loot" class="hidden" style="display:none;flex-direction:column;gap:14px;height:calc(100dvh - 120px);">
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="page-title"><i class="fas fa-box-open text-yellow-400 mr-2"></i>Loot</h1>
+            <p class="page-subtitle">Files collected from agents — saved in the server's downloads/ folder</p>
+          </div>
+          <button onclick="window.LootBrowser.init()"
+                  class="btn btn-ghost btn-sm">
+            <i class="fas fa-sync-alt"></i> Refresh
+          </button>
+        </div>
+
+        <!-- Breadcrumb -->
+        <div class="flex items-center gap-1 bg-gray-800/60 rounded px-3 py-2 text-sm min-h-[36px]"
+             id="loot-breadcrumb">
+          <span class="text-green-400 font-mono text-xs">downloads/</span>
+        </div>
+
+        <!-- File list -->
+        <div class="flex-1 overflow-y-auto bg-gray-800/40 rounded-lg border border-gray-700"
+             id="loot-container">
+          <p class="text-gray-500 p-10 text-center italic">Loading…</p>
+        </div>
+      </div>
+
+      <!-- LOOT PREVIEW MODAL -->
+      <div id="loot-preview-modal"
+           class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
+        <div class="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl
+                    w-full max-w-4xl flex flex-col" style="max-height:90vh;">
+          <div class="flex items-center justify-between px-4 py-3
+                      border-b border-gray-700 bg-gray-800 rounded-t-xl">
+            <span id="loot-preview-title" class="font-mono text-sm text-white truncate"></span>
+            <button onclick="window.LootBrowser.closePreview()"
+                    class="text-gray-400 hover:text-white ml-4">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div id="loot-preview-body" class="flex-1 overflow-auto p-4 bg-[#0d1117] rounded-b-xl"></div>
+        </div>
+      </div>
+
       <div id="page-proxies" class="hidden">
         <div class="page-header">
           <div>
@@ -950,6 +998,7 @@ window.MobileMore = {
 <script src="/panel/js/recon.js"></script>
 <script src="/panel/js/notes.js"></script>
 <script src="/panel/js/builder.js"></script>
+<script src="/panel/js/loot.js"></script>
 <script src="/panel/js/app.js"></script>
 </body>
 </html>

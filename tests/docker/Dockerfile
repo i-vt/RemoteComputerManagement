@@ -124,6 +124,7 @@ COPY --from=agents /build/agent-http.exe ./agent-http.exe
 COPY --from=agents /build/c2_audit.db ./c2_audit.db
 COPY gen_certs.sh ./
 COPY panel/ ./panel/
+COPY modules/ ./modules/
 COPY --from=agents /build/pivot-agents/ ./pivot-agents/
 
 RUN mkdir -p modules dist downloads

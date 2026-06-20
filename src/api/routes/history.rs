@@ -18,7 +18,7 @@ pub async fn get_history(
     let history_result = match tokio::task::spawn_blocking(move || {
         // [FIXED] Explicitly annotate error type for the compiler
         let conn = db.get().map_err(|e: r2d2::Error| e.to_string())?;
-        database::get_session_full_history(&conn, id, 50).map_err(|e| e.to_string())
+        database::get_host_full_history(&conn, id, 100).map_err(|e| e.to_string())
     }).await {
         Ok(r) => r,
         Err(e) => Err(format!("Task panicked: {}", e)),

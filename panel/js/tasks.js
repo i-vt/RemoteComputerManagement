@@ -27,7 +27,9 @@ window.TaskManager = {
             btnMod.classList.add('text-gray-400');
             
             grpCmd.classList.remove('hidden');
+            grpCmd.style.display = '';        // restore to default block
             grpMod.classList.add('hidden');
+            grpMod.style.display = 'none';
         } else {
             btnMod.classList.add('bg-gray-700', 'text-white', 'shadow');
             btnMod.classList.remove('text-gray-400');
@@ -35,7 +37,9 @@ window.TaskManager = {
             btnCmd.classList.add('text-gray-400');
 
             grpMod.classList.remove('hidden');
+            grpMod.style.display = 'flex';   // clear the inline display:none from HTML
             grpCmd.classList.add('hidden');
+            grpCmd.style.display = 'none';
         }
     },
 

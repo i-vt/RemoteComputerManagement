@@ -384,6 +384,23 @@ pub async fn list_recon(
 }
 
 /// POST /api/config/recon — add an auto-recon command
+
+fn normalise_recon_cmd(raw: &str) -> String {
+    let raw = raw.trim();
+    // Prefixes handled natively by the agent's command dispatcher
+    const BUILTINS: &[&str] = &[
+        "shell ", "!", "file:", "fs:", "jobs:", "bg ",
+        "evasion:", "inmem:", "ext:", "proc:", "migrate:",
+        "keylogger:", "proxy:", "pivot:", "rportfwd:",
+        "sleep ", "beacon:", "sys:", "exit", "fallback:",
+    ];
+    if BUILTINS.iter().any(|p| raw.starts_with(p)) {
+        raw.to_string()
+    } else {
+        format!("shell {}", raw)
+    }
+}
+
 pub async fn add_recon(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -396,10 +413,11 @@ pub async fn add_recon(
         Ok(c) => c,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "DB error"}))).into_response(),
     };
-    match database::add_auto_recon(&conn, &payload.command) {
+    let cmd = normalise_recon_cmd(&payload.command);
+    match database::add_auto_recon(&conn, &cmd) {
         Ok(id) => {
-            database::audit_log(&conn, operator.id, &operator.username, "add_recon", None, Some(&payload.command));
-            (StatusCode::CREATED, Json(serde_json::json!({"id": id, "command": payload.command}))).into_response()
+            database::audit_log(&conn, operator.id, &operator.username, "add_recon", None, Some(&cmd));
+            (StatusCode::CREATED, Json(serde_json::json!({"id": id, "command": cmd}))).into_response()
         }
         Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("{}", e)}))).into_response(),
     }

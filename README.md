@@ -92,6 +92,10 @@ modules/            # Rhai recon/crypto modules
 extensions/         # Rhai extension scripts
 ```
 
+## Contributors
+
+Mad respect to my homie [emp](https://github.com/Emp5r0R) — he a chill guy. Some features were yoinked from his project [labyrinth](https://github.com/Emp5r0R/labyrinth).
+
 ## Disclaimer
 
 This software is provided for authorized security testing only. Unauthorized access to computer systems is illegal. See the full disclaimer at the bottom of this file.

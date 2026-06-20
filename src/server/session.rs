@@ -622,8 +622,14 @@ async fn process_response(sess_id: u32, r: CommandResponse, results: &SharedResu
     }
 
     // --- SCREENSHOT DUMP HANDLING ---
-    if r.output.starts_with("SCREENSHOT_DUMP:") {
-        let content = r.output.trim_start_matches("SCREENSHOT_DUMP:").to_string();
+    if r.output.contains("SCREENSHOT_DUMP:") {
+        // ext:load wraps the return value as "JOB_FINAL:<id>|SCREENSHOT_DUMP:<json>"
+        // so we cannot use starts_with — extract everything after the prefix instead.
+        let content = r.output
+            .splitn(2, "SCREENSHOT_DUMP:")
+            .nth(1)
+            .unwrap_or("")
+            .to_string();
         let sess_id_copy = sess_id;
 
         let screenshot_result = tokio::task::spawn_blocking(move || -> Result<(String, usize), String> {

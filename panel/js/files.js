@@ -42,7 +42,7 @@ window.FileManager = {
     // --- DOM INJECTION ---
 
     injectControls() {
-        const headerActions = document.querySelector('#page-files .flex.items-center.gap-4');
+        const headerActions = document.querySelector('#page-files .page-actions');
         if(headerActions && !document.getElementById('btn-upload')) {
             // Delete Button
             const delBtn = document.createElement('button');
@@ -720,23 +720,38 @@ window.FileManager = {
     handleFileSelect(files) {
         if(!files || files.length === 0) return;
 
+        if (!this.currentSessionId) {
+            this.showModal({ type: 'alert', message: 'Select a session before uploading.' });
+            return;
+        }
+        const url = window.Auth.url.replace(/\/$/, '');
+        let pending = 0;
+
         Array.from(files).forEach(file => {
+            pending++;
             const reader = new FileReader();
-            reader.onload = (evt) => {
-                const content = evt.target.result.split(',')[1];
+            reader.onload = async (evt) => {
+                const b64      = evt.target.result.split(',')[1];
                 const fullPath = this.resolvePath(file.name);
-                const cmd = `file:write|${fullPath}|${content}`;
-                
-                if(window.Terminal) {
-                    window.Terminal.activeSessionId = this.currentSessionId;
-                    window.Terminal.sendCommand(cmd);
+                try {
+                    // Use fetch directly — Terminal.sendCommand requires the
+                    // terminal modal to be open (it writes to #term-output)
+                    // and silently drops the upload if the element is missing.
+                    const res = await fetch(`${url}/api/hosts/${this.currentSessionId}/command`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-API-KEY': window.Auth.key },
+                        body: JSON.stringify({ command: `file:write|${fullPath}|${b64}` })
+                    });
+                    const label = res.ok ? `Uploaded: ${file.name}` : `Upload failed: ${file.name} (${res.status})`;
+                    if (window.UI) window.UI.addLog(label);
+                } catch (e) {
+                    if (window.UI) window.UI.addLog(`Upload error: ${file.name} — ${e.message}`);
                 }
-                if(window.UI) window.UI.addLog(`Uploading ${file.name}...`);
+                pending--;
+                if (pending === 0) setTimeout(() => this.browse(), 1500);
             };
             reader.readAsDataURL(file);
         });
-        
-        setTimeout(() => this.browse(), 2000);
     },
 
     // --- HELPERS ---

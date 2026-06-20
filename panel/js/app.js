@@ -15,7 +15,7 @@ window.Router = {
         if (target) {
             target.classList.remove('hidden');
             // Restore flex-display for pages that need it
-            if (['page-network', 'page-files'].includes('page-' + pageId)) {
+            if (['page-network', 'page-files', 'page-loot'].includes('page-' + pageId)) {
                 target.style.display = 'flex';
             } else {
                 target.style.display = '';
@@ -53,13 +53,17 @@ window.Router = {
         const refreshMap = {
             'proxies':   () => window.ProxyManager?.refreshList(),
             'control':   () => { window.API?.refreshHosts(); window.Router.syncMobileCards(); },
-            'tasks':     () => window.TaskManager?.renderTable(),
+            'tasks':     () => {
+                window.TaskManager?.renderTable();
+                window.TaskManager?.loadModules();   // retry after auth is established
+            },
             'history':   () => window.HistoryManager?.refresh(),
             'network':   () => window.NetworkManager?.init(),
             'listeners': () => { window.ListenerManager?.refresh(); window.ReconConfig?.refresh(); },
             'jobs':      () => window.JobView?.refresh(),
             'audit':     () => window.AuditView?.refresh(),
             'builder':   () => window.BuilderManager?.refreshJobList(),
+            'loot':  () => window.LootBrowser?.init(),
             'files': () => {
                 if (window.API && window.FileManager) {
                     window.API.refreshHosts().then?.(() => {
@@ -199,6 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.TaskManager)    window.TaskManager.init();
     if (window.ModuleManager)  window.ModuleManager.init();
     if (window.FileManager)    window.FileManager.init();
+    if (window.LootBrowser)    window.LootBrowser.init();
     if (window.BuilderManager) window.BuilderManager.init();
     if (window.Theme)          window.Theme.init();
     if (window.Shortcuts)      window.Shortcuts.init();

@@ -23,7 +23,8 @@ use crate::common::SharedSessions;
 use crate::database::DbPool;
 
 pub use state::{ApiContext, SharedResults, SharedProxies, SharedScripts, SharedListenerManager, SharedBuildJobs};
-use crate::api::routes::{hosts, proxies, modules, history, operators, listeners, builder, topology, tasks};
+use crate::api::routes::downloads;
+use crate::api::routes::{hosts, proxies, modules, history, operators, listeners, builder};
 
 pub use state::SharedResults as ResultsType;
 pub use state::SharedProxies as ProxiesType;
@@ -125,7 +126,9 @@ pub async fn start_api_server(
     let public_routes = Router::new()
         .route("/", get(serve_panel))
         .route("/panel/*tail", get(serve_static))
-        .route("/api/auth/login", post(operators::login));
+        .route("/api/auth/login", post(operators::login))
+        // Downloads served without auth so <img> tags work in the panel
+        .route("/api/downloads/*path", get(downloads::serve_download));
 
     // ── Protected routes (X-API-KEY header required) ───────────────────
     let protected_routes = Router::new()
@@ -156,18 +159,13 @@ pub async fn start_api_server(
         .route("/api/proxies",                    get(proxies::list_proxies))
         .route("/api/hosts/:id/proxy",            post(proxies::start_proxy).delete(proxies::stop_proxy))
         .route("/api/hosts/:id/proxy/check",      post(proxies::check_proxy_ip))
+        .route("/api/hosts/:id/screenshots",       get(downloads::list_screenshots))
+        .route("/api/loot",                       get(downloads::list_loot).delete(downloads::delete_loot))
         .route("/api/rportfwds",                  get(proxies::list_rportfwds))
         .route("/api/hosts/:id/rportfwd",         post(proxies::start_rportfwd).delete(proxies::stop_rportfwd))
         // Builder — all behind auth; download uses fetch+blob in JS so X-API-KEY is sent
         .route("/api/builder/build",              post(builder::start_build))
         .route("/api/builder/jobs",               get(builder::list_jobs))
-        // ── Topology (auto-plan inference) ─────────────────────────────
-        .route("/api/topology/plan",                get(topology::plan))
-        .route("/api/topology/snapshot",            get(topology::snapshot))
-        // ── Hibernation task queue ──────────────────────────────────────
-        .route("/api/hosts/:id/queue",              post(tasks::queue_task))
-        .route("/api/hosts/:id/tasks",              get(tasks::list_tasks))
-        .route("/api/hosts/:id/tasks/:task_id",     get(tasks::get_task).delete(tasks::cancel_task))
         .route("/api/builder/jobs/:id/status",    get(builder::job_status))
         .route("/api/builder/jobs/:id/download",  get(builder::download_artifact))
         .route_layer(axum_middleware::from_fn_with_state(shared_state.clone(), middleware::auth));

