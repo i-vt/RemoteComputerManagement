@@ -15,7 +15,7 @@ window.Router = {
         if (target) {
             target.classList.remove('hidden');
             // Restore flex-display for pages that need it
-            if (['page-network', 'page-files', 'page-loot'].includes('page-' + pageId)) {
+            if (['page-network', 'page-files', 'page-loot', 'page-users'].includes('page-' + pageId)) {
                 target.style.display = 'flex';
             } else {
                 target.style.display = '';
@@ -59,11 +59,12 @@ window.Router = {
             },
             'history':   () => window.HistoryManager?.refresh(),
             'network':   () => window.NetworkManager?.init(),
-            'listeners': () => { window.ListenerManager?.refresh(); window.ReconConfig?.refresh(); },
+            'listeners': () => { window.ListenerManager?.refresh(); window.ReconConfig?.init(); },
             'jobs':      () => window.JobView?.refresh(),
             'audit':     () => window.AuditView?.refresh(),
             'builder':   () => window.BuilderManager?.refreshJobList(),
             'loot':  () => window.LootBrowser?.init(),
+            'users': () => window.UserManager?.init(),
             'files': () => {
                 if (window.API && window.FileManager) {
                     window.API.refreshHosts().then?.(() => {
@@ -204,6 +205,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.ModuleManager)  window.ModuleManager.init();
     if (window.FileManager)    window.FileManager.init();
     if (window.LootBrowser)    window.LootBrowser.init();
+    if (window.UserManager)    window.UserManager.init();
+    // Hide Users nav entry for non-admin accounts
+    const navUsers = document.getElementById('nav-users');
+    if (navUsers && window.Auth?.role !== 'admin') navUsers.style.display = 'none';
     if (window.BuilderManager) window.BuilderManager.init();
     if (window.Theme)          window.Theme.init();
     if (window.Shortcuts)      window.Shortcuts.init();

@@ -58,9 +58,23 @@ window.ScreenshotView = {
         }
     },
 
-    // Poll /api/hosts/:id/screenshots until a folder newer than `beforeMs` appears.
-    // Returns the folder name or null on timeout.
+    // Poll /api/hosts/:id/screenshots until a NEW folder appears —
+    // one that was not in the list when capture() was called.
+    // No timestamp parsing needed: avoids clock-skew and naming-convention issues.
     async _waitForFolder(url, sessionId, beforeMs, timeoutSec) {
+        // Snapshot existing folders so we can diff
+        let existing = new Set();
+        try {
+            const snap = await fetch(
+                `${url}/api/hosts/${sessionId}/screenshots`,
+                { headers: { 'X-API-KEY': window.Auth.key } }
+            );
+            if (snap.ok) {
+                const { folders } = await snap.json();
+                (folders || []).forEach(f => existing.add(f));
+            }
+        } catch (_) { /* empty set — any folder counts as new */ }
+
         for (let i = 0; i < timeoutSec; i++) {
             await new Promise(r => setTimeout(r, 1000));
             try {
@@ -70,24 +84,12 @@ window.ScreenshotView = {
                 );
                 if (!r.ok) continue;
                 const { folders } = await r.json();
-                if (folders && folders.length) {
-                    // Folder names: screenshots_YYYYMMDD_HHMMSS_<sessid>
-                    // Parse the embedded timestamp to find one created after `beforeMs`.
-                    for (const f of folders) {
-                        const ts = this._folderTimestamp(f);
-                        if (ts && ts >= beforeMs - 3000) return f; // 3s grace window
-                    }
+                for (const f of (folders || [])) {
+                    if (!existing.has(f)) return f;
                 }
             } catch (_) { /* keep polling */ }
         }
         return null;
-    },
-
-    // Parse UTC timestamp out of folder name "screenshots_YYYYMMDD_HHMMSS_N"
-    _folderTimestamp(name) {
-        const m = name.match(/screenshots_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_/);
-        if (!m) return null;
-        return Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
     },
 
     // Load monitor_0.png, monitor_1.png … from the API until one returns 404.

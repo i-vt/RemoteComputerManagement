@@ -1298,3 +1298,74 @@ body.light-theme #cy { background: #f0f4f8; }
 .mt-4 { margin-top: 16px; }
 .gap-2 { gap: 8px; }
 .gap-3 { gap: 12px; }
+
+/* ── Dashboard additions ─────────────────────────────────────────────── */
+
+/* Stat card icon */
+.stat-icon-wrap {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  opacity: 0.12;
+}
+.stat-icon { font-size: 28px; }
+
+/* Middle two-column grid: chart fixed-width left, activity fills right */
+.dash-mid-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 16px;
+  margin-top: 16px;
+  min-height: 0;
+}
+
+.dash-chart-body {
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Custom legend row below the donut */
+.dash-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  justify-content: center;
+  min-height: 20px;
+}
+
+/* Dashboard session table header cells */
+.dash-th {
+  padding: 8px 16px;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Responsive: collapse to single column on narrow viewports */
+@media (max-width: 760px) {
+  .dash-mid-grid {
+    grid-template-columns: 1fr;
+  }
+  #page-stats .stat-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+/* Pink theme overrides for dashboard elements */
+html.light-theme .dash-chart-card,
+html.light-theme .dash-activity-card {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
+
+html.light-theme #dash-sessions-tbody tr:hover {
+  background: var(--bg-hover) !important;
+}
+html.light-theme .dash-th { color: var(--text-muted); }

@@ -393,6 +393,7 @@ fn normalise_recon_cmd(raw: &str) -> String {
         "evasion:", "inmem:", "ext:", "proc:", "migrate:",
         "keylogger:", "proxy:", "pivot:", "rportfwd:",
         "sleep ", "beacon:", "sys:", "exit", "fallback:",
+        "module:",  // server-side Rhai module invocation
     ];
     if BUILTINS.iter().any(|p| raw.starts_with(p)) {
         raw.to_string()

