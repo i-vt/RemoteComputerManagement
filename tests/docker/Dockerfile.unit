@@ -56,7 +56,7 @@ RUN mkdir -p src/bin src/server src/agent/handlers src/agent/injection \
        done \
     && echo 'pub fn _placeholder() {}' > src/lib.rs
 
-RUN cargo fetch --locked
+RUN cargo fetch
 
 # ── Stage 2: compile ───────────────────────────────────────────────────
 FROM deps AS build

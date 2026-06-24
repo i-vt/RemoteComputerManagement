@@ -15,11 +15,12 @@ window.FileManager = {
         // 1. Session Select Listener
         select.addEventListener('change', (e) => {
             this.currentSessionId = e.target.value;
-            this.currentPath = '/'; 
             this.cachedFiles = [];
             if(this.currentSessionId) {
-                this.browse('/');
+                this.currentPath = this.getInitialPath();
+                this.browse(this.currentPath);
             } else {
+                this.currentPath = '/';
                 this.renderError("Select a session");
             }
         });
@@ -28,6 +29,7 @@ window.FileManager = {
         this.injectControls();
         this.injectHeader(); 
         this.injectBreadcrumbContainer();
+        this.injectDrivesButton();
         this.injectUnifiedModal();
         this.injectPreviewModal();
         this.injectContextMenu(); 
@@ -151,7 +153,30 @@ window.FileManager = {
         });
     },
 
-    injectUnifiedModal() {
+    injectDrivesButton() {
+        // Insert a "Drives" quick-jump button into the file toolbar, after the up button.
+        const toolbar = document.querySelector('#page-files .file-toolbar');
+        if (!toolbar || document.getElementById('fm-drives-btn')) return;
+
+        const btn = document.createElement('button');
+        btn.id = 'fm-drives-btn';
+        btn.className = 'icon-btn';
+        btn.title = 'Drives / Mount Points';
+        btn.innerHTML = '<i class="fas fa-hdd"></i>';
+        btn.onclick = () => {
+            if (!this.currentSessionId) return;
+            const os = this.getOsType();
+            // Windows: virtual __drives__ view. Mac: /Volumes. Linux: __drives__ (scans /media + /mnt)
+            const target = (os === 'mac') ? '/Volumes' : '__drives__';
+            this.browse(target);
+        };
+
+        // Insert as the second child (right after the existing up-button)
+        const upBtn = toolbar.firstElementChild;
+        toolbar.insertBefore(btn, upBtn ? upBtn.nextSibling : toolbar.firstChild);
+    },
+
+
         if(document.getElementById('fm-modal')) return;
         const modalHtml = `
             <div id="fm-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
@@ -304,18 +329,24 @@ window.FileManager = {
 
         let items = '';
         const ext = file.name.split('.').pop().toLowerCase();
-        if(['txt','log','ini','cfg','json','xml','yml','md','sh','bat','ps1'].includes(ext)) {
+
+        // Preview: only for text files that aren't drives
+        if (!file.is_drive && ['txt','log','ini','cfg','json','xml','yml','md','sh','bat','ps1'].includes(ext)) {
             items += `<button onclick="window.FileManager.previewFile('${file.name}')" class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white text-xs flex items-center gap-2"><i class="fas fa-eye text-blue-400"></i> Preview</button>`;
         }
 
-        if(!file.is_dir) {
+        if (file.is_drive) {
+            // Drive entries: only offer Open
+            items += `<button onclick="window.FileManager.browse('${file.name.replace(/\\/g, '\\\\')}')" class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white text-xs flex items-center gap-2"><i class="fas fa-folder-open text-yellow-400"></i> Open</button>`;
+        } else if (!file.is_dir) {
             items += `<button onclick="window.FileManager.promptDownload(['${file.name}'])" class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white text-xs flex items-center gap-2"><i class="fas fa-download text-green-400"></i> Download</button>`;
+            items += `<div class="border-t border-gray-700 my-1"></div>`;
+            items += `<button onclick="window.FileManager.contextDelete('${file.name}')" class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-300 text-xs flex items-center gap-2"><i class="fas fa-trash"></i> Delete</button>`;
         } else {
             items += `<button onclick="window.FileManager.browse(window.FileManager.resolvePath('${file.name}'))" class="w-full text-left px-4 py-2 hover:bg-gray-700 text-white text-xs flex items-center gap-2"><i class="fas fa-folder-open text-yellow-400"></i> Open</button>`;
+            items += `<div class="border-t border-gray-700 my-1"></div>`;
+            items += `<button onclick="window.FileManager.contextDelete('${file.name}')" class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-300 text-xs flex items-center gap-2"><i class="fas fa-trash"></i> Delete</button>`;
         }
-
-        items += `<div class="border-t border-gray-700 my-1"></div>`;
-        items += `<button onclick="window.FileManager.contextDelete('${file.name}')" class="w-full text-left px-4 py-2 hover:bg-red-900/50 text-red-300 text-xs flex items-center gap-2"><i class="fas fa-trash"></i> Delete</button>`;
 
         menu.innerHTML = items;
         menu.style.left = `${e.pageX}px`;
@@ -538,36 +569,48 @@ window.FileManager = {
             const el = document.createElement('div');
             el.className = "flex items-center px-4 py-2 hover:bg-gray-700 rounded cursor-pointer transition group border-b border-gray-700/50 last:border-0 file-row";
             
-            let icon = f.is_dir ? '<i class="fas fa-folder text-yellow-500 text-lg"></i>' : '<i class="fas fa-file text-gray-400 text-lg"></i>';
-            if(!f.is_dir) {
-                if(f.name.match(/\.(exe|sh|bat|cmd)$/i)) icon = '<i class="fas fa-terminal text-green-500 text-lg"></i>';
-                else if(f.name.match(/\.(png|jpg|jpeg|gif|bmp)$/i)) icon = '<i class="fas fa-image text-purple-400 text-lg"></i>';
-                else if(f.name.match(/\.(zip|tar|gz|7z|rar)$/i)) icon = '<i class="fas fa-file-archive text-red-400 text-lg"></i>';
-                else if(f.name.match(/\.(txt|log|cfg|ini|md)$/i)) icon = '<i class="fas fa-file-alt text-blue-400 text-lg"></i>';
+            let icon;
+            if (f.is_drive) {
+                icon = '<i class="fas fa-hdd text-blue-400 text-lg"></i>';
+            } else if (f.is_dir) {
+                icon = '<i class="fas fa-folder text-yellow-500 text-lg"></i>';
+            } else {
+                icon = '<i class="fas fa-file text-gray-400 text-lg"></i>';
+                if (f.name.match(/\.(exe|sh|bat|cmd)$/i))     icon = '<i class="fas fa-terminal text-green-500 text-lg"></i>';
+                else if (f.name.match(/\.(png|jpg|jpeg|gif|bmp)$/i)) icon = '<i class="fas fa-image text-purple-400 text-lg"></i>';
+                else if (f.name.match(/\.(zip|tar|gz|7z|rar)$/i))   icon = '<i class="fas fa-file-archive text-red-400 text-lg"></i>';
+                else if (f.name.match(/\.(txt|log|cfg|ini|md)$/i))   icon = '<i class="fas fa-file-alt text-blue-400 text-lg"></i>';
             }
 
             const sizeStr = f.is_dir ? '-' : this.formatSize(f.size);
             const dateStr = f.mod_time ? new Date(f.mod_time * 1000).toLocaleString() : '-';
+            // For drive entries, show just the root path; for regular entries show the name.
+            const displayName = f.is_drive
+                ? `<span class="text-blue-300">${f.name}</span>`
+                : f.name;
 
             el.innerHTML = `
                 <div class="w-8 flex justify-center items-center" onclick="event.stopPropagation()">
-                    <input type="checkbox" class="file-checkbox w-4 h-4 rounded bg-gray-900 border-gray-600 text-green-500 focus:ring-0 cursor-pointer" value="${f.name}">
+                    ${f.is_drive ? '<span class="w-4"></span>' : `<input type="checkbox" class="file-checkbox w-4 h-4 rounded bg-gray-900 border-gray-600 text-green-500 focus:ring-0 cursor-pointer" value="${f.name}">`}
                 </div>
                 <div class="w-8 flex justify-center">${icon}</div>
-                <div class="flex-1 text-sm text-gray-200 font-medium truncate pr-4 pl-2 select-none">${f.name}</div>
+                <div class="flex-1 text-sm text-gray-200 font-medium truncate pr-4 pl-2 select-none">${displayName}</div>
                 <div class="w-24 text-right text-xs text-gray-400 font-mono">${sizeStr}</div>
                 <div class="w-20 text-center text-xs text-gray-500 font-mono">${f.perms}</div>
                 <div class="w-32 text-right text-xs text-gray-500 truncate ml-2">${dateStr}</div>
             `;
 
             el.onclick = (e) => {
+                if (f.is_drive) return; // single-click on a drive does nothing (use dblclick)
                 const cb = el.querySelector('.file-checkbox');
-                cb.checked = !cb.checked;
+                if (cb) cb.checked = !cb.checked;
             };
 
             el.ondblclick = () => {
-                if(f.is_dir) {
-                    this.browse(this.resolvePath(f.name));
+                if (f.is_dir) {
+                    // Drive entries already carry their full path as the name
+                    const target = f.is_drive ? f.name : this.resolvePath(f.name);
+                    this.browse(target);
                 } else {
                     this.promptDownload([f.name]);
                 }
@@ -581,42 +624,86 @@ window.FileManager = {
 
     renderBreadcrumbs() {
         const div = document.getElementById('file-breadcrumbs');
-        if(!div) return;
+        if (!div) return;
         div.innerHTML = '';
 
-        const isWin = this.currentPath.includes('\\') || this.currentPath.match(/^[a-zA-Z]:/);
-        const sep = isWin ? '\\' : '/';
-        const parts = this.currentPath.split(sep).filter(p => p !== '');
-        
-        const rootSpan = document.createElement('span');
-        rootSpan.className = "px-2 py-1 bg-gray-700 text-green-400 rounded text-xs cursor-pointer hover:bg-gray-600 font-mono";
-        rootSpan.innerHTML = isWin ? 'C:\\' : '/'; 
-        rootSpan.onclick = () => this.browse(isWin ? 'C:\\' : '/');
-        div.appendChild(rootSpan);
+        const os = this.getOsType();
+        const isWin = (os === 'windows');
+        const isMac = (os === 'mac');
 
-        if(parts.length > 0) {
+        const addCrumb = (label, path, isRoot = false) => {
+            const span = document.createElement('span');
+            span.className = isRoot
+                ? 'px-2 py-1 bg-gray-700 text-green-400 rounded text-xs cursor-pointer hover:bg-gray-600 font-mono transition select-none'
+                : 'px-2 py-1 hover:bg-gray-700 text-gray-300 rounded text-xs cursor-pointer transition font-mono select-none';
+            span.innerText = label;
+            span.onclick = () => this.browse(path);
+            div.appendChild(span);
+        };
+
+        const addSep = () => {
+            const s = document.createElement('span');
+            s.className = 'text-gray-600 text-xs select-none';
+            s.innerText = '›';
+            div.appendChild(s);
+        };
+
+        // ── Windows ───────────────────────────────────────────────
+        if (isWin) {
+            // Root crumb always navigates to the drive listing
+            addCrumb('This PC', '__drives__', true);
+            if (this.currentPath === '__drives__') return;
+
+            const sep = '\\';
+            // parts: ["D:", "Users", "john"] for "D:\\Users\\john"
+            const parts = this.currentPath.split(sep).filter(p => p !== '');
             parts.forEach((p, idx) => {
-                const slash = document.createElement('span');
-                slash.className = "text-gray-600 text-xs";
-                slash.innerText = '>';
-                div.appendChild(slash);
-
-                let clickPath = isWin ? parts.slice(0, idx+1).join('\\') : '/' + parts.slice(0, idx+1).join('/');
-                if(isWin && idx === 0 && p.includes(':')) clickPath = p + '\\';
-                else if(isWin && !clickPath.includes(':')) clickPath = 'C:\\' + clickPath; 
-
-                const span = document.createElement('span');
-                span.className = "px-2 py-1 hover:bg-gray-700 text-gray-300 rounded text-xs cursor-pointer transition";
-                span.innerText = p;
-                span.onclick = () => this.browse(clickPath);
-                div.appendChild(span);
+                addSep();
+                let clickPath;
+                if (idx === 0) {
+                    // Drive letter root: "D:" → "D:\"
+                    clickPath = p.includes(':') ? p + '\\' : 'C:\\';
+                } else {
+                    const drivePart = parts[0].includes(':') ? parts[0] + '\\' : 'C:\\';
+                    clickPath = drivePart + parts.slice(1, idx + 1).join('\\');
+                }
+                addCrumb(p, clickPath);
             });
+            return;
         }
+
+        // ── macOS ─────────────────────────────────────────────────
+        if (isMac) {
+            addCrumb('/', '/', true);
+            if (this.currentPath === '/') return;
+            const parts = this.currentPath.split('/').filter(p => p !== '');
+            parts.forEach((p, idx) => {
+                addSep();
+                addCrumb(p, '/' + parts.slice(0, idx + 1).join('/'));
+            });
+            return;
+        }
+
+        // ── Linux / other Unix ────────────────────────────────────
+        if (this.currentPath === '__drives__') {
+            addCrumb('Mount Points', '__drives__', true);
+            return;
+        }
+        addCrumb('/', '/', true);
+        if (this.currentPath === '/') return;
+        const parts = this.currentPath.split('/').filter(p => p !== '');
+        parts.forEach((p, idx) => {
+            addSep();
+            addCrumb(p, '/' + parts.slice(0, idx + 1).join('/'));
+        });
     },
+
 
     // --- ACTIONS ---
 
     resolvePath(name) {
+        // From the drives view, each entry's name IS already its full path
+        if (this.currentPath === '__drives__') return name;
         const sep = this.currentPath.includes('\\') ? '\\' : '/';
         return this.currentPath.endsWith(sep) ? this.currentPath + name : this.currentPath + sep + name;
     },
@@ -792,8 +879,22 @@ window.FileManager = {
     },
 
     up() {
-        if(!this.currentPath || this.currentPath.length < 2) return;
-        const isWin = this.currentPath.includes('\\');
+        if (!this.currentPath || this.currentPath === '__drives__') return;
+
+        const isWin = this.getOsType() === 'windows';
+
+        // At a Windows drive root (e.g. "D:\") → go to drive listing
+        if (isWin && /^[A-Za-z]:\\?$/.test(this.currentPath)) {
+            this.browse('__drives__');
+            return;
+        }
+
+        // At a Linux __drives__ mount-point entry (full path like "/media/usb") → go to __drives__
+        if (!isWin && this.currentPath !== '/' && this.cachedFiles.length === 0) {
+            this.browse('__drives__');
+            return;
+        }
+
         const sep = isWin ? '\\' : '/';
         const parts = this.currentPath.split(sep).filter(p => p !== "");
         
@@ -805,6 +906,23 @@ window.FileManager = {
             if(newPath === '') newPath = sep;
             this.browse(newPath);
         }
+    },
+
+    // Returns 'windows', 'mac', or 'linux' based on the current session's OS field.
+    getOsType() {
+        const host = window.API?.hosts?.find(h => h.id == this.currentSessionId);
+        if (!host) return 'linux'; // safe default
+        const os = host.os.toLowerCase();
+        if (os.includes('win')) return 'windows';
+        if (os.includes('mac') || os.includes('darwin')) return 'mac';
+        return 'linux';
+    },
+
+    // Returns the initial browse path for the current session's OS.
+    // Windows gets the virtual __drives__ view; Unix systems start at root.
+    getInitialPath() {
+        const os = this.getOsType();
+        return os === 'windows' ? '__drives__' : '/';
     },
 
     renderError(msg) {

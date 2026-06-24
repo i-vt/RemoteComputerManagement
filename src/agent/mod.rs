@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod inmem;
 pub mod migrate;
 pub mod artifacts;
+pub mod persistence;
 pub mod http_transport;
 pub mod fallback;
 pub mod syscalls;

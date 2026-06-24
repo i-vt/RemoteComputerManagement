@@ -24,7 +24,7 @@ use crate::database::DbPool;
 
 pub use state::{ApiContext, SharedResults, SharedProxies, SharedScripts, SharedListenerManager, SharedBuildJobs};
 use crate::api::routes::downloads;
-use crate::api::routes::{hosts, proxies, modules, history, operators, listeners, builder};
+use crate::api::routes::{hosts, proxies, modules, history, operators, listeners, builder, topology, tasks};
 
 pub use state::SharedResults as ResultsType;
 pub use state::SharedProxies as ProxiesType;
@@ -168,6 +168,14 @@ pub async fn start_api_server(
         .route("/api/builder/jobs",               get(builder::list_jobs))
         .route("/api/builder/jobs/:id/status",    get(builder::job_status))
         .route("/api/builder/jobs/:id/download",  get(builder::download_artifact))
+        // Topology — passive route-planning over already-reported agent interfaces
+        .route("/api/topology/plan",              get(topology::plan))
+        .route("/api/topology/snapshot",          get(topology::snapshot))
+        // Hibernation task queue — queue commands for low-beacon-rate agents
+        .route("/api/hosts/:id/queue",            post(tasks::queue_task))
+        .route("/api/hosts/:id/tasks",            get(tasks::list_tasks))
+        .route("/api/hosts/:id/tasks/:task_id",   get(tasks::get_task))
+        .route("/api/hosts/:id/tasks/:task_id",   delete(tasks::cancel_task))
         .route_layer(axum_middleware::from_fn_with_state(shared_state.clone(), middleware::auth));
 
     let app = public_routes
