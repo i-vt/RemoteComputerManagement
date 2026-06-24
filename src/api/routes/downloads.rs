@@ -161,6 +161,122 @@ pub async fn list_loot(
     Json(serde_json::json!({ "path": subpath, "entries": entries }))
 }
 
+/// GET /api/loot/zip?path=<folder_path>
+/// Recursively zips everything under downloads/<path> and returns it as
+/// a single application/zip download.  Useful for pulling an entire
+/// session's loot folder in one click from the panel.
+pub async fn zip_loot(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    use std::io::Write as _;
+
+    let subpath = match params.get("path") {
+        Some(p) if !p.is_empty() => p.clone(),
+        _ => return (StatusCode::BAD_REQUEST, "path required").into_response(),
+    };
+
+    let safe: PathBuf = subpath
+        .split('/')
+        .filter(|s| !s.is_empty() && !s.contains(".."))
+        .collect();
+    if safe.components().count() == 0 {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    let full      = PathBuf::from("downloads").join(&safe);
+    let zip_name  = format!(
+        "{}.zip",
+        safe.file_name().and_then(|n| n.to_str()).unwrap_or("loot")
+    );
+
+    if !full.is_dir() {
+        return (StatusCode::NOT_FOUND, "Not a directory").into_response();
+    }
+
+    let result = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        // Collect (zip_path, bytes) pairs.
+        // We strip from full.parent() — not full — so every entry is prefixed
+        // with the folder name (e.g. "Documents/file.txt", not just "file.txt").
+        // This means extracting the zip always creates a named sub-folder,
+        // matching the structure that individual-file and batch downloads use.
+        fn collect(
+            dir:  &std::path::Path,
+            base: &std::path::Path,
+            out:  &mut Vec<(String, Vec<u8>)>,
+            dirs: &mut Vec<String>,        // explicit directory entries
+        ) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let rel  = match path.strip_prefix(base) {
+                    Ok(r)  => r.to_string_lossy().replace('\\', "/"),
+                    Err(_) => continue,
+                };
+                if path.is_dir() {
+                    // Record the directory so the zip contains an explicit entry.
+                    // Some extractors (Windows Explorer) need this to create
+                    // empty sub-folders; it is harmless for others.
+                    let dir_entry = if rel.ends_with('/') { rel.clone() }
+                                    else { format!("{}/", rel) };
+                    dirs.push(dir_entry);
+                    collect(&path, base, out, dirs);
+                } else if path.is_file() {
+                    if let Ok(data) = std::fs::read(&path) {
+                        out.push((rel, data));
+                    }
+                }
+            }
+        }
+
+        // Strip from the PARENT of the requested folder so that the folder
+        // name itself becomes the root path inside the zip.
+        let base_path: std::path::PathBuf = full
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| full.clone());
+
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut dir_entries: Vec<String>       = Vec::new();
+        collect(&full, &base_path, &mut files, &mut dir_entries);
+
+        let cursor   = std::io::Cursor::new(Vec::new());
+        let mut zip  = zip::ZipWriter::new(cursor);
+        let opts     = zip::write::FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        let dir_opts = zip::write::FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        // Write explicit directory entries first so extractors see them
+        // before the files inside them.
+        for dir_name in dir_entries {
+            zip.add_directory(&dir_name, dir_opts).map_err(|e| e.to_string())?;
+        }
+
+        for (name, data) in files {
+            zip.start_file(&name, opts).map_err(|e| e.to_string())?;
+            zip.write_all(&data).map_err(|e| e.to_string())?;
+        }
+
+        let finished = zip.finish().map_err(|e| e.to_string())?;
+        Ok(finished.into_inner())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(bytes)) => {
+            use axum::http::{HeaderMap, HeaderValue};
+            let mut headers = HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE,
+                HeaderValue::from_static("application/zip"));
+            headers.insert(header::CONTENT_DISPOSITION,
+                HeaderValue::from_str(&format!("attachment; filename=\"{}\"", zip_name))
+                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")));
+            (StatusCode::OK, headers, bytes).into_response()
+        }
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 /// DELETE /api/loot?path=<file_or_dir>
 /// Removes a single file or an empty directory from downloads/.
 pub async fn delete_loot(

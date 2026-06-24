@@ -176,7 +176,7 @@ window.FileManager = {
         toolbar.insertBefore(btn, upBtn ? upBtn.nextSibling : toolbar.firstChild);
     },
 
-
+    injectUnifiedModal() {
         if(document.getElementById('fm-modal')) return;
         const modalHtml = `
             <div id="fm-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">

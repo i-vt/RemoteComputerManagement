@@ -62,6 +62,7 @@ window.Router = {
             'listeners': () => { window.ListenerManager?.refresh(); window.ReconConfig?.init(); },
             'jobs':      () => window.JobView?.refresh(),
             'audit':     () => window.AuditView?.refresh(),
+            'iocs':      () => window.IocTracker?.refresh(),
             'builder':   () => window.BuilderManager?.refreshJobList(),
             'loot':  () => window.LootBrowser?.init(),
             'users': () => window.UserManager?.init(),

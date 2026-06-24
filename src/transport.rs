@@ -278,6 +278,7 @@ mod tests {
             hibernation_mode: false,
             task_batch_size: 10,
             dga: None,
+            valid_parents: Vec::new(),
         }
     }
 

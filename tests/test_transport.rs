@@ -25,6 +25,7 @@ fn make_config(host: &str, port: u16, transport: TransportProtocol) -> C2Config 
         hibernation_mode: false,
         task_batch_size: 10,
         dga: None,
+        valid_parents: Vec::new(),
     }
 }
 

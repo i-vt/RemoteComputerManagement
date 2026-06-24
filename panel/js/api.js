@@ -29,6 +29,8 @@ window.API = {
                 window.UI.updateHostTable(this.hosts);
                 window.UI.updateConnectionStatus(true);
             }
+            // Keep the file browser session dropdown in sync with every poll.
+            window.FileManager?.updateSessionList?.(this.hosts);
         } catch(e) {
             console.error(e);
             if(window.UI) window.UI.updateConnectionStatus(false);

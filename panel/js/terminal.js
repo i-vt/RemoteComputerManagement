@@ -137,6 +137,10 @@ window.Terminal = {
             );
             this.pollOutput(id, data.request_id);
             if (window.UI) window.UI.addLog(`Sent "${cmd}" to Session #${id}`);
+            // Update evasion badges immediately for evasion commands so the
+            // host-table badge row reflects the new state without waiting for
+            // a full history re-fetch.
+            window.EvasionFlags?.onCommand(id, cmd);
 
         } catch (e) {
             statusDiv.remove();

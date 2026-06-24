@@ -122,6 +122,10 @@
               onclick="window.Router.navigate('audit',event)">
         <i class="fas fa-shield-alt"></i><span>Audit Log</span>
       </button>
+      <button class="nav-item" data-page="iocs"
+              onclick="window.Router.navigate('iocs',event)">
+        <i class="fas fa-bug"></i><span>Artifacts</span>
+      </button>
     </nav>
 
     <div class="sidebar-footer">
@@ -1014,6 +1018,64 @@
         </div>
       </div>
 
+      <!-- ── ARTIFACTS / IOC TRACKER ──────────────────────────────── -->
+      <div id="page-iocs" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Artifacts</h1>
+            <p class="page-subtitle">IOC &amp; cleanup tracker — artifacts left on target hosts</p>
+          </div>
+          <div class="page-actions" style="display:flex;align-items:center;gap:8px;">
+            <span id="ioc-summary" class="text-xs text-gray-500 hide-mobile"></span>
+            <button onclick="window.IocTracker.showAddModal()" class="btn btn-danger btn-sm">
+              <i class="fas fa-plus"></i><span class="hide-mobile ml-1">Record</span>
+            </button>
+            <button onclick="window.IocTracker.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="card" style="padding:10px 14px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+          <select id="ioc-filter-session"
+                  class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white">
+            <option value="">All sessions</option>
+          </select>
+          <select id="ioc-filter-status"
+                  class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white">
+            <option value="all">All status</option>
+            <option value="active">Active only</option>
+            <option value="cleaned">Cleaned only</option>
+          </select>
+          <input id="ioc-search" type="text" placeholder="Search path / type…"
+                 class="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-sm text-white"
+                 style="flex:1;min-width:140px;">
+        </div>
+
+        <div class="card" style="max-height:calc(100dvh - 240px);display:flex;flex-direction:column;">
+          <div style="flex:1;overflow-y:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Type</th>
+                  <th>Path / Key</th>
+                  <th class="hide-mobile">Detail</th>
+                  <th class="hide-mobile">Operator</th>
+                  <th class="hide-mobile">Date</th>
+                  <th>Status</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="ioc-tbody">
+                <tr class="empty-row"><td colspan="8">Click refresh to load</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /page-wrapper -->
   </main>
 
@@ -1079,6 +1141,9 @@
       </button>
       <button class="more-item" data-page="audit" onclick="window.Router.navigate('audit',event);window.MobileMore.close()">
         <i class="fas fa-shield-alt"></i><span>Audit</span>
+      </button>
+      <button class="more-item" data-page="iocs" onclick="window.Router.navigate('iocs',event);window.MobileMore.close()">
+        <i class="fas fa-bug"></i><span>Artifacts</span>
       </button>
       <button class="more-item" onclick="window.Theme.toggle();window.MobileMore.close()">
         <i class="fas fa-circle-half-stroke"></i><span>Theme</span>
@@ -1206,6 +1271,7 @@ window.MobileMore = {
 <script src="/panel/js/builder.js"></script>
 <script src="/panel/js/users.js"></script>
 <script src="/panel/js/loot.js"></script>
+<script src="/panel/js/ioc.js"></script>
 <script src="/panel/js/app.js"></script>
 </body>
 </html>

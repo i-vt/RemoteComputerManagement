@@ -108,6 +108,7 @@ impl ListenerManager {
             hibernation_mode: false,
             task_batch_size: 10,
             dga: None,
+            valid_parents: Vec::new(),
         };
 
         // HTTP(S) listeners use the HTTP C2 server instead of raw TCP

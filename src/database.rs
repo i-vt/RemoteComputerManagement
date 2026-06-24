@@ -133,6 +133,19 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
          );
          CREATE INDEX IF NOT EXISTS idx_notes_session ON session_notes(session_id);
 
+         CREATE TABLE IF NOT EXISTS iocs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id  INTEGER NOT NULL,
+            ioc_type    TEXT NOT NULL,   -- file | registry | service | task | crontab | other
+            path        TEXT NOT NULL,   -- artifact path / key / name on the target
+            detail      TEXT,            -- extra context (e.g. reg value, service binary)
+            cleanup_cmd TEXT,            -- command to dispatch for automated cleanup
+            operator    TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            cleaned_at  TEXT             -- NULL until the operator marks it cleaned
+         );
+         CREATE INDEX IF NOT EXISTS idx_iocs_session ON iocs(session_id);
+
          CREATE TABLE IF NOT EXISTS queued_tasks (
             task_id     TEXT PRIMARY KEY,
             session_id  INTEGER NOT NULL,
@@ -1005,4 +1018,87 @@ mod queued_task_tests {
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].task_id, "id-1");
     }
+}
+
+// ── IOC (Indicator of Compromise) tracker ─────────────────────────────────────
+// Stores artifacts that the operator has deliberately left on a target host:
+// files dropped, registry keys written, scheduled tasks, services, crontabs, etc.
+// Operators mark entries as cleaned once the artifact is removed; unclean IOCs
+// at end-of-engagement are a data-quality issue to flag in the debrief report.
+
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct IocRow {
+    pub id:          i64,
+    pub session_id:  i64,
+    pub ioc_type:    String,   // file | registry | service | task | crontab | other
+    pub path:        String,
+    pub detail:      Option<String>,
+    pub cleanup_cmd: Option<String>,
+    pub operator:    String,
+    pub created_at:  String,
+    pub cleaned_at:  Option<String>,
+}
+
+pub fn add_ioc(
+    conn:        &Connection,
+    session_id:  u32,
+    ioc_type:    &str,
+    path:        &str,
+    detail:      Option<&str>,
+    cleanup_cmd: Option<&str>,
+    operator:    &str,
+) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO iocs (session_id, ioc_type, path, detail, cleanup_cmd, operator)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![session_id, ioc_type, path, detail, cleanup_cmd, operator],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn map_ioc(row: &rusqlite::Row<'_>) -> rusqlite::Result<IocRow> {
+    Ok(IocRow {
+        id:          row.get(0)?,
+        session_id:  row.get(1)?,
+        ioc_type:    row.get(2)?,
+        path:        row.get(3)?,
+        detail:      row.get(4)?,
+        cleanup_cmd: row.get(5)?,
+        operator:    row.get(6)?,
+        created_at:  row.get(7)?,
+        cleaned_at:  row.get(8)?,
+    })
+}
+
+pub fn list_iocs_for_session(conn: &Connection, session_id: u32) -> Vec<IocRow> {
+    conn.prepare(
+        "SELECT id, session_id, ioc_type, path, detail, cleanup_cmd, operator,
+                created_at, cleaned_at
+         FROM iocs WHERE session_id = ?1 ORDER BY created_at DESC"
+    )
+    .and_then(|mut s| s.query_map([session_id], map_ioc)
+        .map(|rows| rows.filter_map(|r| r.ok()).collect()))
+    .unwrap_or_default()
+}
+
+pub fn list_all_iocs(conn: &Connection) -> Vec<IocRow> {
+    conn.prepare(
+        "SELECT id, session_id, ioc_type, path, detail, cleanup_cmd, operator,
+                created_at, cleaned_at
+         FROM iocs ORDER BY cleaned_at IS NULL DESC, created_at DESC"
+    )
+    .and_then(|mut s| s.query_map([], map_ioc)
+        .map(|rows| rows.filter_map(|r| r.ok()).collect()))
+    .unwrap_or_default()
+}
+
+pub fn mark_ioc_cleaned(conn: &Connection, ioc_id: i64) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE iocs SET cleaned_at = datetime('now') WHERE id = ?1 AND cleaned_at IS NULL",
+        [ioc_id],
+    )
+}
+
+pub fn delete_ioc(conn: &Connection, ioc_id: i64) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM iocs WHERE id = ?1", [ioc_id])
 }
