@@ -36,7 +36,6 @@ path = "src/bin/builder.rs"
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["compat", "rt"] }
-zip = "0.6"
 
 # Multiplexing
 yamux = "0.10"
@@ -78,6 +77,7 @@ walkdir = "2"
 sys-info = "0.9"
 aes-gcm = "0.10"
 zeroize = "1"
+zip = "0.6"
 
 # Builder Dependencies
 clap = { version = "4.4", features = ["derive"] }
@@ -112,6 +112,9 @@ windows = { version = "0.52", features = [
 serde_json = "1.0"
 hex = "0.4"
 rand = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 opt-level = "z"

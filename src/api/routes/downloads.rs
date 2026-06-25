@@ -194,67 +194,64 @@ pub async fn zip_loot(
     }
 
     let result = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        // Collect (zip_path, bytes) pairs.
-        // We strip from full.parent() — not full — so every entry is prefixed
-        // with the folder name (e.g. "Documents/file.txt", not just "file.txt").
-        // This means extracting the zip always creates a named sub-folder,
-        // matching the structure that individual-file and batch downloads use.
-        fn collect(
-            dir:  &std::path::Path,
-            base: &std::path::Path,
-            out:  &mut Vec<(String, Vec<u8>)>,
-            dirs: &mut Vec<String>,        // explicit directory entries
-        ) {
-            let Ok(entries) = std::fs::read_dir(dir) else { return };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let rel  = match path.strip_prefix(base) {
-                    Ok(r)  => r.to_string_lossy().replace('\\', "/"),
-                    Err(_) => continue,
-                };
-                if path.is_dir() {
-                    // Record the directory so the zip contains an explicit entry.
-                    // Some extractors (Windows Explorer) need this to create
-                    // empty sub-folders; it is harmless for others.
-                    let dir_entry = if rel.ends_with('/') { rel.clone() }
-                                    else { format!("{}/", rel) };
-                    dirs.push(dir_entry);
-                    collect(&path, base, out, dirs);
-                } else if path.is_file() {
-                    if let Ok(data) = std::fs::read(&path) {
-                        out.push((rel, data));
-                    }
-                }
-            }
-        }
+        use std::io::{BufReader, Write as _};
 
-        // Strip from the PARENT of the requested folder so that the folder
-        // name itself becomes the root path inside the zip.
+        // Strip from the parent so the folder name becomes the zip root.
         let base_path: std::path::PathBuf = full
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| full.clone());
 
-        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-        let mut dir_entries: Vec<String>       = Vec::new();
-        collect(&full, &base_path, &mut files, &mut dir_entries);
+        let cursor  = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(cursor);
 
-        let cursor   = std::io::Cursor::new(Vec::new());
-        let mut zip  = zip::ZipWriter::new(cursor);
-        let opts     = zip::write::FileOptions::default()
+        let file_opts = zip::write::FileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
-        let dir_opts = zip::write::FileOptions::default()
+        let dir_opts  = zip::write::FileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
 
-        // Write explicit directory entries first so extractors see them
-        // before the files inside them.
-        for dir_name in dir_entries {
-            zip.add_directory(&dir_name, dir_opts).map_err(|e| e.to_string())?;
-        }
+        // Explicit stack traversal — avoids recursion stack-overflow on deep
+        // trees and streams each file directly into the zip via io::copy so
+        // we never buffer all file bytes in RAM at once.
+        let mut stack: Vec<std::path::PathBuf> = vec![full.clone()];
 
-        for (name, data) in files {
-            zip.start_file(&name, opts).map_err(|e| e.to_string())?;
-            zip.write_all(&data).map_err(|e| e.to_string())?;
+        while let Some(current_dir) = stack.pop() {
+            let entries = match std::fs::read_dir(&current_dir) {
+                Ok(e)  => e,
+                Err(_) => continue,
+            };
+
+            for entry in entries.flatten() {
+                let path = entry.path();
+
+                let rel = match path.strip_prefix(&base_path) {
+                    Ok(r)  => r.to_string_lossy().replace('\\', "/"),
+                    Err(_) => continue,
+                };
+
+                if path.is_dir() {
+                    let dir_name = if rel.ends_with('/') {
+                        rel.to_string()
+                    } else {
+                        format!("{}/", rel)
+                    };
+                    zip.add_directory(&dir_name, dir_opts)
+                        .map_err(|e| e.to_string())?;
+                    stack.push(path);
+
+                } else if path.is_file() {
+                    zip.start_file(&rel, file_opts)
+                        .map_err(|e| e.to_string())?;
+
+                    let file = match std::fs::File::open(&path) {
+                        Ok(f)  => f,
+                        Err(_) => continue,
+                    };
+                    let mut reader = BufReader::new(file);
+                    std::io::copy(&mut reader, &mut zip)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
         }
 
         let finished = zip.finish().map_err(|e| e.to_string())?;
