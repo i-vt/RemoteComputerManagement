@@ -57,9 +57,14 @@ window.LootBrowser = {
                 ${!e.is_dir ? `
                   <button onclick="event.stopPropagation();window.LootBrowser.download('${e.path}','${e.name}')"
                           class="text-green-400 hover:text-white text-xs px-2 py-1
-                                 bg-gray-800 rounded" title="Download">
+                                 bg-gray-800 rounded" title="Download file">
                     <i class="fas fa-download"></i>
-                  </button>` : ''}
+                  </button>` : `
+                  <button onclick="event.stopPropagation();window.LootBrowser.downloadFolder('${e.path}','${e.name}')"
+                          class="text-blue-400 hover:text-white text-xs px-2 py-1
+                                 bg-gray-800 rounded" title="Download folder as .zip">
+                    <i class="fas fa-file-archive"></i> zip
+                  </button>`}
                 <button onclick="event.stopPropagation();window.LootBrowser.confirmDelete('${e.path}','${e.name}')"
                         class="text-red-400 hover:text-white text-xs px-2 py-1
                                bg-gray-800 rounded" title="Delete">
@@ -129,7 +134,6 @@ window.LootBrowser = {
         const link = document.createElement('a');
         link.href     = `${url}/api/downloads/${path}`;
         link.download = name;
-        // Fetch with auth header and create object URL (API key required)
         fetch(link.href, { headers: { 'X-API-KEY': window.Auth.key } })
             .then(r => r.blob())
             .then(blob => {
@@ -138,6 +142,22 @@ window.LootBrowser = {
                 link.click();
                 setTimeout(() => URL.revokeObjectURL(burl), 1000);
             });
+    },
+
+    // Download an entire folder as a single zip file.
+    // The server zips it on-the-fly via GET /api/loot/zip?path=...
+    // Download an entire folder as a single zip file.
+    // Direct <a href> with ?key= streams straight to disk — no fetch+blob
+    // buffering that would OOM the browser for large loot folders.
+    downloadFolder(path, name) {
+        const url  = window.Auth.url.replace(/\/+$/, '');
+        const href = `${url}/api/loot/zip?path=${encodeURIComponent(path)}&key=${encodeURIComponent(window.Auth.key)}`;
+        const link = document.createElement('a');
+        link.href     = href;
+        link.download = `${name}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     },
 
     confirmDelete(path, name) {

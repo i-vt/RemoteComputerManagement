@@ -25,7 +25,7 @@ use crate::database::DbPool;
 pub use state::{ApiContext, SharedResults, SharedProxies, SharedScripts, SharedListenerManager, SharedBuildJobs};
 use crate::api::routes::downloads;
 use crate::api::routes::iocs;
-use crate::api::routes::{hosts, proxies, modules, history, operators, listeners, builder, topology, tasks};
+use crate::api::routes::{hosts, proxies, modules, extensions, history, operators, listeners, builder, topology, tasks};
 
 pub use state::SharedResults as ResultsType;
 pub use state::SharedProxies as ProxiesType;
@@ -156,6 +156,13 @@ pub async fn start_api_server(
         .route("/api/broadcast",                  post(hosts::broadcast))
         .route("/api/broadcast/module",           post(modules::broadcast_module))
         .route("/api/modules",                    get(modules::list_modules))
+        .route("/api/extensions",                 get(extensions::list_extensions))
+        .route("/api/extensions/:name",           get(extensions::get_extension)
+                                                  .put(extensions::put_extension)
+                                                  .delete(extensions::delete_extension))
+        .route("/api/modules/:name",              get(extensions::get_module)
+                                                  .put(extensions::put_module)
+                                                  .delete(extensions::delete_module))
         .route("/api/hosts/:id/modules/:module_name", post(modules::execute_module))
         .route("/api/hosts/:id/extensions/:filename", post(modules::deploy_extension))
         .route("/api/proxies",                    get(proxies::list_proxies))

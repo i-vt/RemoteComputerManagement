@@ -10,7 +10,8 @@
 # │  unit-transport cargo test --lib transport::tests                   │
 # │  unit-database  cargo test --lib queued_task_tests                  │
 # │  unit-hibernation cargo test --lib hibernation::tests               │
-# │  unit-interface cargo test --lib interface_tests                    │
+# │  unit-interface  cargo test --lib interface_tests                   │
+# │  unit-extension  cargo test --test test_extensions                  │
 # └─────────────────────────────────────────────────────────────────────┘
 #
 # Usage:
@@ -85,6 +86,12 @@ services:
     environment: *env
     command: >
       cargo test --lib interface_tests -- --nocapture --test-threads=1
+
+  unit-extension:
+    build: *build
+    image: rcm-unit-tests-unit-all   # reuse the pre-built unit-all image
+    environment: *env
+    command: cargo test --test test_extensions -- --nocapture --test-threads=1
 
   # Integration test suites (run specific test files)
   unit-dga:

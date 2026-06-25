@@ -205,10 +205,25 @@ if is_windows {
             10
         );
 
-        // Copy binary to stable location using PowerShell cmdlets.
+        // Copy to stable path and strip Zone.Identifier (Mark of the Web) in
+        // ONE exec_os_timeout call — one PowerShell cold-start covers both.
+        //
+        // The previous two-call design had a race: Copy-Item consumed the 30 s
+        // budget, then Unblock-File got only 5 s which could be entirely spent
+        // on PS startup (2-5 s on AV-heavy machines), killing it before it ran.
+        //
+        // Three independent strip methods so MOTW is removed even in
+        // Constrained Language Mode (CLM) where some methods silently fail:
+        //   1. cmd /c copy — never copies ADS at the OS level
+        //   2. Remove-Item -Stream — FileSystem provider, works in CLM
+        //   3. Unblock-File       — belt-and-suspenders; may fail in CLM
+        //
+        // Paths assigned to PS vars first so spaces in AppData dirs are safe.
         exec_os_timeout(
-            "Copy-Item -LiteralPath '" + self_path + "' -Destination '" + stable_path + "' -Force 2>$null",
-            30
+            "Copy-Item -LiteralPath '" + self_path   + "' -Destination '" + stable_path + "' -Force -ErrorAction SilentlyContinue;" +
+            "Remove-Item -LiteralPath '" + stable_path + "' -Stream 'Zone.Identifier' -Force -ErrorAction SilentlyContinue;" +
+            "Unblock-File  -LiteralPath '" + stable_path + "' -ErrorAction SilentlyContinue",
+            40
         );
         let chk = exec_os_timeout("if (Test-Path -LiteralPath '" + stable_path + "') { 'OK' }", 5);
         stable_ok = chk.contains("OK");

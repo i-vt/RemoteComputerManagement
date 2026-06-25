@@ -8,10 +8,12 @@
 // The server's normalise_recon_cmd() auto-prepends "shell " for OS commands.
 
 window.ReconConfig = {
-    _modules: [],   // populated once from /api/modules
+    _modules:    [],   // populated once from /api/modules
+    _extensions: [],   // populated once from /api/extensions (via ExtManager)
 
     async init() {
         await this._loadModules();
+        await this._loadExtensions();
         await this.refresh();
         this._syncTypeUI('command');
     },
@@ -33,6 +35,64 @@ window.ReconConfig = {
             }
         } catch (_) {}
     },
+
+    async _loadExtensions() {
+        // Pull list from ExtManager if already loaded, else fetch directly.
+        if (window.ExtManager?._names?.length) {
+            this._extensions = window.ExtManager._names;
+        } else {
+            try {
+                const url = window.Auth.url.replace(/\/+$/, '');
+                const r   = await fetch(`${url}/api/extensions`,
+                    { headers: { 'X-API-KEY': window.Auth.key } });
+                if (r.ok) this._extensions = (await r.json()).extensions || [];
+            } catch (_) {}
+        }
+        this._populateExtSelect();
+    },
+
+    // Called by ExtManager when it refreshes its list
+    _onExtensionsLoaded(names) {
+        this._extensions = names;
+        this._populateExtSelect();
+    },
+
+    _populateExtSelect() {
+        const sel = document.getElementById('recon-ext-file-select');
+        if (!sel) return;
+        sel.innerHTML = this._extensions.length
+            ? ['<option value="">— paste custom code below —</option>',
+               ...this._extensions.map(n =>
+                   `<option value="${this._esc(n)}">${this._esc(n)}.rhai</option>`)
+              ].join('')
+            : '<option value="">No extensions found — use custom code</option>';
+    },
+
+    // When operator selects an extension from the dropdown, fetch its code
+    // into the textarea so they can review / edit before adding to recon.
+    async _onExtFileSelect(name) {
+        const ta = document.getElementById('recon-ext-code');
+        if (!name) {
+            if (ta) ta.value = '';
+            return;
+        }
+        try {
+            const url = window.Auth.url.replace(/\/+$/, '');
+            const r   = await fetch(`${url}/api/extensions/${encodeURIComponent(name)}`,
+                { headers: { 'X-API-KEY': window.Auth.key } });
+            if (r.ok) {
+                const { content } = await r.json();
+                if (ta) ta.value = content;
+            }
+        } catch (_) {}
+    },
+
+    _esc(s) {
+        return String(s)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    },
+
 
     async refresh() {
         const url   = window.Auth.url.replace(/\/$/, '');

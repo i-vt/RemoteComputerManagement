@@ -41,10 +41,36 @@ pub async fn auth(
         return Ok(next.run(request).await);
     }
 
-    let api_key = headers
+    let header_key = headers
         .get("X-API-KEY")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
+
+    // Streaming download endpoints use a plain <a href>, which cannot send
+    // custom headers.  Accept ?key=<api_key> as a fallback so the browser
+    // streams directly to disk without fetch→blob memory buffering.
+    let download_paths = ["/api/loot/zip", "/api/builder/jobs/"];
+    let is_download_path = download_paths
+        .iter()
+        .any(|p| request.uri().path().starts_with(p));
+
+    let query_key_buf: String;
+    let api_key: &str = if !header_key.is_empty() {
+        header_key
+    } else if is_download_path {
+        query_key_buf = request.uri().query()
+            .unwrap_or("")
+            .split('&')
+            .find_map(|pair| {
+                let mut kv = pair.splitn(2, '=');
+                let k = kv.next()?;
+                if k == "key" { kv.next().map(|v| v.to_owned()) } else { None }
+            })
+            .unwrap_or_default();
+        &query_key_buf
+    } else {
+        ""
+    };
 
     if api_key.is_empty() {
         return Err(StatusCode::UNAUTHORIZED);

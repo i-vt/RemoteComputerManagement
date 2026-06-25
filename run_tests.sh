@@ -29,7 +29,7 @@ UNIT_COMPOSE="tests/docker/docker-compose.unit.yml"
 INT_COMPOSE="tests/docker/docker-compose.yml"
 PIVOT_OVERLAY="tests/docker/docker-compose.pivot.yml"
 WINDOWS_OVERLAY="tests/docker/docker-compose.windows.yml"
-UNIT_MODULES=(topology transport database hibernation interface)
+UNIT_MODULES=(topology transport database hibernation interface extension)
 
 BUILD_ARGS=()
 TARGET_MODULE=""

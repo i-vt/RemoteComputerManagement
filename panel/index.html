@@ -108,6 +108,10 @@
               onclick="window.Router.navigate('builder',event)">
         <i class="fas fa-hammer"></i><span>Builder</span>
       </button>
+      <button class="nav-item" data-page="extensions"
+              onclick="window.Router.navigate('extensions',event)">
+        <i class="fas fa-file-code"></i><span>Scripts</span>
+      </button>
 
       <div class="nav-section-label">Logs</div>
       <button class="nav-item" data-page="history"
@@ -761,8 +765,20 @@
 
             <!-- Extension input -->
             <div id="recon-row-extension" style="display:none;flex-direction:column;gap:8px;">
+              <div style="display:flex;gap:8px;align-items:center;">
+                <select id="recon-ext-file-select"
+                        class="form-select" style="flex:1;font-size:12px;"
+                        onchange="window.ReconConfig._onExtFileSelect(this.value)">
+                  <option value="">Loading extensions…</option>
+                </select>
+                <a href="#" onclick="event.preventDefault();window.Router?.navigate('extensions')"
+                   class="text-xs text-green-400 hover:text-white whitespace-nowrap"
+                   title="Manage extensions">
+                  <i class="fas fa-edit mr-1"></i>Edit scripts
+                </a>
+              </div>
               <textarea id="recon-ext-code" rows="4"
-                        placeholder="Rhai extension code that runs on the agent&#10;Example: let out = shell_exec(&quot;id&quot;); print(out);"
+                        placeholder="Rhai code (select a file above, or paste custom code here)"
                         class="form-input form-mono"
                         style="resize:vertical;font-size:11px;"></textarea>
               <div style="display:flex;gap:8px;">
@@ -787,6 +803,71 @@
                 <tr class="empty-row"><td colspan="4">Click sync to load</td></tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── EXTENSIONS / SCRIPTS ───────────────────────────────── -->
+      <div id="page-extensions" class="hidden" style="display:none;flex-direction:column;height:calc(100dvh - 120px);">
+        <div class="page-header" style="flex-shrink:0;">
+          <div>
+            <h1 class="page-title">Scripts &amp; Extensions</h1>
+            <!-- Kind tabs -->
+            <div style="display:flex;gap:4px;margin-top:6px;">
+              <button id="scripts-tab-extensions"
+                      onclick="window.ExtManager.setKind('extensions')"
+                      class="btn btn-ghost btn-sm active" style="font-size:11px;">
+                <i class="fas fa-robot mr-1"></i>Extensions
+              </button>
+              <button id="scripts-tab-modules"
+                      onclick="window.ExtManager.setKind('modules')"
+                      class="btn btn-ghost btn-sm" style="font-size:11px;opacity:.5;">
+                <i class="fas fa-server mr-1"></i>Modules
+              </button>
+              <span id="scripts-kind-badge" class="text-xs text-green-400 italic self-center ml-2">
+                Agent-side &middot; pushed via ext:load
+              </span>
+            </div>
+          </div>
+          <button onclick="window.ExtManager.newScript()" class="btn btn-primary btn-sm">
+            <i class="fas fa-plus mr-1"></i>New
+          </button>
+        </div>
+        <div style="display:flex;flex:1;min-height:0;border-top:1px solid var(--border);">
+          <!-- Left: file list -->
+          <div style="width:220px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;">
+            <div style="padding:8px;border-bottom:1px solid var(--border);">
+              <input type="text" id="ext-search" placeholder="Search…"
+                     class="form-input form-mono" style="font-size:11px;width:100%;"
+                     oninput="window.ExtManager.filterList()">
+            </div>
+            <div id="ext-list" style="flex:1;overflow-y:auto;">
+              <p class="text-gray-500 text-xs italic p-3 text-center">Loading…</p>
+            </div>
+          </div>
+          <!-- Right: editor -->
+          <div style="flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;">
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);flex-shrink:0;">
+              <span id="ext-dir-label" class="text-gray-400 text-xs font-mono">extensions/</span>
+              <input type="text" id="ext-name-input" placeholder="script_name"
+                     class="form-input form-mono" style="flex:1;font-size:12px;max-width:260px;">
+              <span class="text-gray-400 text-xs font-mono">.rhai</span>
+              <span id="ext-editor-title" class="text-gray-500 text-xs italic ml-2">New extension</span>
+              <button onclick="window.ExtManager.save()"
+                      class="btn btn-success btn-sm ml-auto" style="font-size:11px;">
+                <i class="fas fa-save mr-1"></i>Save
+              </button>
+              <button onclick="window.ExtManager.deleteScript(document.getElementById('ext-name-input').value)"
+                      class="btn btn-danger btn-sm" style="font-size:11px;">
+                <i class="fas fa-trash mr-1"></i>Delete
+              </button>
+            </div>
+            <textarea id="ext-code-editor" class="form-input form-mono"
+                      style="flex:1;resize:none;border:none;border-radius:0;font-size:12px;
+                             line-height:1.6;background:var(--bg-primary);color:var(--text-primary);
+                             padding:16px;min-height:0;"
+                      spellcheck="false"
+                      placeholder="// Rhai code here…"></textarea>
           </div>
         </div>
       </div>
@@ -1271,6 +1352,7 @@ window.MobileMore = {
 <script src="/panel/js/builder.js"></script>
 <script src="/panel/js/users.js"></script>
 <script src="/panel/js/loot.js"></script>
+<script src="/panel/js/extensions.js"></script>
 <script src="/panel/js/ioc.js"></script>
 <script src="/panel/js/app.js"></script>
 </body>
