@@ -805,40 +805,82 @@ window.FileManager = {
     },
 
     handleFileSelect(files) {
-        if(!files || files.length === 0) return;
-
+        if (!files || files.length === 0) return;
         if (!this.currentSessionId) {
             this.showModal({ type: 'alert', message: 'Select a session before uploading.' });
             return;
         }
         const url = window.Auth.url.replace(/\/$/, '');
-        let pending = 0;
+        // Upload files sequentially so progress logs are readable.
+        (async () => {
+            for (const file of Array.from(files)) {
+                await this._uploadChunked(file, url);
+            }
+            setTimeout(() => this.browse(), 1500);
+        })();
+    },
 
-        Array.from(files).forEach(file => {
-            pending++;
-            const reader = new FileReader();
-            reader.onload = async (evt) => {
-                const b64      = evt.target.result.split(',')[1];
-                const fullPath = this.resolvePath(file.name);
-                try {
-                    // Use fetch directly — Terminal.sendCommand requires the
-                    // terminal modal to be open (it writes to #term-output)
-                    // and silently drops the upload if the element is missing.
-                    const res = await fetch(`${url}/api/hosts/${this.currentSessionId}/command`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-API-KEY': window.Auth.key },
-                        body: JSON.stringify({ command: `file:write|${fullPath}|${b64}` })
-                    });
-                    const label = res.ok ? `Uploaded: ${file.name}` : `Upload failed: ${file.name} (${res.status})`;
-                    if (window.UI) window.UI.addLog(label);
-                } catch (e) {
-                    if (window.UI) window.UI.addLog(`Upload error: ${file.name} — ${e.message}`);
+    // Reads `file` in 8 MB slices and POSTs each to /api/hosts/:id/upload.
+    // Each chunk body is ~11 MB — well under the 50 MB API body limit.
+    // The old approach (readAsDataURL on the whole file) loaded the entire
+    // file into browser memory and was limited to ~37.5 MB by the 50 MB cap.
+    async _uploadChunked(file, baseUrl) {
+        const CHUNK = 8 * 1024 * 1024;                     // 8 MB per chunk
+        const total = Math.max(1, Math.ceil(file.size / CHUNK));
+        const path  = this.resolvePath(file.name);
+        // Unique ID per upload session — prevents chunk interleaving when
+        // multiple files are uploaded concurrently to the same agent.
+        const batchTs = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+        for (let i = 0; i < total; i++) {
+            const slice = file.slice(i * CHUNK, Math.min((i + 1) * CHUNK, file.size));
+
+            // FileReader.readAsDataURL is the browser-native way to base64-encode
+            // a binary slice reliably across all browsers.  The spread-into-btoa
+            // pattern fails with a call-stack overflow for slices > ~1 MB.
+            let b64;
+            try {
+                b64 = await new Promise((resolve, reject) => {
+                    const r = new FileReader();
+                    r.onload  = () => resolve(r.result.split(',')[1]);
+                    r.onerror = () => reject(r.error);
+                    r.readAsDataURL(slice);
+                });
+            } catch (err) {
+                if (window.UI) window.UI.addLog(`Upload error: ${file.name} — ${err.message}`);
+                return;
+            }
+
+            let res;
+            try {
+                res = await fetch(`${baseUrl}/api/hosts/${this.currentSessionId}/upload`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-API-KEY': window.Auth.key },
+                    body: JSON.stringify({
+                        path, batch_ts: batchTs,
+                        chunk_idx: i, total_chunks: total,
+                        data_b64: b64,
+                    }),
+                });
+            } catch (err) {
+                if (window.UI) window.UI.addLog(`Upload error: ${file.name} — ${err.message}`);
+                return;
+            }
+
+            if (!res.ok) {
+                if (window.UI) window.UI.addLog(`Upload failed: ${file.name} [${i+1}/${total}] (${res.status})`);
+                return;
+            }
+
+            if (window.UI) {
+                if (i + 1 === total) {
+                    window.UI.addLog(`Uploaded: ${file.name} (${total > 1 ? total + ' chunks' : 'single chunk'})`);
+                } else {
+                    const pct = Math.round((i + 1) / total * 100);
+                    window.UI.addLog(`Uploading: ${file.name} … ${i+1}/${total} (${pct}%)`);
                 }
-                pending--;
-                if (pending === 0) setTimeout(() => this.browse(), 1500);
-            };
-            reader.readAsDataURL(file);
-        });
+            }
+        }
     },
 
     // --- HELPERS ---

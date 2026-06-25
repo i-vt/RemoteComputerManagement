@@ -146,6 +146,7 @@ pub async fn start_api_server(
         .route("/api/listeners/:id/stop",         post(listeners::stop))
         .route("/api/hosts",                      get(hosts::list_hosts))
         .route("/api/hosts/:id/command",          post(hosts::send_command))
+        .route("/api/hosts/:id/upload",           post(hosts::upload_chunk))
         .route("/api/hosts/:id/output/:req_id",   get(hosts::get_output))
         .route("/api/hosts/:id/history",          get(history::get_history))
         .route("/api/history",                    get(history::get_global_history))

@@ -236,7 +236,22 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
         let (o, e, c) = files::handle_file_write(cmd);
         return DispatchResult::Reply(o, e, c, AgentAction::None);
     }
+    if cmd.starts_with(&lc!("file:write_chunk|")) {
+        let (o, e, c) = files::handle_file_write_chunked(cmd);
+        return DispatchResult::Reply(o, e, c, AgentAction::None);
+    }
     if cmd.starts_with(&lc!("file:read|")) {
+        // For files >= 50 MB, switch to chunked transfer automatically.
+        // This avoids the 500 MB cap in read_file_to_b64 and keeps each
+        // HTTP payload to ~10 MB regardless of total file size.
+        // Small files still use the inline file:data path so their content
+        // appears directly in the terminal.
+        let path = &cmd[lc!("file:read|").len()..];
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        if size >= 50 * 1024 * 1024 {
+            files::handle_file_download_chunked(ctx, cmd, req_id).await;
+            return DispatchResult::AlreadySent(AgentAction::None);
+        }
         let (o, e, c) = files::handle_file_read(cmd);
         return DispatchResult::Reply(o, e, c, AgentAction::None);
     }

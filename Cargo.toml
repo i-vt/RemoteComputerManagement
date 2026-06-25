@@ -35,7 +35,7 @@ path = "src/bin/builder.rs"
 # Async Core
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
-tokio-util = { version = "0.7", features = ["compat", "rt"] }
+tokio-util = { version = "0.7", features = ["compat", "rt", "io"] }
 
 # Multiplexing
 yamux = "0.10"
@@ -78,6 +78,7 @@ sys-info = "0.9"
 aes-gcm = "0.10"
 zeroize = "1"
 zip = "0.6"
+tempfile = "3"
 
 # Builder Dependencies
 clap = { version = "4.4", features = ["derive"] }

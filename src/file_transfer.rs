@@ -189,6 +189,96 @@ pub fn save_download_with_metadata(session_id: u32, original_path: &str, b64_dat
     Ok(format!("Saved: {}", save_path))
 }
 
+// ── Chunked file transfer ─────────────────────────────────────────────────────
+//
+// Large files are transferred in 8 MB chunks rather than as a single base64
+// blob.  This keeps agent and server memory usage bounded regardless of file
+// size — each chunk uses ~18 MB (10.7 MB base64 + ~8 MB decoded bytes) vs
+// 4–5× the file size for the old single-message approach.
+//
+// Wire format (agent → server):
+//   file:chunk|<batch_ts>|<root_name>|<rel_path>|<chunk_idx>|<total_chunks>|<b64_data>
+//
+// Behaviour:
+//   chunk_idx == 0              → create (truncate) the output file
+//   0 < chunk_idx < total_chunks → append to the existing file
+//   chunk_idx == total_chunks-1 → last chunk; caller may log completion
+//
+// Returns Ok(true) when the final chunk has been written, Ok(false) otherwise.
+pub fn save_file_chunk(
+    batch_ts: &str,
+    session_id: u32,
+    root_name: &str,
+    rel_path: &str,
+    chunk_idx: u64,
+    total_chunks: u64,
+    b64_data: &str,
+) -> Result<bool, String> {
+    use std::path::Component;
+    use std::io::Write;
+
+    // ── Path sanitization (identical to save_batch_file) ─────────────────────
+    let safe_root: String = root_name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+        .take(32)
+        .collect();
+    let folder_name = format!("{}_{}_{}", batch_ts, session_id, safe_root);
+    let base_dir = std::path::Path::new("downloads").join(&folder_name);
+
+    let input_path = std::path::Path::new(rel_path);
+    let mut safe_parts: Vec<&std::ffi::OsStr> = Vec::new();
+    for component in input_path.components() {
+        match component {
+            Component::Normal(seg) => safe_parts.push(seg),
+            Component::Prefix(_)   => return Err(format!("Rejected drive/UNC prefix: {}", rel_path)),
+            Component::RootDir | Component::CurDir => { /* skip */ }
+            Component::ParentDir   => return Err(format!("Rejected parent traversal: {}", rel_path)),
+        }
+    }
+    if safe_parts.is_empty() {
+        return Err(format!("Empty path after sanitization: {}", rel_path));
+    }
+
+    let mut final_path = base_dir.clone();
+    for part in &safe_parts { final_path = final_path.join(part); }
+
+    std::fs::create_dir_all(&base_dir).map_err(|e| format!("mkdir base: {}", e))?;
+    let canonical_base = std::fs::canonicalize(&base_dir)
+        .map_err(|e| format!("canonicalize base: {}", e))?;
+
+    if let Some(parent) = final_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir parent: {}", e))?;
+    }
+
+    let canonical_parent = std::fs::canonicalize(final_path.parent().unwrap_or(&base_dir))
+        .map_err(|e| format!("canonicalize parent: {}", e))?;
+    if !canonical_parent.starts_with(&canonical_base) {
+        return Err(format!("Path escapes base dir: {}", rel_path));
+    }
+
+    // ── Decode the chunk and write directly to disk ───────────────────────────
+    // Decoding the ~10.7 MB base64 chunk uses ~18 MB total (b64 + decoded).
+    // We never accumulate more than one chunk in memory at a time.
+    let chunk_bytes = BASE64.decode(b64_data)
+        .map_err(|e| format!("Base64 decode chunk {}/{}: {}", chunk_idx, total_chunks, e))?;
+
+    let mut file = if chunk_idx == 0 {
+        // First chunk: create / overwrite the file
+        std::fs::File::create(&final_path).map_err(|e| format!("Create: {}", e))?
+    } else {
+        // Later chunks: append to what was already written
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&final_path)
+            .map_err(|e| format!("Append open: {}", e))?
+    };
+    file.write_all(&chunk_bytes).map_err(|e| format!("Write: {}", e))?;
+
+    let is_final = chunk_idx + 1 >= total_chunks;
+    Ok(is_final)
+}
+
 pub fn save_batch_file(batch_ts: &str, session_id: u32, root_name: &str, rel_path: &str, b64_data: &str) -> Result<String, String> {
     use std::path::Component;
 
@@ -357,4 +447,104 @@ pub fn write_file_simple(path: &str, b64_data: &str) -> Result<(), String> {
     let mut file = File::create(path).map_err(|e| e.to_string())?;
     file.write_all(&bytes).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+//
+// These tests cover only the branches of save_file_chunk that return an error
+// BEFORE touching the filesystem.  Tests that need actual I/O (assembling a
+// multi-chunk file, verifying content) live in tests/test_download.rs where
+// they can use tempdir helpers and proper cleanup guards.
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+
+    // ── Path-validation rejections (no filesystem side effects) ──────────────
+
+    #[test]
+    fn path_traversal_dot_dot_is_rejected() {
+        // ParentDir component causes an early return before create_dir_all.
+        let r = save_file_chunk("batch", 1, "root", "../../../etc/passwd", 0, 1, &BASE64.encode(b"x"));
+        assert!(r.is_err(), "expected Err for path traversal");
+        let e = r.unwrap_err().to_lowercase();
+        assert!(e.contains("traversal") || e.contains("parent"),
+            "expected traversal/parent error message, got: {}", e);
+    }
+
+    #[test]
+    fn empty_rel_path_is_rejected() {
+        // After filtering all components, safe_parts is empty → early return.
+        let r = save_file_chunk("batch", 1, "root", "", 0, 1, &BASE64.encode(b"x"));
+        assert!(r.is_err(), "empty rel_path must be rejected");
+    }
+
+    #[test]
+    fn cur_dir_only_rel_path_is_rejected() {
+        // "." contains only a CurDir component, which is skipped, leaving safe_parts empty.
+        let r = save_file_chunk("batch", 1, "root", ".", 0, 1, &BASE64.encode(b"x"));
+        assert!(r.is_err(), "'.' rel_path must be rejected after sanitization");
+    }
+
+    #[test]
+    fn nested_traversal_is_rejected() {
+        let r = save_file_chunk("batch", 1, "root", "subdir/../../escape.txt", 0, 1, &BASE64.encode(b"x"));
+        assert!(r.is_err(), "nested traversal must be rejected");
+    }
+
+    // ── Base64 validation ─────────────────────────────────────────────────────
+    // NOTE: the directory IS created before decode; each test uses a unique
+    // batch_ts derived from the process ID so parallel runs don't clash.
+
+    #[test]
+    fn invalid_base64_returns_error() {
+        let batch = format!("ut_b64_{}", std::process::id());
+        let r = save_file_chunk(&batch, 0, "r", "file.bin", 0, 1, "not!valid!base64@@@");
+        let _ = std::fs::remove_dir_all(format!("downloads/{}_0_r", batch));
+        assert!(r.is_err());
+        let e = r.unwrap_err();
+        assert!(e.to_lowercase().contains("base64"), "err: {}", e);
+    }
+
+    // ── is_final logic (pure arithmetic, verified via return value) ───────────
+
+    #[test]
+    fn is_final_true_when_chunk_idx_plus_one_equals_total() {
+        // chunk_idx=4, total=5 → 4+1 == 5 → is_final.
+        // The file must exist before we can append chunk 4, so we write chunk 0 first.
+        let batch = format!("ut_isfinal_{}", std::process::id());
+        let cleanup = format!("downloads/{}_0_r", batch);
+        save_file_chunk(&batch, 0, "r", "f.bin", 0, 5, &BASE64.encode(b"a")).ok();
+        let r = save_file_chunk(&batch, 0, "r", "f.bin", 4, 5, &BASE64.encode(b"b"));
+        let _ = std::fs::remove_dir_all(&cleanup);
+        assert_eq!(r.unwrap(), true, "chunk 4 of 5 (0-indexed) is the last chunk");
+    }
+
+    #[test]
+    fn is_final_false_when_more_chunks_remain() {
+        let batch = format!("ut_notfinal_{}", std::process::id());
+        let r = save_file_chunk(&batch, 0, "r", "f.bin", 0, 5, &BASE64.encode(b"x"));
+        let _ = std::fs::remove_dir_all(format!("downloads/{}_0_r", batch));
+        assert_eq!(r.unwrap(), false, "chunk 0 of 5 is not the last chunk");
+    }
+
+    #[test]
+    fn is_final_true_for_single_chunk() {
+        let batch = format!("ut_single_{}", std::process::id());
+        let r = save_file_chunk(&batch, 0, "r", "f.bin", 0, 1, &BASE64.encode(b"x"));
+        let _ = std::fs::remove_dir_all(format!("downloads/{}_0_r", batch));
+        assert_eq!(r.unwrap(), true, "chunk 0 of 1 is both first and last");
+    }
+
+    // ── Root name sanitization (observable via the output directory) ──────────
+
+    #[test]
+    fn root_name_special_chars_are_stripped() {
+        // Chars outside [a-zA-Z0-9_-] are filtered; the resulting folder must
+        // still be created correctly.
+        let batch = format!("ut_root_{}", std::process::id());
+        // "ro/ot!@#" sanitizes to "root"
+        let r = save_file_chunk(&batch, 7, "ro/ot!@#", "f.bin", 0, 1, &BASE64.encode(b"x"));
+        let _ = std::fs::remove_dir_all(format!("downloads/{}_7_root", batch));
+        assert!(r.is_ok(), "special chars in root_name must be stripped, not rejected");
+    }
 }

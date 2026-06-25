@@ -10,7 +10,7 @@ use tokio::sync::oneshot;
 use serde::Deserialize;
 
 use crate::api::state::ApiContext;
-use crate::api::models::{SessionDto, CommandRequest};
+use crate::api::models::{SessionDto, CommandRequest, UploadChunkRequest};
 use crate::api::middleware::OperatorInfo;
 use crate::database;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -515,5 +515,221 @@ mod ext_load_tests {
         let first  = resolve_ext_load("ext:load ps", &dirs);
         let second = resolve_ext_load("ext:load ps", &dirs);
         assert_eq!(first, second);
+    }
+}
+
+// ── Upload validation helpers ─────────────────────────────────────────────────
+// Extracted as pub(crate) fns so the unit-test module can call them directly
+// without spinning up an Axum handler context.
+
+/// Returns false for empty paths and paths containing a null byte.
+/// Full path-traversal hardening happens on the agent side; this is a
+/// fast first-pass sanity check on the server.
+pub(crate) fn is_valid_upload_path(path: &str) -> bool {
+    !path.is_empty() && !path.contains('\0')
+}
+
+/// Returns false if `s` contains any character outside the Base64 alphabet
+/// (A–Z a–z 0–9 + / =).  Catches obviously malformed payloads before they
+/// are queued to the agent.
+pub(crate) fn is_valid_b64_alphabet(s: &str) -> bool {
+    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+}
+
+// ── Chunked file upload ───────────────────────────────────────────────────────
+//
+// POST /api/hosts/:id/upload
+//
+// Accepts one 8 MB slice of a file at a time (base64-encoded in JSON).
+// The server queues a `file:write_chunk` command to the agent, which
+// creates the file on chunk 0 and appends on subsequent chunks — no
+// in-memory accumulation of the full file on either side.
+//
+// The global DefaultBodyLimit::max(50 MB) comfortably covers each request:
+//   8 MB raw → ~10.7 MB base64 → ~10.7 MB JSON body  (well under 50 MB)
+pub async fn upload_chunk(
+    State(state): State<Arc<ApiContext>>,
+    Extension(operator): Extension<OperatorInfo>,
+    Path(id): Path<u32>,
+    Json(payload): Json<UploadChunkRequest>,
+) -> Response {
+    if operator.is_viewer() {
+        return (StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Viewers cannot upload files"}))).into_response();
+    }
+
+    // Basic path sanity — full validation happens on the agent side.
+    if !is_valid_upload_path(&payload.path) {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid path"}))).into_response();
+    }
+
+    // Sanity: base64 alphabet only (A–Z a–z 0–9 + / =).  Reject obviously
+    // malformed data before queueing to avoid confusing the agent.
+    if !is_valid_b64_alphabet(&payload.data_b64) {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "data_b64 contains non-base64 characters"}))).into_response();
+    }
+
+    // Audit log (records path + chunk position, not the raw bytes).
+    if let Ok(conn) = state.db.get() {
+        let detail = format!("{} [{}/{}]", payload.path, payload.chunk_idx + 1, payload.total_chunks);
+        database::audit_log(&conn, operator.id, &operator.username, "upload_chunk",
+            Some(id), Some(&detail));
+    }
+
+    // Wire format:
+    //   file:write_chunk|<batch_ts>|<path>|<chunk_idx>|<total_chunks>|<b64>
+    let command = format!("file:write_chunk|{}|{}|{}|{}|{}",
+        payload.batch_ts, payload.path,
+        payload.chunk_idx, payload.total_chunks,
+        payload.data_b64,
+    );
+
+    let sender_option = {
+        let sessions = &state.sessions;
+        sessions.get(&id).map(|s| s.tx.clone())
+    };
+
+    if let Some(tx_channel) = sender_option {
+        let (cb_tx, cb_rx) = oneshot::channel::<u64>();
+        match tx_channel.send((command, Some(cb_tx))) {
+            Ok(_) => {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    cb_rx,
+                ).await {
+                    Ok(Ok(req_id)) => (StatusCode::OK, Json(serde_json::json!({
+                        "status":       "queued",
+                        "session_id":   id,
+                        "request_id":   req_id,
+                        "chunk_idx":    payload.chunk_idx,
+                        "total_chunks": payload.total_chunks,
+                    }))).into_response(),
+                    Ok(Err(_)) => (StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": "Callback dropped"}))).into_response(),
+                    Err(_) => (StatusCode::GATEWAY_TIMEOUT,
+                        Json(serde_json::json!({"error": "Command callback timed out (30s)"}))).into_response(),
+                }
+            }
+            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Failed to send to channel"}))).into_response(),
+        }
+    } else {
+        (StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Session not found or offline"}))).into_response()
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod upload_tests {
+    use super::*;
+
+    // ── is_valid_upload_path ──────────────────────────────────────────────────
+
+    #[test]
+    fn empty_path_is_invalid() {
+        assert!(!is_valid_upload_path(""));
+    }
+
+    #[test]
+    fn path_with_null_byte_is_invalid() {
+        assert!(!is_valid_upload_path("/etc/pass\0wd"));
+    }
+
+    #[test]
+    fn normal_unix_path_is_valid() {
+        assert!(is_valid_upload_path("/home/user/agent.exe"));
+    }
+
+    #[test]
+    fn windows_path_is_valid() {
+        // Backslashes and colons are legal — agent-side validation handles them.
+        assert!(is_valid_upload_path(r"C:\Users\user\Desktop\tool.exe"));
+    }
+
+    #[test]
+    fn path_traversal_string_is_valid_at_server_level() {
+        // The server does NOT reject "../" — that is the agent's job.
+        // We only verify the predicate is permissive here (agent tightens it).
+        assert!(is_valid_upload_path("../../../etc/passwd"));
+    }
+
+    // ── is_valid_b64_alphabet ─────────────────────────────────────────────────
+
+    #[test]
+    fn standard_base64_is_valid() {
+        assert!(is_valid_b64_alphabet("SGVsbG8gV29ybGQ="));
+    }
+
+    #[test]
+    fn empty_string_is_valid_b64() {
+        // Empty upload (zero-byte chunk) is allowed.
+        assert!(is_valid_b64_alphabet(""));
+    }
+
+    #[test]
+    fn base64_with_plus_and_slash_is_valid() {
+        assert!(is_valid_b64_alphabet("a+b/c="));
+    }
+
+    #[test]
+    fn angle_bracket_is_invalid_b64() {
+        assert!(!is_valid_b64_alphabet("SGVs<G8="));
+    }
+
+    #[test]
+    fn space_is_invalid_b64() {
+        assert!(!is_valid_b64_alphabet("SGVsb G8="));
+    }
+
+    #[test]
+    fn null_byte_in_b64_is_invalid() {
+        assert!(!is_valid_b64_alphabet("SGVs\0bG8="));
+    }
+
+    #[test]
+    fn unicode_outside_ascii_is_invalid_b64() {
+        assert!(!is_valid_b64_alphabet("SGVsbé8="));
+    }
+
+    // ── UploadChunkRequest deserialisation ────────────────────────────────────
+
+    #[test]
+    fn request_deserialises_all_fields() {
+        let json = r#"{
+            "path": "/tmp/file.bin",
+            "batch_ts": "abc123",
+            "chunk_idx": 2,
+            "total_chunks": 5,
+            "data_b64": "SGVsbG8="
+        }"#;
+        let req: UploadChunkRequest = serde_json::from_str(json).expect("deserialise");
+        assert_eq!(req.path, "/tmp/file.bin");
+        assert_eq!(req.batch_ts, "abc123");
+        assert_eq!(req.chunk_idx, 2);
+        assert_eq!(req.total_chunks, 5);
+        assert_eq!(req.data_b64, "SGVsbG8=");
+    }
+
+    #[test]
+    fn request_with_large_chunk_idx_deserialises() {
+        let json = r#"{
+            "path": "/tmp/f",
+            "batch_ts": "x",
+            "chunk_idx": 18446744073709551615,
+            "total_chunks": 18446744073709551615,
+            "data_b64": ""
+        }"#;
+        let req: UploadChunkRequest = serde_json::from_str(json).expect("u64 max");
+        assert_eq!(req.chunk_idx, u64::MAX);
+    }
+
+    #[test]
+    fn request_missing_required_field_fails() {
+        // total_chunks omitted
+        let json = r#"{"path":"/tmp/f","batch_ts":"x","chunk_idx":0,"data_b64":""}"#;
+        assert!(serde_json::from_str::<UploadChunkRequest>(json).is_err());
     }
 }

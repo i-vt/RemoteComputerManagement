@@ -95,3 +95,18 @@ pub struct UnifiedHistoryDto {
     pub error: Option<String>,
     pub timestamp: String,
 }
+
+#[derive(serde::Deserialize)]
+pub struct UploadChunkRequest {
+    /// Absolute destination path on the agent.
+    pub path: String,
+    /// Unique identifier for this upload session (prevents interleaving when
+    /// multiple files are uploaded concurrently to the same agent).
+    pub batch_ts: String,
+    /// 0-indexed chunk number.
+    pub chunk_idx: u64,
+    /// Total number of chunks for this file.
+    pub total_chunks: u64,
+    /// Base64-encoded bytes for this chunk.
+    pub data_b64: String,
+}

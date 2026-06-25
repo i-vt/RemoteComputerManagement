@@ -14,7 +14,9 @@ use axum::{
     response::{IntoResponse, Response},
     http::{StatusCode, header},
     Json,
+    body::StreamBody,
 };
+use tokio_util::io::ReaderStream;
 use std::{path::PathBuf, sync::Arc};
 use crate::api::state::ApiContext;
 
@@ -168,8 +170,6 @@ pub async fn list_loot(
 pub async fn zip_loot(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    use std::io::Write as _;
-
     let subpath = match params.get("path") {
         Some(p) if !p.is_empty() => p.clone(),
         _ => return (StatusCode::BAD_REQUEST, "path required").into_response(),
@@ -193,26 +193,28 @@ pub async fn zip_loot(
         return (StatusCode::NOT_FOUND, "Not a directory").into_response();
     }
 
-    let result = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        use std::io::{BufReader, Write as _};
+    let result = tokio::task::spawn_blocking(move || -> Result<std::fs::File, String> {
+        use std::io::{BufReader, Seek, SeekFrom};
 
-        // Strip from the parent so the folder name becomes the zip root.
-        let base_path: std::path::PathBuf = full
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| full.clone());
+        // Write the zip to an anonymous temp file instead of Cursor<Vec<u8>>.
+        // This means the compressed output accumulates on disk rather than in
+        // RAM: a 5 GB folder of screenshots uses ~0 MB of server RAM during
+        // construction (just the per-file io::copy buffer, ~64 KB).
+        let tmp = tempfile::tempfile()
+            .map_err(|e| format!("tempfile: {}", e))?;
 
-        let cursor  = std::io::Cursor::new(Vec::new());
-        let mut zip = zip::ZipWriter::new(cursor);
+        let mut zip = zip::ZipWriter::new(tmp);
 
         let file_opts = zip::write::FileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
         let dir_opts  = zip::write::FileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
 
-        // Explicit stack traversal — avoids recursion stack-overflow on deep
-        // trees and streams each file directly into the zip via io::copy so
-        // we never buffer all file bytes in RAM at once.
+        let base_path: std::path::PathBuf = full
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| full.clone());
+
         let mut stack: Vec<std::path::PathBuf> = vec![full.clone()];
 
         while let Some(current_dir) = stack.pop() {
@@ -254,21 +256,44 @@ pub async fn zip_loot(
             }
         }
 
-        let finished = zip.finish().map_err(|e| e.to_string())?;
-        Ok(finished.into_inner())
+        // ZipWriter::finish() returns the underlying File.
+        // Seek it back to the start so the streaming read begins at byte 0.
+        let mut finished = zip.finish().map_err(|e| e.to_string())?;
+        finished.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+        Ok(finished)
     })
     .await;
 
     match result {
-        Ok(Ok(bytes)) => {
+        Ok(Ok(std_file)) => {
             use axum::http::{HeaderMap, HeaderValue};
+
+            // Content-Length: get the zip size from the file's metadata so the
+            // browser can show a real progress bar.  Optional — omit on error.
+            let content_length = std_file.metadata()
+                .map(|m| m.len())
+                .ok();
+
+            // Wrap the std::fs::File in a tokio async file and stream it to
+            // the browser chunk-by-chunk.  The temp file is deleted automatically
+            // when the File handle is closed after streaming completes.
+            let tokio_file = tokio::fs::File::from_std(std_file);
+            let stream     = ReaderStream::new(tokio_file);
+            let body       = StreamBody::new(stream);
+
             let mut headers = HeaderMap::new();
             headers.insert(header::CONTENT_TYPE,
                 HeaderValue::from_static("application/zip"));
             headers.insert(header::CONTENT_DISPOSITION,
                 HeaderValue::from_str(&format!("attachment; filename=\"{}\"", zip_name))
                     .unwrap_or_else(|_| HeaderValue::from_static("attachment")));
-            (StatusCode::OK, headers, bytes).into_response()
+            if let Some(len) = content_length {
+                if let Ok(v) = HeaderValue::from_str(&len.to_string()) {
+                    headers.insert(header::CONTENT_LENGTH, v);
+                }
+            }
+
+            (StatusCode::OK, headers, body).into_response()
         }
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
