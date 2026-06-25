@@ -1,0 +1,28 @@
+{
+  "_description": "Mixed transport: HTTPS for egress, TLS for direct, named pipe for internal pivot",
+  "strategy": "priority",
+  "dead_time_secs": 180,
+  "endpoints": [
+    {
+      "host": "c2.example.com",
+      "port": 443,
+      "transport": "https",
+      "priority": 0,
+      "max_failures": 3
+    },
+    {
+      "host": "c2.example.com",
+      "port": 4443,
+      "transport": "tls",
+      "priority": 5,
+      "max_failures": 5
+    },
+    {
+      "host": "dc01:msagent_status",
+      "port": 0,
+      "transport": "named_pipe",
+      "priority": 10,
+      "max_failures": 10
+    }
+  ]
+}

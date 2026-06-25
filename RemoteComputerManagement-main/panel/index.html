@@ -1,0 +1,1359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#07090f">
+  <title>RCM // C2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="stylesheet" href="/panel/style.css">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     LOGIN MODAL
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="login-modal">
+  <div class="login-card">
+    <div class="login-logo">
+      <span class="wordmark glow-text">SECURE_C2</span>
+      <span class="subtitle">COMMAND &amp; CONTROL</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">C2 Server URL</label>
+        <input type="text" id="api-url" value="http://127.0.0.1:8080"
+               class="form-input" autocomplete="url" spellcheck="false">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Username</label>
+        <input type="text" id="login-user" placeholder="admin"
+               class="form-input" autocomplete="username">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Password</label>
+        <input type="password" id="login-pass" placeholder="••••••••"
+               class="form-input" autocomplete="current-password"
+               onkeydown="if(event.key==='Enter') window.Auth.login()">
+      </div>
+      <div id="login-error-msg" style="display:none;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);border-radius:6px;padding:9px 12px;font-size:12px;color:#f87171;"></div>
+      <button onclick="window.Auth.login()" class="btn btn-primary btn-full" style="margin-top:4px;padding:12px;">
+        <i class="fas fa-sign-in-alt"></i> Sign In
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     APP SHELL
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="app-shell">
+
+  <!-- ── Desktop Sidebar ───────────────────────────────────────────── -->
+  <aside id="sidebar">
+    <div class="sidebar-logo">
+      <span class="glow-text">SECURE_C2</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Overview</div>
+      <button class="nav-item active" data-page="stats"
+              onclick="window.Router.navigate('stats',event)">
+        <i class="fas fa-chart-pie"></i><span>Dashboard</span>
+      </button>
+      <button class="nav-item" data-page="network"
+              onclick="window.Router.navigate('network',event)">
+        <i class="fas fa-project-diagram"></i><span>Network Map</span>
+      </button>
+
+      <div class="nav-section-label">Operations</div>
+      <button class="nav-item" data-page="control"
+              onclick="window.Router.navigate('control',event)">
+        <i class="fas fa-terminal"></i><span>Sessions</span>
+      </button>
+      <button class="nav-item" data-page="files"
+              onclick="window.Router.navigate('files',event)">
+        <i class="fas fa-folder-open"></i><span>Files</span>
+      </button>
+      <button class="nav-item" data-page="loot"
+              onclick="window.Router.navigate('loot',event)">
+        <i class="fas fa-box-open"></i> Loot
+      </button>
+      <button class="nav-item" id="nav-users" data-page="users"
+              onclick="window.Router.navigate('users',event)">
+        <i class="fas fa-users-cog"></i> Users
+      </button>
+      <button class="nav-item" data-page="proxies"
+              onclick="window.Router.navigate('proxies',event)">
+        <i class="fas fa-network-wired"></i><span>Proxies</span>
+      </button>
+      <button class="nav-item" data-page="tasks"
+              onclick="window.Router.navigate('tasks',event)">
+        <i class="fas fa-satellite-dish"></i><span>Broadcast</span>
+      </button>
+
+      <div class="nav-section-label">Infrastructure</div>
+      <button class="nav-item" data-page="listeners"
+              onclick="window.Router.navigate('listeners',event)">
+        <i class="fas fa-broadcast-tower"></i><span>Listeners</span>
+      </button>
+      <button class="nav-item" data-page="builder"
+              onclick="window.Router.navigate('builder',event)">
+        <i class="fas fa-hammer"></i><span>Builder</span>
+      </button>
+      <button class="nav-item" data-page="extensions"
+              onclick="window.Router.navigate('extensions',event)">
+        <i class="fas fa-file-code"></i><span>Scripts</span>
+      </button>
+
+      <div class="nav-section-label">Logs</div>
+      <button class="nav-item" data-page="history"
+              onclick="window.Router.navigate('history',event)">
+        <i class="fas fa-history"></i><span>History</span>
+      </button>
+      <button class="nav-item" data-page="jobs"
+              onclick="window.Router.navigate('jobs',event)">
+        <i class="fas fa-cogs"></i><span>Jobs</span>
+      </button>
+      <button class="nav-item" data-page="audit"
+              onclick="window.Router.navigate('audit',event)">
+        <i class="fas fa-shield-alt"></i><span>Audit Log</span>
+      </button>
+      <button class="nav-item" data-page="iocs"
+              onclick="window.Router.navigate('iocs',event)">
+        <i class="fas fa-bug"></i><span>Artifacts</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-row">
+        <div id="user-badge" class="user-badge">
+          <i class="fas fa-user-circle" style="color:var(--accent);font-size:15px;"></i>
+          <span></span>
+        </div>
+        <button id="theme-toggle" class="icon-btn" onclick="window.Theme.toggle()" title="Toggle theme">
+          <i class="fas fa-circle-half-stroke"></i>
+        </button>
+      </div>
+      <div id="connection-status" class="status-row disconnected">
+        <div class="status-dot disconnected"></div>
+        <span>Disconnected</span>
+      </div>
+      <button class="logout-btn" onclick="window.Auth.logout()">
+        <i class="fas fa-sign-out-alt"></i> Sign Out
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Mobile Top Bar ────────────────────────────────────────────── -->
+  <div id="mobile-topbar">
+    <span class="logo-text glow-text">SECURE_C2</span>
+    <div class="topbar-right">
+      <div id="connection-status-mobile" class="status-row" style="font-size:11px;">
+        <div class="status-dot disconnected"></div>
+      </div>
+      <button class="icon-btn" id="theme-toggle-mobile" onclick="window.Theme.toggle()">
+        <i class="fas fa-circle-half-stroke"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Main Content ───────────────────────────────────────────────── -->
+  <main id="main-content">
+    <div class="page-wrapper">
+
+      <!-- ── DASHBOARD ─────────────────────────────────────────────── -->
+      <div id="page-stats">
+
+        <!-- Header -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Dashboard</h1>
+            <p class="page-subtitle">Real-time operator overview</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.API.refreshHosts()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i><span class="hide-mobile">Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Stat cards — always show all four, update counts dynamically -->
+        <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+          <div class="stat-card accent">
+            <div class="stat-icon-wrap"><i class="fas fa-server stat-icon"></i></div>
+            <div class="stat-label">Active Sessions</div>
+            <div class="stat-value white" id="stat-total">0</div>
+          </div>
+          <div class="stat-card blue">
+            <div class="stat-icon-wrap"><i class="fab fa-windows stat-icon"></i></div>
+            <div class="stat-label">Windows</div>
+            <div class="stat-value blue" id="stat-win">0</div>
+          </div>
+          <div class="stat-card yellow">
+            <div class="stat-icon-wrap"><i class="fab fa-linux stat-icon"></i></div>
+            <div class="stat-label">Linux</div>
+            <div class="stat-value yellow" id="stat-linux">0</div>
+          </div>
+          <div class="stat-card" id="stat-mac-card" style="display:none;">
+            <div class="stat-icon-wrap"><i class="fab fa-apple stat-icon"></i></div>
+            <div class="stat-label">macOS</div>
+            <div class="stat-value" id="stat-mac" style="color:var(--text-primary);">0</div>
+          </div>
+          <div class="stat-card" id="stat-other-card" style="display:none;">
+            <div class="stat-icon-wrap"><i class="fas fa-question-circle stat-icon"></i></div>
+            <div class="stat-label">Other</div>
+            <div class="stat-value" id="stat-other" style="color:var(--text-muted);">0</div>
+          </div>
+        </div>
+
+        <!-- Middle row: chart left, activity feed right -->
+        <div class="dash-mid-grid">
+
+          <!-- OS doughnut chart -->
+          <div class="card dash-chart-card">
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-chart-pie mr-2"></i>OS Distribution</span>
+            </div>
+            <div class="dash-chart-body">
+              <!-- Explicit-height wrapper so Chart.js has a pixel reference -->
+              <div style="position:relative;width:100%;height:190px;">
+                <canvas id="osChart"></canvas>
+              </div>
+              <!-- Custom legend rendered below the canvas, not inside it -->
+              <div id="chart-legend" class="dash-legend"></div>
+            </div>
+          </div>
+
+          <!-- Live activity feed -->
+          <div class="card dash-activity-card" style="display:flex;flex-direction:column;min-height:0;">
+            <div class="card-header" style="flex-shrink:0;">
+              <span class="card-title"><i class="fas fa-bolt mr-2"></i>Activity</span>
+              <button onclick="document.getElementById('activity-log').innerHTML=''"
+                      class="btn btn-ghost btn-sm" title="Clear log">
+                <i class="fas fa-trash-alt"></i>
+              </button>
+            </div>
+            <div style="flex:1;overflow-y:auto;min-height:0;padding:8px 4px;">
+              <div id="activity-log" class="log-pane" style="height:100%;min-height:200px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sessions summary table -->
+        <div class="card" style="margin-top:16px;overflow:hidden;">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-desktop mr-2"></i>Connected Sessions</span>
+            <span id="dash-session-count" class="text-xs" style="color:var(--text-muted);"></span>
+          </div>
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <th class="dash-th">Host</th>
+                  <th class="dash-th">OS</th>
+                  <th class="dash-th">IP</th>
+                  <th class="dash-th">Last Seen</th>
+                  <th class="dash-th" style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="dash-sessions-tbody">
+                <tr>
+                  <td colspan="5" style="padding:28px;text-align:center;color:var(--text-muted);font-style:italic;">
+                    No active sessions
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── NETWORK MAP ────────────────────────────────────────────── -->
+      <div id="page-network" class="hidden" style="display:none;flex-direction:column;height:calc(100dvh - 120px);">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Network Topology</h1>
+            <p class="page-subtitle">Session graph and pivot chains</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.NetworkManager.init()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i><span class="hide-mobile"> Refresh</span>
+            </button>
+            <button onclick="window.NetworkManager.layout()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-random"></i><span class="hide-mobile"> Re-layout</span>
+            </button>
+          </div>
+        </div>
+        <div class="card" style="flex:1;position:relative;overflow:hidden;">
+          <div id="cy" style="position:absolute;inset:0;width:100%;height:100%;"></div>
+          <div style="position:absolute;bottom:14px;right:14px;background:rgba(13,17,23,0.85);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 14px;font-size:11px;pointer-events:none;display:flex;flex-direction:column;gap:7px;">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--red);display:inline-block;"></span><span style="color:var(--text-secondary)">C2 Server</span></div>
+            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--blue);display:inline-block;"></span><span style="color:var(--text-secondary)">Windows</span></div>
+            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--yellow);display:inline-block;"></span><span style="color:var(--text-secondary)">Linux</span></div>
+            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;border:2px solid var(--accent);display:inline-block;"></span><span style="color:var(--text-secondary)">Proxy On</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SESSIONS / CONTROL ─────────────────────────────────────── -->
+      <div id="page-control" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Sessions</h1>
+            <p class="page-subtitle">Active agent connections</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.API.refreshHosts()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i><span class="hide-mobile"> Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Desktop table -->
+        <div class="card hide-mobile" id="hosts-table-card">
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Hostname</th>
+                  <th>IP Address</th>
+                  <th>OS</th>
+                  <th>HWID</th>
+                  <th>Scripts</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="hosts-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Mobile cards -->
+        <div id="hosts-cards-mobile" style="display:none;flex-direction:column;gap:10px;"></div>
+      </div>
+
+      <!-- ── FILES ──────────────────────────────────────────────────── -->
+      <div id="page-files" class="hidden" style="display:none;flex-direction:column;gap:14px;height:calc(100dvh - 120px);">
+        <div class="page-header" style="margin-bottom:0;">
+          <div>
+            <h1 class="page-title">File Browser</h1>
+            <p class="page-subtitle">Interactive remote filesystem</p>
+          </div>
+          <div class="page-actions">
+            <select id="file-session-select" class="form-select" style="width:auto;font-size:12.5px;padding:7px 28px 7px 10px;">
+              <option value="">Select session...</option>
+            </select>
+            <button onclick="window.FileManager.browse()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="file-toolbar">
+          <button onclick="window.FileManager.up()" class="icon-btn" title="Up"><i class="fas fa-arrow-up"></i></button>
+          <span style="color:var(--text-muted);font-size:12px;font-family:monospace;">PATH</span>
+          <input type="text" id="file-path-input" class="file-path-input" value="/"
+                 onkeydown="if(event.key==='Enter') window.FileManager.browse(this.value)">
+          <button onclick="window.FileManager.browse(document.getElementById('file-path-input').value)"
+                  class="icon-btn" title="Go"><i class="fas fa-chevron-right"></i></button>
+        </div>
+
+        <div class="card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+          <div style="display:flex;align-items:center;padding:9px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);gap:16px;">
+            <span style="width:24px;"></span>
+            <span style="flex:1;">Name</span>
+            <span style="width:70px;text-align:right;" class="hide-mobile">Size</span>
+            <span style="width:60px;text-align:center;" class="hide-mobile">Perms</span>
+            <span style="width:120px;text-align:right;" class="hide-mobile">Modified</span>
+          </div>
+          <div id="file-list-container" style="flex:1;overflow-y:auto;padding:8px;">
+            <div style="text-align:center;color:var(--text-muted);padding:40px 16px;font-size:13px;">
+              Select a session to browse files.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── PROXIES ────────────────────────────────────────────────── -->
+
+      <!-- LOOT PAGE -->
+      <div id="page-loot" class="hidden" style="display:none;flex-direction:column;gap:14px;height:calc(100dvh - 120px);">
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="page-title"><i class="fas fa-box-open text-yellow-400 mr-2"></i>Loot</h1>
+            <p class="page-subtitle">Files collected from agents — saved in the server's downloads/ folder</p>
+          </div>
+          <button onclick="window.LootBrowser.init()"
+                  class="btn btn-ghost btn-sm">
+            <i class="fas fa-sync-alt"></i> Refresh
+          </button>
+        </div>
+
+        <!-- Breadcrumb -->
+        <div class="flex items-center gap-1 bg-gray-800/60 rounded px-3 py-2 text-sm min-h-[36px]"
+             id="loot-breadcrumb">
+          <span class="text-green-400 font-mono text-xs">downloads/</span>
+        </div>
+
+        <!-- File list -->
+        <div class="flex-1 overflow-y-auto bg-gray-800/40 rounded-lg border border-gray-700"
+             id="loot-container">
+          <p class="text-gray-500 p-10 text-center italic">Loading…</p>
+        </div>
+      </div>
+
+      <!-- LOOT PREVIEW MODAL -->
+      <div id="loot-preview-modal"
+           class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
+        <div class="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl
+                    w-full max-w-4xl flex flex-col" style="max-height:90vh;">
+          <div class="flex items-center justify-between px-4 py-3
+                      border-b border-gray-700 bg-gray-800 rounded-t-xl">
+            <span id="loot-preview-title" class="font-mono text-sm text-white truncate"></span>
+            <button onclick="window.LootBrowser.closePreview()"
+                    class="text-gray-400 hover:text-white ml-4">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div id="loot-preview-body" class="flex-1 overflow-auto p-4 bg-[#0d1117] rounded-b-xl"></div>
+        </div>
+      </div>
+
+
+      <!-- USERS PAGE (admin only) -->
+      <div id="page-users" class="hidden" style="display:none;flex-direction:column;gap:16px;">
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="page-title"><i class="fas fa-users-cog text-blue-400 mr-2"></i>Operators</h1>
+            <p class="page-subtitle">Create and manage panel user accounts — admin only</p>
+          </div>
+          <button onclick="window.UserManager.load()" class="btn btn-ghost btn-sm">
+            <i class="fas fa-sync-alt"></i> Refresh
+          </button>
+        </div>
+
+        <!-- API key banner (shown once after creation) -->
+        <div id="api-key-banner" class="hidden bg-yellow-900/40 border border-yellow-700/60
+             rounded-lg p-4 flex items-start gap-3">
+          <i class="fas fa-key text-yellow-400 mt-0.5"></i>
+          <div class="flex-1 min-w-0">
+            <p class="text-yellow-300 text-sm font-medium mb-1">
+              New operator API key — copy it now, it won't be shown again
+            </p>
+            <code id="api-key-value"
+                  class="text-xs text-yellow-200 font-mono break-all"></code>
+          </div>
+          <div class="flex gap-2 shrink-0">
+            <button onclick="window.UserManager.copyKey()"
+                    class="text-xs px-2 py-1 bg-yellow-700/60 hover:bg-yellow-700
+                           text-yellow-200 rounded">
+              <i class="fas fa-copy"></i> Copy
+            </button>
+            <button onclick="window.UserManager.dismissKey()"
+                    class="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600
+                           text-gray-300 rounded">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Create new operator -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-user-plus mr-2"></i>Create Operator</span>
+          </div>
+          <div class="flex gap-3 flex-wrap p-4">
+            <input id="new-username" type="text" placeholder="Username"
+                   class="form-input flex-1 min-w-32"
+                   onkeydown="if(event.key==='Enter') window.UserManager.create()">
+            <input id="new-password" type="password" placeholder="Password (min 8 chars)"
+                   class="form-input flex-1 min-w-40"
+                   onkeydown="if(event.key==='Enter') window.UserManager.create()">
+            <select id="new-role" class="form-select w-36">
+              <option value="operator">operator</option>
+              <option value="viewer">viewer</option>
+              <option value="admin">admin</option>
+            </select>
+            <button onclick="window.UserManager.create()"
+                    class="btn btn-primary btn-sm whitespace-nowrap">
+              <i class="fas fa-plus mr-1"></i>Create
+            </button>
+          </div>
+        </div>
+
+        <!-- Operator table -->
+        <div class="card flex-1 overflow-hidden">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-list mr-2"></i>All Operators</span>
+          </div>
+          <div class="overflow-auto">
+            <table class="w-full text-left">
+              <thead class="border-b border-gray-700 text-xs text-gray-500 uppercase">
+                <tr>
+                  <th class="px-4 py-2">Username</th>
+                  <th class="px-4 py-2">Role</th>
+                  <th class="px-4 py-2">Created</th>
+                  <th class="px-4 py-2">Last Login</th>
+                  <th class="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody">
+                <tr><td colspan="5" class="p-3 text-center text-gray-500">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="page-proxies" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">SOCKS5 Proxies</h1>
+            <p class="page-subtitle">Active tunnel sessions</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.ProxyManager.checkAll()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-globe"></i><span class="hide-mobile"> Check IPs</span>
+            </button>
+            <button onclick="window.ProxyManager.refreshList()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Tunnel Port</th>
+                  <th>SOCKS5 Port</th>
+                  <th class="hide-mobile">Public IP</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="proxies-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── BROADCAST / TASKS ───────────────────────────────────────── -->
+      <div id="page-tasks" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Broadcast</h1>
+            <p class="page-subtitle">Execute commands across all sessions</p>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 2fr;gap:18px;" class="broadcast-grid">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-satellite-dish" style="color:var(--red);"></i> New Broadcast</span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+              <div class="tab-strip">
+                <button class="tab-strip-btn active" id="btn-mode-cmd"
+                        onclick="window.TaskManager.toggleMode('command')">Shell</button>
+                <button class="tab-strip-btn" id="btn-mode-mod"
+                        onclick="window.TaskManager.toggleMode('module')">Module</button>
+              </div>
+
+              <div id="input-group-cmd">
+                <label class="form-label">Command</label>
+                <div style="position:relative;">
+                  <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-family:monospace;font-size:14px;">$</span>
+                  <input type="text" id="broadcast-input" placeholder="whoami /all"
+                         class="form-input form-mono" style="padding-left:26px;">
+                </div>
+              </div>
+
+              <div id="input-group-mod" class="hidden" style="display:none;flex-direction:column;gap:10px;">
+                <div>
+                  <label class="form-label">Module</label>
+                  <select id="broadcast-module-select" class="form-select">
+                    <option value="" disabled selected>Loading...</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label">Arguments</label>
+                  <input type="text" id="broadcast-module-args" placeholder="-v target.txt"
+                         class="form-input form-mono">
+                </div>
+              </div>
+
+              <button id="broadcast-btn" onclick="window.TaskManager.executeBroadcast()"
+                      class="btn btn-full" style="background:var(--red);color:#fff;border:none;padding:12px;">
+                <i class="fas fa-play"></i> Execute on All
+              </button>
+            </div>
+          </div>
+
+          <div class="card" style="display:flex;flex-direction:column;max-height:500px;">
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-scroll"></i> Execution Log</span>
+              <button onclick="window.TaskManager.clearHistory()" class="icon-btn" title="Clear">
+                <i class="fas fa-trash-alt"></i>
+              </button>
+            </div>
+            <div style="flex:1;overflow-y:auto;">
+              <table class="data-table">
+                <tbody id="tasks-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── HISTORY ────────────────────────────────────────────────── -->
+      <div id="page-history" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Command History</h1>
+            <p class="page-subtitle">Server-side log of all executed commands</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.HistoryManager.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+        <div class="card" style="max-height:calc(100dvh - 180px);display:flex;flex-direction:column;">
+          <div style="flex:1;overflow-y:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="hide-mobile">Timestamp</th>
+                  <th>Session</th>
+                  <th>Command</th>
+                  <th class="hide-mobile">Output</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="global-history-body" class="mono">
+                <tr class="empty-row"><td colspan="5">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── LISTENERS ──────────────────────────────────────────────── -->
+      <div id="page-listeners" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Listeners</h1>
+            <p class="page-subtitle">Manage C2 ingress points</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.ListenerManager.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Create form -->
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-plus-circle" style="color:var(--accent);"></i> New Listener</span>
+          </div>
+          <div class="card-body">
+            <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:end;">
+              <div>
+                <label class="form-label">Name</label>
+                <input type="text" id="new-listener-name" placeholder="https_main" class="form-input">
+              </div>
+              <div style="width:90px;">
+                <label class="form-label">Port</label>
+                <input type="number" id="new-listener-port" placeholder="443" class="form-input">
+              </div>
+              <div style="width:150px;" class="hide-mobile">
+                <label class="form-label">Transport</label>
+                <select id="new-listener-transport" class="form-select">
+                  <option value="tls">TLS (raw)</option>
+                  <option value="tcp_plain">TCP plain</option>
+                  <option value="https">HTTPS</option>
+                  <option value="http">HTTP</option>
+                </select>
+              </div>
+              <button onclick="window.ListenerManager.create()" class="btn btn-primary" style="align-self:flex-end;">
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th><th>Name</th><th>Port</th>
+                  <th class="hide-mobile">Transport</th>
+                  <th>Status</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="listeners-tbody">
+                <tr class="empty-row"><td colspan="6">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Auto-Recon -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-robot"></i> Auto-Recon</span>
+            <button onclick="window.ReconConfig.refresh()" class="icon-btn"><i class="fas fa-sync"></i></button>
+          </div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+            <p style="font-size:12px;color:var(--text-muted);">
+              Runs automatically on each new session check-in. Supports commands, server-side
+              Rhai modules, and agent-side extension scripts with arguments.
+            </p>
+
+            <!-- Type tabs -->
+            <div style="display:flex;gap:4px;border-bottom:1px solid var(--border);padding-bottom:8px;">
+              <button id="recon-tab-command"
+                      onclick="window.ReconConfig.selectType('command')"
+                      class="btn btn-ghost btn-sm"
+                      style="font-size:11px;">
+                <i class="fas fa-terminal mr-1"></i>Command
+              </button>
+              <button id="recon-tab-module"
+                      onclick="window.ReconConfig.selectType('module')"
+                      class="btn btn-ghost btn-sm"
+                      style="font-size:11px;opacity:.5;">
+                <i class="fas fa-scroll mr-1"></i>Module / Script
+              </button>
+              <button id="recon-tab-extension"
+                      onclick="window.ReconConfig.selectType('extension')"
+                      class="btn btn-ghost btn-sm"
+                      style="font-size:11px;opacity:.5;">
+                <i class="fas fa-code mr-1"></i>Extension
+              </button>
+            </div>
+
+            <!-- Command input -->
+            <div id="recon-row-command" style="display:flex;gap:8px;">
+              <input type="text" id="recon-cmd-input"
+                     placeholder="e.g. whoami  (shell prefix added automatically)"
+                     class="form-input form-mono" style="flex:1;"
+                     onkeydown="if(event.key==='Enter') window.ReconConfig.add()">
+              <button onclick="window.ReconConfig.add()" class="btn btn-primary btn-sm">Add</button>
+            </div>
+
+            <!-- Module input -->
+            <div id="recon-row-module" style="display:none;gap:8px;align-items:center;">
+              <select id="recon-module-select" class="form-select" style="flex:1;">
+                <option value="">Loading modules…</option>
+              </select>
+              <button onclick="window.ReconConfig.add()" class="btn btn-primary btn-sm">Add</button>
+            </div>
+
+            <!-- Extension input -->
+            <div id="recon-row-extension" style="display:none;flex-direction:column;gap:8px;">
+              <div style="display:flex;gap:8px;align-items:center;">
+                <select id="recon-ext-file-select"
+                        class="form-select" style="flex:1;font-size:12px;"
+                        onchange="window.ReconConfig._onExtFileSelect(this.value)">
+                  <option value="">Loading extensions…</option>
+                </select>
+                <a href="#" onclick="event.preventDefault();window.Router?.navigate('extensions')"
+                   class="text-xs text-green-400 hover:text-white whitespace-nowrap"
+                   title="Manage extensions">
+                  <i class="fas fa-edit mr-1"></i>Edit scripts
+                </a>
+              </div>
+              <textarea id="recon-ext-code" rows="4"
+                        placeholder="Rhai code (select a file above, or paste custom code here)"
+                        class="form-input form-mono"
+                        style="resize:vertical;font-size:11px;"></textarea>
+              <div style="display:flex;gap:8px;">
+                <input type="text" id="recon-ext-args"
+                       placeholder="Arguments (space-separated, optional)"
+                       class="form-input" style="flex:1;font-size:12px;">
+                <button onclick="window.ReconConfig.add()" class="btn btn-primary btn-sm">Add</button>
+              </div>
+            </div>
+
+            <!-- Entry table -->
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width:32px;">#</th>
+                  <th style="width:60px;">Type</th>
+                  <th>Entry</th>
+                  <th style="width:40px;"></th>
+                </tr>
+              </thead>
+              <tbody id="recon-tbody">
+                <tr class="empty-row"><td colspan="4">Click sync to load</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── EXTENSIONS / SCRIPTS ───────────────────────────────── -->
+      <div id="page-extensions" class="hidden" style="display:none;flex-direction:column;height:calc(100dvh - 120px);">
+        <div class="page-header" style="flex-shrink:0;">
+          <div>
+            <h1 class="page-title">Scripts &amp; Extensions</h1>
+            <!-- Kind tabs -->
+            <div style="display:flex;gap:4px;margin-top:6px;">
+              <button id="scripts-tab-extensions"
+                      onclick="window.ExtManager.setKind('extensions')"
+                      class="btn btn-ghost btn-sm active" style="font-size:11px;">
+                <i class="fas fa-robot mr-1"></i>Extensions
+              </button>
+              <button id="scripts-tab-modules"
+                      onclick="window.ExtManager.setKind('modules')"
+                      class="btn btn-ghost btn-sm" style="font-size:11px;opacity:.5;">
+                <i class="fas fa-server mr-1"></i>Modules
+              </button>
+              <span id="scripts-kind-badge" class="text-xs text-green-400 italic self-center ml-2">
+                Agent-side &middot; pushed via ext:load
+              </span>
+            </div>
+          </div>
+          <button onclick="window.ExtManager.newScript()" class="btn btn-primary btn-sm">
+            <i class="fas fa-plus mr-1"></i>New
+          </button>
+        </div>
+        <div style="display:flex;flex:1;min-height:0;border-top:1px solid var(--border);">
+          <!-- Left: file list -->
+          <div style="width:220px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;">
+            <div style="padding:8px;border-bottom:1px solid var(--border);">
+              <input type="text" id="ext-search" placeholder="Search…"
+                     class="form-input form-mono" style="font-size:11px;width:100%;"
+                     oninput="window.ExtManager.filterList()">
+            </div>
+            <div id="ext-list" style="flex:1;overflow-y:auto;">
+              <p class="text-gray-500 text-xs italic p-3 text-center">Loading…</p>
+            </div>
+          </div>
+          <!-- Right: editor -->
+          <div style="flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;">
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);flex-shrink:0;">
+              <span id="ext-dir-label" class="text-gray-400 text-xs font-mono">extensions/</span>
+              <input type="text" id="ext-name-input" placeholder="script_name"
+                     class="form-input form-mono" style="flex:1;font-size:12px;max-width:260px;">
+              <span class="text-gray-400 text-xs font-mono">.rhai</span>
+              <span id="ext-editor-title" class="text-gray-500 text-xs italic ml-2">New extension</span>
+              <button onclick="window.ExtManager.save()"
+                      class="btn btn-success btn-sm ml-auto" style="font-size:11px;">
+                <i class="fas fa-save mr-1"></i>Save
+              </button>
+              <button onclick="window.ExtManager.deleteScript(document.getElementById('ext-name-input').value)"
+                      class="btn btn-danger btn-sm" style="font-size:11px;">
+                <i class="fas fa-trash mr-1"></i>Delete
+              </button>
+            </div>
+            <textarea id="ext-code-editor" class="form-input form-mono"
+                      style="flex:1;resize:none;border:none;border-radius:0;font-size:12px;
+                             line-height:1.6;background:var(--bg-primary);color:var(--text-primary);
+                             padding:16px;min-height:0;"
+                      spellcheck="false"
+                      placeholder="// Rhai code here…"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── BUILDER ────────────────────────────────────────────────── -->
+      <div id="page-builder" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Agent Builder</h1>
+            <p class="page-subtitle">Compile and download implant binaries</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.BuilderManager.refreshJobList()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="builder-grid" style="margin-bottom:18px;">
+          <!-- Form -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-sliders-h"></i> Build Configuration</span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div>
+                  <label class="form-label">C2 Host <span style="color:var(--red);">*</span></label>
+                  <input type="text" id="builder-host" placeholder="10.0.0.1"
+                         class="form-input form-mono">
+                </div>
+                <div>
+                  <label class="form-label">Port / Pipe <span style="color:var(--red);">*</span></label>
+                  <input type="text" id="builder-port" placeholder="4443"
+                         class="form-input form-mono">
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+                <div>
+                  <label class="form-label">Platform</label>
+                  <select id="builder-platform" class="form-select">
+                    <option value="linux">Linux x64</option>
+                    <option value="windows">Windows x64</option>
+                    <option value="macos">macOS x64</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label">Transport</label>
+                  <select id="builder-transport" class="form-select">
+                    <option value="tls">TLS</option>
+                    <option value="tcp_plain">TCP plain</option>
+                    <option value="http">HTTP</option>
+                    <option value="https">HTTPS</option>
+                    <option value="named_pipe">Named pipe</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label">Format</label>
+                  <select id="builder-format" class="form-select">
+                    <option value="exe">EXE / ELF</option>
+                    <option value="dll">DLL</option>
+                    <option value="service">Service</option>
+                    <option value="stager">Stager</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="form-label">Traffic Profile</label>
+                <select id="builder-profile" class="form-select">
+                  <option value="default">Default (raw length-prefixed)</option>
+                  <option value="http_post">HTTP POST</option>
+                  <option value="http_image">HTTP image (GIF mask)</option>
+                </select>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+                <div>
+                  <label class="form-label">Sleep (s)</label>
+                  <input type="number" id="builder-sleep" value="40" min="0" class="form-input">
+                </div>
+                <div>
+                  <label class="form-label">Jitter min %</label>
+                  <input type="number" id="builder-jitter-min" value="20" min="0" max="100" class="form-input">
+                </div>
+                <div>
+                  <label class="form-label">Jitter max %</label>
+                  <input type="number" id="builder-jitter-max" value="10" min="0" max="100" class="form-input">
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end;">
+                <div>
+                  <label class="form-label">Bloat (MB)</label>
+                  <input type="number" id="builder-bloat" value="0" min="0" class="form-input">
+                </div>
+                <div>
+                  <label class="form-label">Kill date (days, 0=off)</label>
+                  <input type="number" id="builder-days" value="0" min="0" class="form-input">
+                </div>
+              </div>
+
+              <label class="check-label">
+                <input type="checkbox" id="builder-debug">
+                Debug mode
+              </label>
+
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <button id="builder-btn" onclick="window.BuilderManager.build()" class="btn btn-primary">
+                  <i class="fas fa-hammer"></i> Build Agent
+                </button>
+                <span id="builder-status-badge" class="hidden"></span>
+              </div>
+
+              <div id="builder-download-row" class="hidden">
+                <a id="builder-download-link" href="#" data-job-id=""
+                   class="btn btn-full" style="background:var(--blue);color:#fff;border-color:var(--blue);">
+                  <i class="fas fa-download"></i> <span>Download agent</span>
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Log -->
+          <div class="card" style="display:flex;flex-direction:column;">
+            <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+              <span class="card-title"><i class="fas fa-terminal" style="color:var(--accent);"></i> Build Log</span>
+              <div id="builder-log-filters" style="display:none;gap:5px;align-items:center;">
+                <button id="blf-all"  class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('all')">All</button>
+                <button id="blf-info" class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('info')">Info</button>
+                <button id="blf-warn" class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('warn')">Warnings</button>
+                <button id="blf-ok"   class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('ok')">Success</button>
+              </div>
+            </div>
+            <div id="builder-log" class="log-pane" style="flex:1;height:380px;border-radius:0 0 var(--r-lg) var(--r-lg);">
+              <div class="log-default" style="font-style:italic;">Waiting for build to start...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Previous builds -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-history"></i> Previous Builds</span>
+          </div>
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Job ID</th><th>Status</th>
+                  <th class="hide-mobile">Started</th>
+                  <th class="hide-mobile">Finished</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="builder-jobs-tbody">
+                <tr class="empty-row"><td colspan="5">No builds yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── JOBS ───────────────────────────────────────────────────── -->
+      <div id="page-jobs" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Background Jobs</h1>
+            <p class="page-subtitle">Long-running tasks across all sessions</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.JobView.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Job</th><th class="hide-mobile">Host</th>
+                  <th class="hide-mobile">Description</th>
+                  <th>Status</th>
+                  <th class="hide-mobile">Started</th>
+                  <th class="hide-mobile">Finished</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="jobs-tbody">
+                <tr class="empty-row"><td colspan="7">Click refresh to load</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── AUDIT LOG ──────────────────────────────────────────────── -->
+      <div id="page-audit" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Audit Log</h1>
+            <p class="page-subtitle">Full operator action history</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.AuditView.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+        <div class="card" style="max-height:calc(100dvh - 180px);display:flex;flex-direction:column;">
+          <div style="flex:1;overflow-y:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="hide-mobile">Timestamp</th>
+                  <th>Operator</th>
+                  <th>Action</th>
+                  <th class="hide-mobile">Session</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="audit-tbody">
+                <tr class="empty-row"><td colspan="5">Click refresh to load</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── ARTIFACTS / IOC TRACKER ──────────────────────────────── -->
+      <div id="page-iocs" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Artifacts</h1>
+            <p class="page-subtitle">IOC &amp; cleanup tracker — artifacts left on target hosts</p>
+          </div>
+          <div class="page-actions" style="display:flex;align-items:center;gap:8px;">
+            <span id="ioc-summary" class="text-xs text-gray-500 hide-mobile"></span>
+            <button onclick="window.IocTracker.showAddModal()" class="btn btn-danger btn-sm">
+              <i class="fas fa-plus"></i><span class="hide-mobile ml-1">Record</span>
+            </button>
+            <button onclick="window.IocTracker.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="card" style="padding:10px 14px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+          <select id="ioc-filter-session"
+                  class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white">
+            <option value="">All sessions</option>
+          </select>
+          <select id="ioc-filter-status"
+                  class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-white">
+            <option value="all">All status</option>
+            <option value="active">Active only</option>
+            <option value="cleaned">Cleaned only</option>
+          </select>
+          <input id="ioc-search" type="text" placeholder="Search path / type…"
+                 class="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-sm text-white"
+                 style="flex:1;min-width:140px;">
+        </div>
+
+        <div class="card" style="max-height:calc(100dvh - 240px);display:flex;flex-direction:column;">
+          <div style="flex:1;overflow-y:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Type</th>
+                  <th>Path / Key</th>
+                  <th class="hide-mobile">Detail</th>
+                  <th class="hide-mobile">Operator</th>
+                  <th class="hide-mobile">Date</th>
+                  <th>Status</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="ioc-tbody">
+                <tr class="empty-row"><td colspan="8">Click refresh to load</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /page-wrapper -->
+  </main>
+
+  <!-- ── Mobile Bottom Navigation ──────────────────────────────────── -->
+  <nav id="mobile-nav">
+    <div class="mobile-nav-inner">
+      <button class="mobile-nav-btn active" data-page="stats"
+              onclick="window.Router.navigate('stats',event)">
+        <i class="fas fa-chart-pie"></i>
+        <span>Dash</span>
+      </button>
+      <button class="mobile-nav-btn" data-page="control"
+              onclick="window.Router.navigate('control',event)">
+        <i class="fas fa-terminal"></i>
+        <span>Sessions</span>
+      </button>
+      <button class="mobile-nav-btn" data-page="listeners"
+              onclick="window.Router.navigate('listeners',event)">
+        <i class="fas fa-broadcast-tower"></i>
+        <span>Listeners</span>
+      </button>
+      <button class="mobile-nav-btn" data-page="builder"
+              onclick="window.Router.navigate('builder',event)">
+        <i class="fas fa-hammer"></i>
+        <span>Builder</span>
+      </button>
+      <button class="mobile-nav-btn" id="mobile-more-btn"
+              onclick="window.MobileMore.open()">
+        <i class="fas fa-grid-2"></i>
+        <span>More</span>
+      </button>
+    </div>
+  </nav>
+
+</div><!-- /app-shell -->
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     MOBILE MORE SHEET
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="mobile-more-sheet">
+  <div class="more-backdrop" onclick="window.MobileMore.close()"></div>
+  <div class="more-drawer">
+    <div class="more-handle"></div>
+    <div class="more-title">All Pages</div>
+    <div class="more-grid">
+      <button class="more-item" data-page="network" onclick="window.Router.navigate('network',event);window.MobileMore.close()">
+        <i class="fas fa-project-diagram"></i><span>Network</span>
+      </button>
+      <button class="more-item" data-page="files" onclick="window.Router.navigate('files',event);window.MobileMore.close()">
+        <i class="fas fa-folder-open"></i><span>Files</span>
+      </button>
+      <button class="more-item" data-page="proxies" onclick="window.Router.navigate('proxies',event);window.MobileMore.close()">
+        <i class="fas fa-network-wired"></i><span>Proxies</span>
+      </button>
+      <button class="more-item" data-page="tasks" onclick="window.Router.navigate('tasks',event);window.MobileMore.close()">
+        <i class="fas fa-satellite-dish"></i><span>Broadcast</span>
+      </button>
+      <button class="more-item" data-page="history" onclick="window.Router.navigate('history',event);window.MobileMore.close()">
+        <i class="fas fa-history"></i><span>History</span>
+      </button>
+      <button class="more-item" data-page="jobs" onclick="window.Router.navigate('jobs',event);window.MobileMore.close()">
+        <i class="fas fa-cogs"></i><span>Jobs</span>
+      </button>
+      <button class="more-item" data-page="audit" onclick="window.Router.navigate('audit',event);window.MobileMore.close()">
+        <i class="fas fa-shield-alt"></i><span>Audit</span>
+      </button>
+      <button class="more-item" data-page="iocs" onclick="window.Router.navigate('iocs',event);window.MobileMore.close()">
+        <i class="fas fa-bug"></i><span>Artifacts</span>
+      </button>
+      <button class="more-item" onclick="window.Theme.toggle();window.MobileMore.close()">
+        <i class="fas fa-circle-half-stroke"></i><span>Theme</span>
+      </button>
+    </div>
+    <div class="more-user-section">
+      <div id="user-badge-mobile" style="font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:8px;">
+        <i class="fas fa-user-circle" style="color:var(--accent);"></i>
+        <span></span>
+      </div>
+      <button class="more-logout" onclick="window.Auth.logout()">
+        <i class="fas fa-sign-out-alt"></i> Sign out
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     TERMINAL MODAL
+     ══════════════════════════════════════════════════════════════════════ -->
+<div id="terminal-modal" class="hidden modal-overlay">
+  <div class="modal-box" style="max-width:960px;height:78dvh;">
+    <div class="modal-header">
+      <div class="modal-title">
+        <i class="fas fa-terminal" style="color:var(--accent);"></i>
+        <span id="term-title">Session</span>
+      </div>
+      <button class="modal-close" onclick="window.Terminal.close()">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div id="term-output" class="term-output"></div>
+    <div class="term-input-row">
+      <span class="term-prompt">$</span>
+      <input type="text" id="term-input" class="term-input-field"
+             autocomplete="off" spellcheck="false" placeholder="Enter command...">
+    </div>
+  </div>
+</div>
+
+<!-- PROCESS VIEWER MODAL -->
+<div id="proc-modal" class="hidden modal-overlay">
+  <div class="modal-box" style="max-width:540px;max-height:80dvh;">
+    <div class="modal-header">
+      <div class="modal-title"><i class="fas fa-microchip"></i> <span id="proc-title">Processes</span></div>
+      <button class="modal-close" onclick="ProcView.close()"><i class="fas fa-times"></i></button>
+    </div>
+    <div style="flex:1;overflow-y:auto;">
+      <table class="data-table">
+        <thead>
+          <tr><th style="width:70px;">PID</th><th>Name</th><th style="width:60px;text-align:right;">Act</th></tr>
+        </thead>
+        <tbody id="proc-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- SCREENSHOT MODAL -->
+<div id="screenshot-modal" class="hidden modal-overlay">
+  <div class="modal-box" style="max-width:900px;">
+    <div class="modal-header">
+      <div class="modal-title"><i class="fas fa-camera"></i> Screenshots</div>
+      <button class="modal-close" onclick="ScreenshotView.close()"><i class="fas fa-times"></i></button>
+    </div>
+    <div id="screenshot-container"
+         style="flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(2,1fr);gap:14px;">
+    </div>
+  </div>
+</div>
+
+<!-- APP MODAL (replaces browser alert/confirm) -->
+<div id="app-modal" class="hidden modal-overlay" style="z-index:110;" onclick="window.Modal._backdropClick(event)">
+  <div class="modal-box" style="max-width:420px;min-height:unset;">
+    <div class="modal-header">
+      <div class="modal-title">
+        <i id="app-modal-icon" class="fas fa-info-circle text-blue-400"></i>
+        <span id="app-modal-title-text">Info</span>
+      </div>
+      <button class="modal-close" onclick="window.Modal._resolve(false)"><i class="fas fa-times"></i></button>
+    </div>
+    <div id="app-modal-body" style="padding:18px 20px 10px;font-size:13px;color:var(--text-secondary);line-height:1.6;white-space:pre-wrap;word-break:break-word;"></div>
+    <div style="padding:4px 20px 16px;display:flex;justify-content:flex-end;gap:8px;">
+      <button id="app-modal-cancel" class="btn btn-ghost btn-sm" onclick="window.Modal._resolve(false)" style="display:none;">Cancel</button>
+      <button id="app-modal-ok"     class="btn btn-ghost btn-sm" onclick="window.Modal._resolve(true)">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div id="toast-container"></div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SCRIPTS
+     ══════════════════════════════════════════════════════════════════════ -->
+<script>
+// Mobile More Sheet controller
+window.MobileMore = {
+  open()  { document.getElementById('mobile-more-sheet').classList.add('open'); },
+  close() { document.getElementById('mobile-more-sheet').classList.remove('open'); }
+};
+</script>
+
+<script src="/panel/js/ui.js"></script>
+<script src="/panel/js/auth.js"></script>
+<script src="/panel/js/api.js"></script>
+<script src="/panel/js/terminal.js"></script>
+<script src="/panel/js/proxy.js"></script>
+<script src="/panel/js/pulse.js"></script>
+<script src="/panel/js/tasks.js"></script>
+<script src="/panel/js/modules.js"></script>
+<script src="/panel/js/history.js"></script>
+<script src="/panel/js/network.js"></script>
+<script src="/panel/js/files.js"></script>
+<script src="/panel/js/listeners.js"></script>
+<script src="/panel/js/jobview.js"></script>
+<script src="/panel/js/auditview.js"></script>
+<script src="/panel/js/procview.js"></script>
+<script src="/panel/js/screenshots.js"></script>
+<script src="/panel/js/notify.js"></script>
+<script src="/panel/js/theme.js"></script>
+<script src="/panel/js/shortcuts.js"></script>
+<script src="/panel/js/recon.js"></script>
+<script src="/panel/js/notes.js"></script>
+<script src="/panel/js/builder.js"></script>
+<script src="/panel/js/users.js"></script>
+<script src="/panel/js/loot.js"></script>
+<script src="/panel/js/extensions.js"></script>
+<script src="/panel/js/ioc.js"></script>
+<script src="/panel/js/app.js"></script>
+</body>
+</html>

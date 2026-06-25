@@ -1,0 +1,26 @@
+{
+  "name": "jquery_cdn",
+  "format_http": true,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+  "http_get": {
+    "uris": ["/jquery-3.6.0.min.js", "/jquery-ui.min.js", "/jquery-migrate.js"],
+    "headers": {
+      "Host": "code.jquery.com",
+      "Referer": "http://code.jquery.com/",
+      "Accept": "application/javascript"
+    },
+    "data_transform": []
+  },
+  "http_post": {
+    "uris": ["/beacon/telemetry.js"],
+    "headers": {
+      "Host": "code.jquery.com",
+      "Content-Type": "application/javascript"
+    },
+    "data_transform": [
+      { "prepend": "/* jQuery v3.6.0 | (c) OpenJS Foundation and other contributors | jquery.org/license */\nvar _0x5a1b = \"" },
+      { "hex": null },
+      { "append": "\";" }
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+# ── Rust build artifacts ───────────────────────────────────────────────
+/target/
+**/*.rs.bk
+*.pdb
+
+# ── Compiled agent binaries ────────────────────────────────────────────
+/dist/exe_*
+/dist/dll_*
+/dist/service_*
+/dist/stager_*
+/dist/*.exe
+# Keep server_keys.json out of git — contains private signing keys
+/dist/server_keys.json
+
+# ── TLS certificates and keys ──────────────────────────────────────────
+# Generated at runtime by start_docker.sh — never commit certs or keys
+/certs/ca.key
+/certs/ca.crt
+/certs/ca.srl
+/certs/server.key
+/certs/server.key.der
+/certs/server.crt
+/certs/server.csr
+/certs/client.key
+/certs/client.key.der
+/certs/client.crt
+/certs/client.csr
+
+# ── Runtime database ───────────────────────────────────────────────────
+# Contains operator credentials, session data, build keys, audit log
+c2_audit.db
+c2_audit.db-shm
+c2_audit.db-wal
+
+# ── Operator data ──────────────────────────────────────────────────────
+/downloads/
+/data/
+/logs/
+/history.txt
+
+# ── Docker ─────────────────────────────────────────────────────────────
+# Ignore local override files but keep the main compose file
+docker-compose.override.yml
+docker-compose.local.yml
+
+# ── IDE and editor ─────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Environment and secrets ────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+secrets/
+
+# ── Test artifacts ─────────────────────────────────────────────────────
+/tests/docker/tmp/
+*.test.log
+
+# ── Summary / generated docs ───────────────────────────────────────────
+summary.txt

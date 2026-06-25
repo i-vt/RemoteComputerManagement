@@ -25,36 +25,6 @@ A modular command-and-control framework written in Rust.
 
 ## Quick Start
 
-### Dockerized
-
-```bash
-# Get a debian VPS for best results
-
-# Install dependencies
-wget https://raw.githubusercontent.com/i-vt/InterestingSnippets/refs/heads/main/Linux/QuickSetup.sh
-chmod +x QuickSetup.sh
-./QuickSetup.sh
-
-# Remove unnecessary apache2
-sudo apt purge apache2
-
-# Install docker
-wget https://raw.githubusercontent.com/i-vt/InterestingSnippets/refs/heads/main/Linux/Docker/Install.sh
-chmod +x Install.sh
-./Install.sh
-
-# Download RCM
-wget https://github.com/i-vt/RemoteComputerManagement/archive/refs/heads/main.zip
-unzip main.zip
-cd RemoteComputerManagement-main
-
-# Install
-chmod +x *.sh
-./start_docker.sh
-```
-
-### On Bare Metal
-
 ```bash
 # Build server
 cargo build --release --bin server

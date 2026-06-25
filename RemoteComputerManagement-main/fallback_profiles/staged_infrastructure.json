@@ -1,0 +1,51 @@
+{
+  "_description": "Staged: short-haul redirector (fast, disposable) with long-haul backup (slow, persistent)",
+  "strategy": "failover",
+  "dead_time_secs": 3600,
+  "endpoints": [
+    {
+      "host": "redirector-1.example.com",
+      "port": 443,
+      "transport": "https",
+      "priority": 0,
+      "max_failures": 2,
+      "profile": {
+        "name": "short_haul",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+        "format_http": false,
+        "http_get": {
+          "uris": ["/news/feed", "/blog/latest", "/api/status"],
+          "headers": {"Accept": "text/html,application/json", "Accept-Language": "en-US,en;q=0.9"},
+          "data_transform": ["base64"]
+        },
+        "http_post": {
+          "uris": ["/api/feedback", "/api/analytics"],
+          "headers": {"Content-Type": "application/json"},
+          "data_transform": ["base64"]
+        }
+      }
+    },
+    {
+      "host": "long-haul.example.com",
+      "port": 443,
+      "transport": "https",
+      "priority": 100,
+      "max_failures": 50,
+      "profile": {
+        "name": "long_haul",
+        "user_agent": "Microsoft BITS/7.8",
+        "format_http": false,
+        "http_get": {
+          "uris": ["/windowsupdate/v6/check"],
+          "headers": {"Accept": "*/*"},
+          "data_transform": ["base64"]
+        },
+        "http_post": {
+          "uris": ["/windowsupdate/v6/report"],
+          "headers": {"Content-Type": "application/octet-stream"},
+          "data_transform": ["base64"]
+        }
+      }
+    }
+  ]
+}
