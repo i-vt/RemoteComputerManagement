@@ -211,6 +211,28 @@ impl ExtensionManager {
              if !out.is_empty() { out } else { err }
         });
 
+        // exec_os_timeout(cmd, secs) — like exec_os but kills the subprocess
+        // after `secs` seconds rather than the default 300.  Use this in
+        // extension scripts where a sub-command should fail fast rather than
+        // stall the whole playbook (e.g. whoami, reg query, schtasks).
+        engine.register_fn("exec_os_timeout", |cmd: &str, secs: i64| -> String {
+            let dur = std::time::Duration::from_secs(secs.max(1) as u64);
+            let (out, err, _) = utils::execute_shell_command_timeout(cmd, dur);
+            if !out.is_empty() { out } else { err }
+        });
+
+        // internal_self_path() — returns the path of the currently-running
+        // agent binary directly from the OS, without spawning any subprocess.
+        // This is the correct way to get the agent path in Rhai scripts;
+        // exec_os("powershell ... GetCurrentProcess()") returns PowerShell's
+        // own path (not the agent's) because spawn_shell wraps all exec_os
+        // calls in powershell -Command.
+        engine.register_fn("internal_self_path", || -> String {
+            std::env::current_exe()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default()
+        });
+
         engine.register_fn("internal_procs", || -> String {
             utils::get_process_list()
         });

@@ -760,16 +760,17 @@ async fn process_response(sess_id: u32, r: CommandResponse, results: &SharedResu
 
     // file:chunk — one piece of a chunked large-file transfer.
     // Format: file:chunk|<batch_ts>|<root_name>|<rel_path>|<chunk_idx>|<total_chunks>|<b64_data>
-    // Each chunk is decoded and streamed directly to disk so the server never
-    // buffers more than one chunk (~18 MB) regardless of total file size.
+    //   7 fields, 6 pipe separators → splitn(7) gives exactly 7 parts, b64 at parts[6].
+    // BUG HISTORY: the original code used splitn(8)/len==8/parts[7], which is always
+    // false (only 6 pipes exist) so every chunk was silently dropped.
     if r.output.starts_with("file:chunk|") {
-        let parts: Vec<&str> = r.output.splitn(8, '|').collect();
-        if parts.len() == 8 {
+        let parts: Vec<&str> = r.output.splitn(7, '|').collect();
+        if parts.len() == 7 {
             let (batch_ts, root, rel) = (parts[1], parts[2], parts[3]);
             // Parse as u64 — agent uses u64 to handle files >4 GB on 32-bit targets.
             let chunk_idx    = parts[4].parse::<u64>().unwrap_or(0);
             let total_chunks = parts[5].parse::<u64>().unwrap_or(1);
-            let b64_data     = parts[7];
+            let b64_data     = parts[6];
             match file_transfer::save_file_chunk(batch_ts, sess_id, root, rel, chunk_idx, total_chunks, b64_data) {
                 Ok(is_final) => {
                     if is_final {

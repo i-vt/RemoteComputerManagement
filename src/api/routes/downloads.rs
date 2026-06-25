@@ -16,7 +16,6 @@ use axum::{
     Json,
     body::StreamBody,
 };
-use tokio_util::io::ReaderStream;
 use std::{path::PathBuf, sync::Arc};
 use crate::api::state::ApiContext;
 
@@ -193,111 +192,88 @@ pub async fn zip_loot(
         return (StatusCode::NOT_FOUND, "Not a directory").into_response();
     }
 
-    let result = tokio::task::spawn_blocking(move || -> Result<std::fs::File, String> {
-        use std::io::{BufReader, Seek, SeekFrom};
+    // ── Streaming zip via channel ─────────────────────────────────────────────
+    //
+    // The zip bytes are produced in a spawn_blocking thread by
+    // streaming_zip::write_zip_directory and forwarded through a bounded
+    // mpsc channel to the Axum response body.  Because we never buffer the
+    // whole archive, RAM usage is constant regardless of folder size — a 1 TB
+    // folder uses the same ~64 KB copy buffer as a 1 KB folder.
+    //
+    // No temp file is needed: the previous approach wrote a tempfile first
+    // (limiting the archive size to available temp-disk space) then streamed
+    // it back.  The streaming approach has no such limit.
 
-        // Write the zip to an anonymous temp file instead of Cursor<Vec<u8>>.
-        // This means the compressed output accumulates on disk rather than in
-        // RAM: a 5 GB folder of screenshots uses ~0 MB of server RAM during
-        // construction (just the per-file io::copy buffer, ~64 KB).
-        let tmp = tempfile::tempfile()
-            .map_err(|e| format!("tempfile: {}", e))?;
+    let base_path = full.parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| full.clone());
 
-        let mut zip = zip::ZipWriter::new(tmp);
+    // Bounded channel: 32 × 64 KB ≈ 2 MB in flight at a time.
+    // The writer blocks (backpressure) if the HTTP layer can't keep up.
+    let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
 
-        let file_opts = zip::write::FileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
-        let dir_opts  = zip::write::FileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
-
-        let base_path: std::path::PathBuf = full
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| full.clone());
-
-        let mut stack: Vec<std::path::PathBuf> = vec![full.clone()];
-
-        while let Some(current_dir) = stack.pop() {
-            let entries = match std::fs::read_dir(&current_dir) {
-                Ok(e)  => e,
-                Err(_) => continue,
-            };
-
-            for entry in entries.flatten() {
-                let path = entry.path();
-
-                let rel = match path.strip_prefix(&base_path) {
-                    Ok(r)  => r.to_string_lossy().replace('\\', "/"),
-                    Err(_) => continue,
-                };
-
-                if path.is_dir() {
-                    let dir_name = if rel.ends_with('/') {
-                        rel.to_string()
-                    } else {
-                        format!("{}/", rel)
-                    };
-                    zip.add_directory(&dir_name, dir_opts)
-                        .map_err(|e| e.to_string())?;
-                    stack.push(path);
-
-                } else if path.is_file() {
-                    zip.start_file(&rel, file_opts)
-                        .map_err(|e| e.to_string())?;
-
-                    let file = match std::fs::File::open(&path) {
-                        Ok(f)  => f,
-                        Err(_) => continue,
-                    };
-                    let mut reader = BufReader::new(file);
-                    std::io::copy(&mut reader, &mut zip)
-                        .map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        /// Write impl that batches output into 64 KB chunks and sends them
+        /// through the channel.  Implements backpressure via blocking_send.
+        struct ChanWriter {
+            tx:  tokio::sync::mpsc::Sender<Vec<u8>>,
+            buf: Vec<u8>,
+        }
+        impl std::io::Write for ChanWriter {
+            fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+                self.buf.extend_from_slice(data);
+                while self.buf.len() >= 65_536 {
+                    let chunk: Vec<u8> = self.buf.drain(..65_536).collect();
+                    self.tx.blocking_send(chunk).map_err(|_| {
+                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "client gone")
+                    })?;
                 }
+                Ok(data.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                if !self.buf.is_empty() {
+                    let tail = std::mem::take(&mut self.buf);
+                    self.tx.blocking_send(tail).map_err(|_| {
+                        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "client gone")
+                    })?;
+                }
+                Ok(())
+            }
+        }
+        impl Drop for ChanWriter {
+            fn drop(&mut self) {
+                use std::io::Write as _;
+                let _ = self.flush();
             }
         }
 
-        // ZipWriter::finish() returns the underlying File.
-        // Seek it back to the start so the streaming read begins at byte 0.
-        let mut finished = zip.finish().map_err(|e| e.to_string())?;
-        finished.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-        Ok(finished)
-    })
-    .await;
-
-    match result {
-        Ok(Ok(std_file)) => {
-            use axum::http::{HeaderMap, HeaderValue};
-
-            // Content-Length: get the zip size from the file's metadata so the
-            // browser can show a real progress bar.  Optional — omit on error.
-            let content_length = std_file.metadata()
-                .map(|m| m.len())
-                .ok();
-
-            // Wrap the std::fs::File in a tokio async file and stream it to
-            // the browser chunk-by-chunk.  The temp file is deleted automatically
-            // when the File handle is closed after streaming completes.
-            let tokio_file = tokio::fs::File::from_std(std_file);
-            let stream     = ReaderStream::new(tokio_file);
-            let body       = StreamBody::new(stream);
-
-            let mut headers = HeaderMap::new();
-            headers.insert(header::CONTENT_TYPE,
-                HeaderValue::from_static("application/zip"));
-            headers.insert(header::CONTENT_DISPOSITION,
-                HeaderValue::from_str(&format!("attachment; filename=\"{}\"", zip_name))
-                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")));
-            if let Some(len) = content_length {
-                if let Ok(v) = HeaderValue::from_str(&len.to_string()) {
-                    headers.insert(header::CONTENT_LENGTH, v);
-                }
-            }
-
-            (StatusCode::OK, headers, body).into_response()
+        let mut w = ChanWriter { tx, buf: Vec::with_capacity(65_536) };
+        // Errors (e.g. file disappeared mid-zip, client disconnected) are
+        // logged at debug level; the channel close signals EOF to the client.
+        if let Err(e) = crate::streaming_zip::write_zip_directory(&mut w, &base_path, &full) {
+            tracing::debug!(err = %e, "zip_loot: streaming zip aborted");
         }
-        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+    });
+
+    // Convert the channel receiver into an async stream for StreamBody.
+    let stream = futures::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|chunk| (Ok::<Vec<u8>, std::io::Error>(chunk), rx))
+    });
+    let body = StreamBody::new(stream);
+
+    use axum::http::{HeaderMap, HeaderValue};
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zip"));
+    headers.insert(header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("attachment; filename=\"{}\"", zip_name))
+            .unwrap_or_else(|_| HeaderValue::from_static("attachment")));
+    // Content-Length is intentionally omitted: the streaming zip computes CRC
+    // and sizes on the fly, so the total length is not known before writing.
+
+    (StatusCode::OK, headers, body).into_response()
 }
+
 
 /// DELETE /api/loot?path=<file_or_dir>
 /// Removes a single file or an empty directory from downloads/.

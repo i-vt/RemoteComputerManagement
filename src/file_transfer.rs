@@ -431,7 +431,9 @@ pub fn save_batch_report(batch_ts: &str, session_id: u32, root_name: &str, json_
     let progress_path = base_dir.join("progress.txt");
     let _ = std::fs::remove_file(progress_path);
 
-    let filename = format!("{}_{}_{}_metadata.json", batch_ts, session_id, safe_root);
+    // Report file is named after the root directory so operators can find it
+    // immediately: downloads/<batch>/Documents/  +  downloads/<batch>/Documents.json
+    let filename = format!("{}.json", safe_root);
     let file_path = base_dir.join(filename);
 
     std::fs::write(&file_path, json_data).map_err(|e| e.to_string())?;

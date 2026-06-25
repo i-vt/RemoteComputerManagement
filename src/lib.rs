@@ -14,6 +14,7 @@ pub mod database;
 pub mod pki;
 pub mod menu;
 pub mod file_transfer;
+pub mod streaming_zip;
 pub mod socks;
 pub mod api;
 pub mod agent;

@@ -231,9 +231,7 @@ run_integration_tests() {
         }
         echo ""
 
-        local tmp_df=".dockerfile-integration"
-        cp tests/docker/Dockerfile "$tmp_df"
-        trap 'rm -f "$tmp_df"' EXIT
+        local tmp_df=""; tmp_df="$(pwd)/tests/docker/Dockerfile"
 
         # Server image — with pivot agents if requested
         info "Building server image..."
@@ -242,17 +240,14 @@ run_integration_tests() {
 
         docker build ${no_cache:+"$no_cache"} ${pivot_arg} \
             -f "$tmp_df" --target server \
-            -t docker-c2-server . || { local_exit=$?; rm -f "$tmp_df"; exit "$local_exit"; }
+            -t docker-c2-server . || { local_exit=$?; exit "$local_exit"; }
 
         # Agent image
         info "Building agent image..."
         docker build ${no_cache:+"$no_cache"} \
             -f "$tmp_df" --target agent \
             -t docker-agent-1 -t docker-agent-2 -t docker-agent-hibernation . \
-            || { local_exit=$?; rm -f "$tmp_df"; exit "$local_exit"; }
-
-        rm -f "$tmp_df"
-        trap - EXIT
+            || { local_exit=$?; exit "$local_exit"; }
 
         # ── Run compose from tests/docker/ with appropriate overlays ──────────
         cd tests/docker || exit 2
@@ -304,21 +299,17 @@ run_pivot_phase() {
             [[ "$a" == "--no-cache" ]] && no_cache="--no-cache"
         done
 
-        local tmp_df=".dockerfile-integration"
-        cp tests/docker/Dockerfile "$tmp_df"
-        trap 'rm -f "$tmp_df"' EXIT
+        local tmp_df=""; tmp_df="$(pwd)/tests/docker/Dockerfile"
 
         info "Building server image with pivot agents..."
         docker build ${no_cache:+"$no_cache"} --build-arg BUILD_PIVOT_AGENTS=true \
             -f "$tmp_df" --target server -t docker-c2-server . \
-            || { local_exit=$?; rm -f "$tmp_df"; exit "$local_exit"; }
+            || { local_exit=$?; exit "$local_exit"; }
 
         docker build ${no_cache:+"$no_cache"} \
             -f "$tmp_df" --target agent \
             -t docker-agent-1 -t docker-agent-2 -t docker-agent-hibernation . \
-            || { local_exit=$?; rm -f "$tmp_df"; exit "$local_exit"; }
-
-        rm -f "$tmp_df"; trap - EXIT
+            || { local_exit=$?; exit "$local_exit"; }
 
         cd tests/docker || exit 2
 
