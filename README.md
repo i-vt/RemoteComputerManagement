@@ -36,6 +36,23 @@ A modular command-and-control framework written in Rust, built for authorized re
 
 ## Quick Start
 
+### New Installation
+
+```bash
+wget -qO- https://raw.githubusercontent.com/i-vt/InterestingSnippets/refs/heads/main/Linux/QuickSetup.sh | bash && sudo apt purge -y apache2 && wget -qO- https://raw.githubusercontent.com/i-vt/InterestingSnippets/refs/heads/main/Linux/Docker/Install.sh | bash && git clone https://github.com/i-vt/RemoteComputerManagement.git && cd RemoteComputerManagement && chmod +x *.sh && ./start_docker.sh && echo "Save the credentials above before continuing."
+```
+
+### Upgrade Version
+
+Change directory (cd) into the RCM folder, then run this:
+
+```bash
+cp c2_audit.db c2_audit.db.bak_$(date +%Y%m%d_%H%M%S) && docker compose down && git stash && git pull && { git stash pop 2>/dev/null; true; } && ./start_docker.sh
+```
+
+
+## Detailed Installation
+
 ### Docker (recommended)
 
 ```bash
