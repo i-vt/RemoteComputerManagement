@@ -39,7 +39,7 @@ A modular command-and-control framework written in Rust, built for authorized re
 ### New Installation
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/i-vt/InterestingSnippets/refs/heads/main/Linux/QuickSetup.sh | bash && sudo apt purge -y apache2 && wget -qO- https://raw.githubusercontent.com/i-vt/InterestingSnippets/refs/heads/main/Linux/Docker/Install.sh | bash && git clone https://github.com/i-vt/RemoteComputerManagement.git && cd RemoteComputerManagement && chmod +x *.sh && ./start_docker.sh && echo "Save the credentials above before continuing."
+wget -qO- https://raw.githubusercontent.com/i-vt/InterestingSnippets/refs/heads/main/Linux/QuickSetup.sh | bash && sudo apt purge -y apache2 && wget -qO- https://raw.githubusercontent.com/i-vt/InterestingSnippets/refs/heads/main/Linux/Docker/Install.sh | bash && git clone https://github.com/i-vt/RemoteComputerManagement.git && cd RemoteComputerManagement && chmod +x *.sh && ./gen_certs.sh  && ./start_docker.sh && echo "Save the credentials above before continuing."
 ```
 
 ### Upgrade Version
