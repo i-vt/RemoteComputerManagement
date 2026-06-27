@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <style>
+    :root{--bg:#07090f;--ag:#f59e0b;--pv:#3b82f6;--c2:#10b981;--lt:#ef4444}
+    @media(prefers-color-scheme:light){
+      :root{--bg:#ffffff;--ag:#d97706;--pv:#1d4ed8;--c2:#059669;--lt:#dc2626}
+    }
+    .bg{fill:var(--bg)}
+    .ag{fill:var(--ag)}
+    .pvr{fill:none;stroke:var(--pv)}
+    .pvd{fill:var(--pv)}
+    .c2f{fill:var(--c2)}
+    .c2r{fill:none;stroke:var(--c2)}
+    .ltf{fill:var(--lt)}
+    .ltl{stroke:var(--lt);fill:none}
+  </style>
+  <defs>
+    <linearGradient id="gap" gradientUnits="userSpaceOnUse" x1="8.2" y1="24.2" x2="13.9" y2="18.4">
+      <stop offset="0%" style="stop-color:var(--ag)"/>
+      <stop offset="100%" style="stop-color:var(--pv)"/>
+    </linearGradient>
+    <linearGradient id="gpc" gradientUnits="userSpaceOnUse" x1="18.1" y1="14.1" x2="23" y2="9.1">
+      <stop offset="0%" style="stop-color:var(--pv)"/>
+      <stop offset="100%" style="stop-color:var(--c2)"/>
+    </linearGradient>
+    <clipPath id="cp"><rect width="32" height="32" rx="6"/></clipPath>
+  </defs>
+  <rect width="32" height="32" rx="6" class="bg"/>
+  <g clip-path="url(#cp)">
+    <circle cx="25.5" cy="6.5" r="5.5" class="c2r" stroke-width="0.6" opacity="0.22"/>
+    <line x1="8.2" y1="24.2" x2="13.9" y2="18.4" stroke="url(#gap)" stroke-width="1.3" stroke-dasharray="3 2" stroke-linecap="round"/>
+    <line x1="18.1" y1="14.1" x2="23" y2="9.1" stroke="url(#gpc)" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="18.4" y1="18.2" x2="23.8" y2="22.7" class="ltl" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+    <circle cx="6.5" cy="26" r="2.4" class="ag"/>
+    <circle cx="16" cy="16" r="3" class="pvr" stroke-width="1.4"/>
+    <circle cx="16" cy="16" r="1.1" class="pvd"/>
+    <circle cx="25.5" cy="6.5" r="3.7" class="c2f"/>
+    <circle cx="25" cy="24" r="1.6" class="ltf"/>
+  </g>
+</svg>
