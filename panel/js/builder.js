@@ -258,6 +258,18 @@
             bloat:      intVal('builder-bloat',      0),
             debug:      chk('builder-debug'),
             days:       intVal('builder-days',       0),
+            // Evasion
+            sleep_mask:        val('builder-sleep-mask',        'ekko'),
+            indirect_syscalls: chk('builder-indirect-syscalls'),
+            stack_spoof:       chk('builder-stack-spoof'),
+            patch_amsi_etw:    chk('builder-patch-amsi-etw'),
+            heap_encrypt:      chk('builder-heap-encrypt'),
+            // Guardrails
+            guard_domain:      val('builder-guard-domain',      '').trim(),
+            guard_hostname:    val('builder-guard-hostname',    '').trim(),
+            guard_hour_start:  intVal('builder-guard-hour-start', 0),
+            guard_hour_end:    intVal('builder-guard-hour-end',   0),
+            guard_no_system:   chk('builder-guard-no-system'),
         };
 
         clearLog();

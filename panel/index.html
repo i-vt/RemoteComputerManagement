@@ -977,6 +977,68 @@
                 Debug mode
               </label>
 
+              <!-- ── Evasion ─────────────────────────────────────────── -->
+              <div style="border-top:1px solid var(--border);padding-top:14px;">
+                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Evasion</div>
+                <div style="margin-bottom:10px;">
+                  <label class="form-label">Sleep mask</label>
+                  <select id="builder-sleep-mask" class="form-select">
+                    <option value="none">None</option>
+                    <option value="ekko" selected>Ekko (timer-based)</option>
+                    <option value="foliage">Foliage (APC-based)</option>
+                  </select>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                  <label class="check-label">
+                    <input type="checkbox" id="builder-indirect-syscalls" checked>
+                    Indirect syscalls
+                  </label>
+                  <label class="check-label">
+                    <input type="checkbox" id="builder-stack-spoof" checked>
+                    Stack spoofing
+                  </label>
+                  <label class="check-label">
+                    <input type="checkbox" id="builder-patch-amsi-etw" checked>
+                    Patch AMSI / ETW
+                  </label>
+                  <label class="check-label">
+                    <input type="checkbox" id="builder-heap-encrypt" checked>
+                    Heap encryption
+                  </label>
+                </div>
+              </div>
+
+              <!-- ── Execution Guardrails ────────────────────────────── -->
+              <div style="border-top:1px solid var(--border);padding-top:14px;">
+                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Execution Guardrails</div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div>
+                      <label class="form-label">Domain filter <span style="color:var(--text-muted);font-weight:400;">(glob, blank = any)</span></label>
+                      <input type="text" id="builder-guard-domain" placeholder="CORP*" class="form-input form-mono">
+                    </div>
+                    <div>
+                      <label class="form-label">Hostname filter <span style="color:var(--text-muted);font-weight:400;">(glob, blank = any)</span></label>
+                      <input type="text" id="builder-guard-hostname" placeholder="DESKTOP-*" class="form-input form-mono">
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div>
+                      <label class="form-label">Active window start <span style="color:var(--text-muted);font-weight:400;">(hour 0–23)</span></label>
+                      <input type="number" id="builder-guard-hour-start" value="0" min="0" max="23" class="form-input">
+                    </div>
+                    <div>
+                      <label class="form-label">Active window end <span style="color:var(--text-muted);font-weight:400;">(0 = all day)</span></label>
+                      <input type="number" id="builder-guard-hour-end" value="0" min="0" max="23" class="form-input">
+                    </div>
+                  </div>
+                  <label class="check-label">
+                    <input type="checkbox" id="builder-guard-no-system">
+                    Bail if running as SYSTEM <span style="color:var(--text-muted);font-size:11px;">(anti-sandbox)</span>
+                  </label>
+                </div>
+              </div>
+
               <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                 <button id="builder-btn" onclick="window.BuilderManager.build()" class="btn btn-primary">
                   <i class="fas fa-hammer"></i> Build Agent
