@@ -38,6 +38,7 @@ FROM rust:bookworm AS deps
 # openssl      → certificate generation at build time
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl-dev pkg-config cmake openssl \
+        python3 python3-venv python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build

@@ -101,27 +101,95 @@ RUN if [ "$BUILD_PIVOT_AGENTS" = "true" ]; then \
     fi
 
 # ── Stage 4: Server runtime ────────────────────────────────────────────
+# Inherits debian:bookworm-slim for a lean base, but augments it with the
+# Rust toolchain and project source tree so the builder binary can compile
+# agents on demand in response to POST /api/builder/build requests.
+#
+# Without the toolchain and source, the builder binary spawns successfully
+# but cargo build immediately fails (no compiler, no Cargo.toml), causing
+# every API-triggered build to land in status=failed.
 FROM debian:bookworm-slim AS server
 
+# Runtime deps + build-time system libraries required by the agent crate
+# (openssl-sys, ring) and for Windows cross-compilation (mingw-w64).
+# build-essential provides the native C linker (cc/gcc) that rustc needs
+# to link the final binary — debian:bookworm-slim does not include it.
 RUN apt-get update && apt-get install -y \
     ca-certificates openssl libsqlite3-0 curl python3 \
+    build-essential pkg-config libssl-dev \
+    gcc-mingw-w64-x86-64 \
+    libxcb1-dev libxcb-shm0-dev libxcb-randr0-dev \
+    libxcb-shape0-dev libxcb-xfixes0-dev \
+    libx11-dev libxrandr-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# ── Rust toolchain ──────────────────────────────────────────────────────
+# Copy cargo/rustup from the build stage so `cargo build` works at runtime.
+# The toolchain is at the standard paths used by the rust:bookworm image.
+COPY --from=agents /usr/local/cargo /usr/local/cargo
+COPY --from=agents /usr/local/rustup /usr/local/rustup
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+ENV CARGO_HOME=/usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+
 WORKDIR /opt/rcm
-COPY --from=agents /build/target/release/server ./server
-COPY --from=agents /build/target/release/builder ./builder
-COPY --from=agents /build/certs/ ./certs/
+
+# ── Project source tree ─────────────────────────────────────────────────
+# The builder binary's find_project_root() checks CWD (/opt/rcm) and the
+# directory adjacent to the binary (/opt/rcm) for Cargo.toml. Both resolve
+# to /opt/rcm, so the source must live here.
+COPY --from=agents /build/Cargo.toml ./
+COPY --from=agents /build/Cargo.lock.export ./Cargo.lock
+COPY --from=agents /build/build.rs ./
+COPY --from=agents /build/src/ ./src/
 COPY --from=agents /build/embedded/ ./embedded/
 COPY --from=agents /build/extensions/ ./extensions/
-COPY --from=agents /build/Cargo.lock.export ./Cargo.lock
-# Pre-built agent binaries
+COPY --from=agents /build/dga_templates/ ./dga_templates/
+
+# ── Pre-compiled dependency cache ───────────────────────────────────────
+# The build stage compiled with RUSTFLAGS containing
+# --remap-path-prefix /build=/src, but the runtime runs from /opt/rcm.
+# Copying that target/ would cause cargo to invalidate every cached
+# artifact (RUSTFLAGS fingerprint mismatch) and then attempt a full
+# recompile — slower than starting clean and blowing BUILD_TIMEOUT.
+# Instead, seed the registry cache only so crates don't re-download.
+COPY --from=agents /usr/local/cargo/registry /usr/local/cargo/registry
+
+# Certs are copied rather than regenerated here because the pre-built
+# agent binaries (agent-tls, agent-http, agent-hibernation) compiled in
+# the agents stage embed the CA cert via include_bytes! at compile time.
+# Generating new certs here would produce a server cert signed by a
+# different CA than what the agents trust, breaking every TLS handshake.
+#
+# In production, mount /opt/rcm/certs/ as a Docker volume and generate
+# fresh certs at first launch via gen_certs.sh in the entrypoint. That
+# way each deployment has unique material and nothing sensitive lives in
+# the image layer.
+COPY --from=agents /build/certs/ ./certs/
+
+# ── Pre-warm dependency compilation ─────────────────────────────────────
+# Build the client binary once here, with the exact RUSTFLAGS the builder
+# binary will use at runtime (project_root=/opt/rcm). This populates
+# target/ with correctly-fingerprinted artifacts for all dependency crates.
+# API-triggered builds then only recompile the project's own crates
+# (obfuscated config, litcrypt key churn) — roughly 60s vs 15+ minutes
+# for a cold build — keeping them within BUILD_TIMEOUT=180.
+RUN RUSTFLAGS="--remap-path-prefix /opt/rcm=/src --remap-path-prefix /usr/local/cargo=/cargo" \
+    cargo build --release --target x86_64-unknown-linux-gnu --bin client \
+    && echo "[prewarm] dependency cache ready"
+
+# ── Server runtime artifacts ────────────────────────────────────────────
+COPY --from=agents /build/target/release/server ./server
+COPY --from=agents /build/target/release/builder ./builder
+COPY --from=agents /build/c2_audit.db ./c2_audit.db
+
+# ── Pre-built agent binaries ────────────────────────────────────────────
 COPY --from=agents /build/agent-tls ./agent-tls
 COPY --from=agents /build/agent-http ./agent-http
 COPY --from=agents /build/agent-hibernation ./agent-hibernation
 COPY --from=agents /build/agent-tls.exe ./agent-tls.exe
 COPY --from=agents /build/agent-http.exe ./agent-http.exe
-# Build keys DB
-COPY --from=agents /build/c2_audit.db ./c2_audit.db
+
 COPY gen_certs.sh ./
 COPY panel/ ./panel/
 COPY modules/ ./modules/

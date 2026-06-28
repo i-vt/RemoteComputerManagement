@@ -31,7 +31,7 @@
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
 
-BUILD_TIMEOUT="${BUILD_TIMEOUT:-180}"
+BUILD_TIMEOUT="${BUILD_TIMEOUT:-300}"
 
 # ── Local helpers (mirrors test_10 conventions) ───────────────────────
 
@@ -62,7 +62,11 @@ wait_for_build() {
 
         case "$state" in
             completed|done|success) echo "completed"; return 0 ;;
-            failed|error)           echo "failed";    return 1 ;;
+            failed|error)
+                echo "--- builder log for $job_id ---" >&2
+                echo "$status_resp" | jq -r '.log[] // empty' >&2
+                echo "--- end builder log ---" >&2
+                echo "failed"; return 1 ;;
         esac
         sleep 3
     done

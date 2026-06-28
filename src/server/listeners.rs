@@ -109,6 +109,16 @@ impl ListenerManager {
             task_batch_size: 10,
             dga: None,
             valid_parents: Vec::new(),
+            sleep_mask: "ekko".to_string(),
+            indirect_syscalls: true,
+            stack_spoof: true,
+            patch_amsi_etw: true,
+            heap_encrypt: true,
+            guard_domain: String::new(),
+            guard_hostname: String::new(),
+            guard_hour_start: 0,
+            guard_hour_end: 0,
+            guard_no_system: false,
         };
 
         // HTTP(S) listeners use the HTTP C2 server instead of raw TCP

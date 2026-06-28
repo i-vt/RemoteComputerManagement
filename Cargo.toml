@@ -71,13 +71,22 @@ axum = { version = "0.6", features = ["headers"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.4", features = ["auth", "cors"] }
 http = "0.2"
-reqwest = { version = "0.11", features = ["blocking", "socks", "json", "native-tls"] }
+reqwest = { version = "0.11", features = ["blocking", "socks", "json", "native-tls", "multipart"] }
 rhai = { version = "1.16", features = ["sync"] }
 walkdir = "2"
 sys-info = "0.9"
 aes-gcm = "0.10"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+flate2 = "1"
+tar = "0.4"
+pbkdf2 = "0.12"
+sha1 = "0.10"
 zeroize = "1"
 zip = "0.6"
+regex = "1"
+md-5 = "0.10"
+crc32fast = "1"
 
 # Builder Dependencies
 clap = { version = "4.4", features = ["derive"] }

