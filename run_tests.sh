@@ -314,7 +314,7 @@ run_pivot_phase() {
         cd tests/docker || exit 2
 
         $COMPOSE -f docker-compose.yml -f docker-compose.pivot.yml \
-            --profile pivot up --no-build \
+            --profile pivot up \
             --abort-on-container-exit \
             --exit-code-from test-runner || local_exit=$?
 
@@ -332,7 +332,7 @@ run_pivot_phase() {
 
 [[ $RUN_UNIT -eq 1 ]]        && run_unit_tests
 [[ $RUN_INTEGRATION -eq 1 ]] && run_integration_tests
-[[ $RUN_PIVOT_PHASE -eq 1 || $PIVOT_MODE -eq 1 ]] && run_pivot_phase
+[[ $RUN_PIVOT_PHASE -eq 1 ]] && run_pivot_phase
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 
@@ -346,7 +346,7 @@ echo ""
 [[ $RUN_INTEGRATION -eq 1 ]] && {
     [[ $INT_EXIT -eq 0 ]] && success "Integration  passed" || fail "Integration  FAILED"
 }
-[[ $RUN_PIVOT_PHASE -eq 1 || $PIVOT_MODE -eq 1 ]] && {
+[[ $RUN_PIVOT_PHASE -eq 1 ]] && {
     [[ $PIVOT_EXIT -eq 0 ]] && success "Pivot        passed" || fail "Pivot        FAILED"
 }
 echo ""

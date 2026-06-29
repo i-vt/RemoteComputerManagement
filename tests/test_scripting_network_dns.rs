@@ -7,6 +7,7 @@
 
 use rcm::agent::scripting::ExtensionManager;
 use std::{
+    io::{Read, Write},
     net::{TcpListener, UdpSocket},
     thread,
     time::Duration,
@@ -14,6 +15,49 @@ use std::{
 
 fn run(script: &str) -> String {
     ExtensionManager::new().run_script(script, vec![])
+}
+
+/// Spawn a minimal HTTP echo server on a random loopback port.
+/// GET  /*  → {"url":"http://127.0.0.1:<port><path>"}
+/// POST /*  → {"data":"<raw body>"}
+/// Returns the bound port. The server handles up to 4 sequential requests
+/// then exits; the JoinHandle can be dropped (server runs in background).
+fn spawn_echo_server() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .expect("bind echo server");
+    let port = listener.local_addr().unwrap().port();
+
+    thread::spawn(move || {
+        for _ in 0..4 {
+            let Ok((mut stream, _)) = listener.accept() else { break };
+            let mut buf = vec![0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+
+            let first_line = req.lines().next().unwrap_or("");
+            let is_post = first_line.starts_with("POST");
+            let path = first_line.split_whitespace().nth(1).unwrap_or("/");
+
+            // Body is everything after the blank line separator
+            let body = req.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+
+            let response_json = if is_post {
+                format!(r#"{{"data":"{}","json":null}}"#, body.trim())
+            } else {
+                format!(r#"{{"url":"http://127.0.0.1:{}{}","headers":{{}}}}"#, port, path)
+            };
+
+            let http = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_json.len(), response_json
+            );
+            let _ = stream.write_all(http.as_bytes());
+        }
+    });
+
+    // Give the listener a moment to be ready before the caller dials
+    thread::sleep(Duration::from_millis(10));
+    port
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,24 +198,34 @@ fn udp_recv_times_out_with_no_sender() {
 
 #[test]
 fn http_get_external_url_contains_expected_json_field() {
-    let result = run(r#"internal_http_get("https://httpbin.org/get")"#);
-    if result.starts_with("Error") || result.starts_with("Request") {
-        eprintln!("[SKIP] No network or httpbin unavailable: {}", result);
-        return;
-    }
-    assert!(result.contains("\"url\""),
-        "httpbin /get response should contain url field: {:.200}", result);
+    let port = spawn_echo_server();
+    let url = format!("http://127.0.0.1:{}/get", port);
+    let result = run(&format!(r#"internal_http_get("{}")"#, url));
+    assert!(
+        !result.starts_with("Error") && !result.starts_with("Request"),
+        "GET request failed: {:.200}", result
+    );
+    assert!(
+        result.contains("\"url\""),
+        "Response should contain url field: {:.200}", result
+    );
 }
 
 #[test]
 fn http_post_sends_body() {
-    let result = run(r#"internal_http_post("https://httpbin.org/post", "hello_body", "text/plain")"#);
-    if result.starts_with("Error") || result.starts_with("Request") {
-        eprintln!("[SKIP] No network: {}", result);
-        return;
-    }
-    assert!(result.contains("hello_body"),
-        "httpbin /post should echo body: {:.300}", result);
+    let port = spawn_echo_server();
+    let url = format!("http://127.0.0.1:{}/post", port);
+    let result = run(&format!(
+        r#"internal_http_post("{}", "hello_body", "text/plain")"#, url
+    ));
+    assert!(
+        !result.starts_with("Error") && !result.starts_with("Request"),
+        "POST request failed: {:.200}", result
+    );
+    assert!(
+        result.contains("hello_body"),
+        "Response should echo body: {:.300}", result
+    );
 }
 
 #[test]

@@ -72,11 +72,15 @@ echo "[*] All IPs:    ${SAN_IPS[*]}"
 
 # ── Build SAN string ──────────────────────────────────────────────────────────
 
-SAN_STRING=""
+# DNS:c2-server is the Docker Compose service hostname. Agents inside Docker
+# connect to c2-server:4443 by name — without this, rustls returns
+# NotValidForName and the TLS agent never registers.
+# DNS:localhost allows local cert verification on the host.
+# $(hostname) is intentionally excluded — that caused the renjxkwf pollution.
+SAN_STRING="DNS:c2-server,DNS:localhost"
 for ip in "${SAN_IPS[@]}"; do
-    SAN_STRING+="IP:${ip},"
+    SAN_STRING+=",IP:${ip}"
 done
-SAN_STRING="${SAN_STRING%,}"
 echo "[*] SAN:        $SAN_STRING"
 
 # ── Write extension configs to temp files ─────────────────────────────────────
