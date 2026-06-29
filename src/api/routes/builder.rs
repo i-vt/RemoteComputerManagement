@@ -51,6 +51,12 @@ pub struct BuildRequest {
     #[serde(default)]                            pub guard_hour_start:  u8,
     #[serde(default)]                            pub guard_hour_end:    u8,
     #[serde(default)]                            pub guard_no_system:   bool,
+    // ── Pivot auto-cascade ────────────────────────────────────────────
+    /// When set, the built agent will automatically start a TCP pivot
+    /// listener on this port immediately after its session handshake
+    /// completes. Use this to pre-wire multi-hop pivot chains at build
+    /// time. Omit (or set null) for direct-connect agents and leaf nodes.
+    #[serde(default)]                            pub auto_pivot_port:   Option<u16>,
 }
 
 fn default_platform()   -> String { "linux".into() }
@@ -171,6 +177,11 @@ pub fn build_args(req: &BuildRequest) -> Vec<String> {
         args.push(format!("{}-{}", req.guard_hour_start, req.guard_hour_end));
     }
     if req.guard_no_system { args.push("--guard-no-system".into()); }
+    // Pivot auto-cascade
+    if let Some(port) = req.auto_pivot_port {
+        args.push("--auto-pivot-port".into());
+        args.push(port.to_string());
+    }
     args
 }
 
@@ -432,6 +443,7 @@ mod tests {
             guard_hour_start:  0,
             guard_hour_end:    0,
             guard_no_system:   false,
+            auto_pivot_port:   None,
         }
     }
 
@@ -749,6 +761,30 @@ mod tests {
         assert!(!build_args(&base_req()).contains(&"--batch-size".to_string()));
     }
 
+    // ── auto_pivot_port ───────────────────────────────────────────────
+
+    #[test]
+    fn args_auto_pivot_port_included_when_set() {
+        let mut r = base_req(); r.auto_pivot_port = Some(5002);
+        assert!(has_pair(&build_args(&r), "--auto-pivot-port", "5002"));
+    }
+
+    #[test]
+    fn args_auto_pivot_port_omitted_when_none() {
+        assert!(!build_args(&base_req()).contains(&"--auto-pivot-port".to_string()));
+    }
+
+    #[test]
+    fn args_auto_pivot_port_various_ports() {
+        for port in [1024u16, 5001, 8080, 65535] {
+            let mut r = base_req(); r.auto_pivot_port = Some(port);
+            assert!(
+                has_pair(&build_args(&r), "--auto-pivot-port", &port.to_string()),
+                "port={port}"
+            );
+        }
+    }
+
     // ── Serde defaults ────────────────────────────────────────────────
 
     #[test]
@@ -769,6 +805,24 @@ mod tests {
         assert_eq!(r.guard_hour_start, 0);
         assert_eq!(r.guard_hour_end,   0);
         assert!(!r.guard_no_system);
+    }
+
+    #[test]
+    fn serde_auto_pivot_port_defaults_none() {
+        let r = from_json(r#"{"host":"h","port":"p"}"#);
+        assert!(r.auto_pivot_port.is_none());
+    }
+
+    #[test]
+    fn serde_auto_pivot_port_explicit_value() {
+        let r = from_json(r#"{"host":"h","port":"p","auto_pivot_port":5003}"#);
+        assert_eq!(r.auto_pivot_port, Some(5003));
+    }
+
+    #[test]
+    fn serde_auto_pivot_port_explicit_null() {
+        let r = from_json(r#"{"host":"h","port":"p","auto_pivot_port":null}"#);
+        assert!(r.auto_pivot_port.is_none());
     }
 
     #[test]
@@ -928,5 +982,12 @@ mod tests {
         let r = base_req();
         let a = build_args(&r);
         assert_eq!(a.iter().filter(|s| s.as_str() == "--host").count(), 1);
+    }
+
+    #[test]
+    fn args_auto_pivot_port_appears_at_most_once() {
+        let mut r = base_req(); r.auto_pivot_port = Some(5002);
+        let a = build_args(&r);
+        assert_eq!(a.iter().filter(|s| s.as_str() == "--auto-pivot-port").count(), 1);
     }
 }

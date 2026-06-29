@@ -1,0 +1,14 @@
+{
+  "_description": "Pivot chain hop: aggressive retry with short dead-time to tolerate upstream listener startup delay. Use this profile when building intermediate hop agents in a multi-hop chain. Set the endpoint host/port to the upstream hop's address and pivot listener port.",
+  "strategy": "priority",
+  "dead_time_secs": 30,
+  "endpoints": [
+    {
+      "host": "UPSTREAM_HOP_HOST",
+      "port": 5001,
+      "transport": "tcp_plain",
+      "priority": 0,
+      "max_failures": 25
+    }
+  ]
+}

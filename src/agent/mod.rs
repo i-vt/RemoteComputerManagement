@@ -424,6 +424,29 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
 
+            // 3b. Auto-cascade pivot listener.
+            //
+            // If this agent was built with auto_pivot_port set, start a TCP
+            // pivot listener on that port immediately after the handshake
+            // completes. This pre-wires the next hop in a multi-hop chain
+            // without requiring the operator to manually issue
+            // pivot:listener_tcp for each intermediate node after it connects.
+            //
+            // The listener starts in a detached background task so it does not
+            // block the main executor loop below. On failure (e.g. port already
+            // in use), the error is logged in debug mode and the agent continues
+            // normally — the operator can still start the listener manually.
+            if let Some(port) = config.auto_pivot_port {
+                let cascade_mgr = pivot_mgr.clone();
+                let debug = config.debug;
+                tokio::spawn(async move {
+                    let result = cascade_mgr.lock().await.start_agent_listener(port).await;
+                    if debug {
+                        eprintln!("[Pivot] Auto-cascade: {}", result);
+                    }
+                });
+            }
+
             // 4. Main Executor
             let mut last_counter = 0u64;
             while let Some(msg) = cmd_rx.recv().await {
@@ -570,6 +593,24 @@ async fn run_http_mode(
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(100);
     let pivot_mgr = Arc::new(tokio::sync::Mutex::new(PivotManager::new(tx.clone())));
     let job_mgr = Arc::new(Mutex::new(JobManager::new(tx.clone())));
+
+    // Auto-cascade pivot listener for HTTP mode.
+    //
+    // Semantics are identical to the TCP/TLS mode above: if auto_pivot_port
+    // is set, start the TCP pivot listener immediately after registration
+    // succeeds so the next hop can connect without operator intervention.
+    // HTTP-transport intermediate hops are unusual but supported — the pivot
+    // listener itself is always raw TCP regardless of the upstream transport.
+    if let Some(port) = config.auto_pivot_port {
+        let cascade_mgr = pivot_mgr.clone();
+        let debug = config.debug;
+        tokio::spawn(async move {
+            let result = cascade_mgr.lock().await.start_agent_listener(port).await;
+            if debug {
+                eprintln!("[HTTP Pivot] Auto-cascade: {}", result);
+            }
+        });
+    }
 
     let poll_uri = config.profile.http_get.uris.first()
         .cloned().unwrap_or_else(|| "/api/v1/sync".to_string());

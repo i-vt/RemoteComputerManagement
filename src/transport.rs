@@ -289,6 +289,7 @@ mod tests {
             guard_hour_start: 0,
             guard_hour_end: 0,
             guard_no_system: false,
+            auto_pivot_port: None,
         }
     }
 
