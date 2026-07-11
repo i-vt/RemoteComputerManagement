@@ -176,9 +176,10 @@ docs/                 # full documentation
 
 ## Contributors
 
-- [Emp](https://github.com/Emp5r0R) — several features were adapted from his project [labyrinth](https://github.com/Emp5r0R/labyrinth).
-- [Vovanus](https://github.com/LimerBoy) — QA on the web UI.
+- [Emp](https://github.com/Emp5r0R) - several features were adapted from his project [labyrinth](https://github.com/Emp5r0R/labyrinth).
+- [Vovanus](https://github.com/LimerBoy) - QA on the web UI.
 - Special thanks to Sofazavr.
+- [kazusss](https://open.spotify.com/artist/0VntdiB8bfvjW0S1WLiWRV) - banger track, made with love <3
 
 ## Disclaimer
 
