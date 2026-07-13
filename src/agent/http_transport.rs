@@ -12,6 +12,10 @@
 //      b. Process commands
 //      c. POST /<result_uri> with results in body
 //      d. Sleep
+//
+// FIX (2025-07-13): increased request timeout from 30 s → 120 s so that
+// large file-transfer operations do not trigger premature reconnects
+// when the blocking I/O pool is under heavy load.
 
 use reqwest::{Client, Proxy};
 use serde::Deserialize;
@@ -30,7 +34,7 @@ pub fn build_client(config: &C2Config) -> Result<Client, String> {
     let mut builder = Client::builder()
         .add_root_certificate(ca_cert)
         .tls_built_in_root_certs(false) // Only trust our pinned CA, not the system store
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(120))
         .connect_timeout(std::time::Duration::from_secs(15));
 
     // User-Agent from malleable profile
