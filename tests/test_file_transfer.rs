@@ -14,7 +14,7 @@ fn setup_test_dir(name: &str) -> String {
 #[test]
 fn test_find_all_files_empty_dir() {
     let dir = setup_test_dir("empty");
-    let files = file_transfer::find_all_files(&dir);
+    let (files, _errors) = file_transfer::find_all_files(&dir);
     assert!(files.is_empty());
     let _ = fs::remove_dir_all(&dir);
 }
@@ -25,7 +25,7 @@ fn test_find_all_files_flat() {
     fs::write(format!("{}/a.txt", dir), "aaa").unwrap();
     fs::write(format!("{}/b.txt", dir), "bbb").unwrap();
 
-    let files = file_transfer::find_all_files(&dir);
+    let (files, _errors) = file_transfer::find_all_files(&dir);
     assert_eq!(files.len(), 2);
     let _ = fs::remove_dir_all(&dir);
 }
@@ -38,7 +38,7 @@ fn test_find_all_files_nested() {
     fs::write(format!("{}/sub/mid.txt", dir), "m").unwrap();
     fs::write(format!("{}/sub/deep/leaf.txt", dir), "l").unwrap();
 
-    let files = file_transfer::find_all_files(&dir);
+    let (files, _errors) = file_transfer::find_all_files(&dir);
     assert_eq!(files.len(), 3);
     let _ = fs::remove_dir_all(&dir);
 }
@@ -47,14 +47,14 @@ fn test_find_all_files_nested() {
 fn test_find_all_files_single_file() {
     let path = "/tmp/rcm_test_single_file.txt";
     fs::write(path, "content").unwrap();
-    let files = file_transfer::find_all_files(path);
+    let (files, _errors) = file_transfer::find_all_files(path);
     assert_eq!(files.len(), 1);
     let _ = fs::remove_file(path);
 }
 
 #[test]
 fn test_find_all_files_nonexistent() {
-    let files = file_transfer::find_all_files("/tmp/rcm_nonexistent_dir_12345");
+    let (files, _errors) = file_transfer::find_all_files("/tmp/rcm_nonexistent_dir_12345");
     assert!(files.is_empty());
 }
 
@@ -89,7 +89,8 @@ fn test_write_file_simple() {
     let content = b"Hello, World!";
     let b64 = BASE64.encode(content);
 
-    file_transfer::write_file_simple(path, &b64).unwrap();
+    // write_file_simple(base_dir, rel_path, b64_data)
+    file_transfer::write_file_simple("/tmp", "rcm_test_write_simple.txt", &b64).unwrap();
     let read_back = fs::read(path).unwrap();
     assert_eq!(read_back, content);
 
@@ -99,10 +100,12 @@ fn test_write_file_simple() {
 #[test]
 fn test_write_file_creates_parent_dirs() {
     use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    let _ = fs::remove_dir_all("/tmp/rcm_test_nested_write");
     let path = "/tmp/rcm_test_nested_write/sub/dir/file.txt";
     let b64 = BASE64.encode(b"nested");
 
-    file_transfer::write_file_simple(path, &b64).unwrap();
+    // write_file_simple(base_dir, rel_path, b64_data)
+    file_transfer::write_file_simple("/tmp/rcm_test_nested_write", "sub/dir/file.txt", &b64).unwrap();
     assert!(Path::new(path).exists());
 
     let _ = fs::remove_dir_all("/tmp/rcm_test_nested_write");
