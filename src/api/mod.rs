@@ -124,12 +124,13 @@ pub async fn start_api_server(
         .max_age(std::time::Duration::from_secs(3600));
 
     // ── Public routes (no auth) ────────────────────────────────────────
+    // Only the panel shell and the login endpoint belong here.  NOTHING
+    // that returns operator data, agent data, or files may be added to
+    // this router.
     let public_routes = Router::new()
         .route("/", get(serve_panel))
         .route("/panel/*tail", get(serve_static))
-        .route("/api/auth/login", post(operators::login))
-        // Downloads served without auth so <img> tags work in the panel
-        .route("/api/downloads/*path", get(downloads::serve_download));
+        .route("/api/auth/login", post(operators::login));
 
     // ── Protected routes (X-API-KEY header required) ───────────────────
     let protected_routes = Router::new()
@@ -169,6 +170,9 @@ pub async fn start_api_server(
         .route("/api/hosts/:id/proxy",            post(proxies::start_proxy).delete(proxies::stop_proxy))
         .route("/api/hosts/:id/proxy/check",      post(proxies::check_proxy_ip))
         .route("/api/hosts/:id/screenshots",       get(downloads::list_screenshots))
+        // Loot/screenshot file serving is AUTHENTICATED like everything else.
+        // The middleware's ?key= fallback covers <img>/<a href> panel uses.
+        .route("/api/downloads/*path",             get(downloads::serve_download))
         .route("/api/loot",                       get(downloads::list_loot).delete(downloads::delete_loot))
         .route("/api/loot/zip",                   get(downloads::zip_loot))
         .route("/api/iocs",                       get(iocs::list_all))

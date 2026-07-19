@@ -94,6 +94,40 @@ pub fn suspend_other_threads() -> Vec<*mut std::ffi::c_void> { Vec::new() }
 #[cfg(not(target_os = "windows"))]
 pub fn resume_threads(_handles: Vec<*mut std::ffi::c_void>) {}
 
+// ── Win32 PROCESS_HEAP_ENTRY layout ──────────────────────────────────
+//
+// Shared by encrypt_heap() and encrypt_heap_aes256gcm().
+// MUST match winnt.h _PROCESS_HEAP_ENTRY exactly (x64):
+//
+//   typedef struct _PROCESS_HEAP_ENTRY {
+//       PVOID lpData;        // offset  0, 8 bytes
+//       DWORD cbData;        // offset  8, 4 bytes
+//       BYTE  cbOverhead;    // offset 12, 1 byte
+//       BYTE  iRegionIndex;  // offset 13, 1 byte
+//       WORD  wFlags;        // offset 14, 2 bytes
+//       union { Block; Region; }; // offset 16, 24 bytes
+//   } PROCESS_HEAP_ENTRY;    // sizeof = 40, align = 8
+//
+// BUG HISTORY: `size` used to be declared `usize` (8 bytes) where the real
+// cbData is a 4-byte DWORD.  That shifted every later field: `flags` read
+// union garbage (so the BUSY check was effectively random) and `size`
+// picked up cbOverhead|iRegionIndex|wFlags in its high 4 bytes — ≈ 2^50
+// for any busy block (wFlags = 0x4).  from_raw_parts_mut(data, size) then
+// built a petabyte-scale "slice" and the XOR/AES loop wrote until an
+// access violation, trashing the heap.  The layout is pinned by unit
+// tests at the bottom of this file — do not change it casually.
+
+#[allow(dead_code)] // constructed only on Windows and in tests
+#[repr(C)]
+struct ProcessHeapEntry {
+    data:         *mut std::ffi::c_void,
+    size:         u32,   // cbData is a DWORD — 4 bytes, NOT usize
+    overhead:     u8,
+    region_index: u8,
+    flags:        u16,
+    _union:       [u8; 24],
+}
+
 // ── XOR Heap Encryption (legacy) ──────────────────────────────────────
 // Walks the process heap via HeapWalk and XORs every live block with a
 // repeating 16-byte key.  Self-inverse: calling with the same key
@@ -107,16 +141,6 @@ pub fn resume_threads(_handles: Vec<*mut std::ffi::c_void>) {}
 #[cfg(target_os = "windows")]
 pub fn encrypt_heap(xor_key: &[u8; 16]) -> Result<usize, String> {
     use std::ffi::c_void;
-
-    #[repr(C)]
-    struct ProcessHeapEntry {
-        data:         *mut c_void,
-        size:         usize,
-        overhead:     u8,
-        region_index: u8,
-        flags:        u16,
-        _union:       [u8; 32],
-    }
 
     extern "system" {
         fn GetProcessHeap() -> *mut c_void;
@@ -140,7 +164,7 @@ pub fn encrypt_heap(xor_key: &[u8; 16]) -> Result<usize, String> {
                 && entry.size >= 16
                 && !entry.data.is_null()
             {
-                let block = std::slice::from_raw_parts_mut(entry.data as *mut u8, entry.size);
+                let block = std::slice::from_raw_parts_mut(entry.data as *mut u8, entry.size as usize);
                 for (i, byte) in block.iter_mut().enumerate() {
                     *byte ^= xor_key[i % 16];
                 }
@@ -183,16 +207,6 @@ pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
     use aes_gcm::{aead::AeadInPlace, Aes256Gcm, KeyInit, Nonce};
     use std::ffi::c_void;
 
-    #[repr(C)]
-    struct ProcessHeapEntry {
-        data:         *mut c_void,
-        size:         usize,
-        overhead:     u8,
-        region_index: u8,
-        flags:        u16,
-        _union:       [u8; 32],
-    }
-
     extern "system" {
         fn GetProcessHeap() -> *mut c_void;
         fn HeapLock(heap: *mut c_void) -> i32;
@@ -225,7 +239,7 @@ pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
                 bn[2] ^= ix[2]; bn[3] ^= ix[3];
                 let nonce = Nonce::from_slice(&bn);
 
-                let block = std::slice::from_raw_parts_mut(entry.data as *mut u8, entry.size);
+                let block = std::slice::from_raw_parts_mut(entry.data as *mut u8, entry.size as usize);
                 // Tag returned on the stack and discarded — no allocation.
                 let _ = cipher.encrypt_in_place_detached(nonce, b"", block);
 
@@ -254,6 +268,41 @@ pub fn decrypt_heap_aes256gcm(_key: &[u8; 32], _base_nonce: &[u8; 12]) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Win32 PROCESS_HEAP_ENTRY layout (regression pin) ─────────────────
+    //
+    // Regression test for the struct-layout bug: `size` was declared
+    // `usize` (8 bytes) where the real cbData is a DWORD (4 bytes),
+    // shifting every subsequent field and making from_raw_parts_mut()
+    // build petabyte-sized slices.  Pin the exact winnt.h x64 layout so
+    // the mistake cannot silently return.  (The old struct was declared
+    // inside the functions, out of reach of tests — another reason the
+    // bug survived.)
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn heap_entry_size_and_alignment_match_win32_x64() {
+        // x64 winnt.h: PVOID(8) DWORD(4) BYTE(1) BYTE(1) WORD(2) union(24) = 40
+        assert_eq!(std::mem::size_of::<ProcessHeapEntry>(), 40);
+        assert_eq!(std::mem::align_of::<ProcessHeapEntry>(), 8);
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn heap_entry_field_offsets_match_win32_x64() {
+        let e = ProcessHeapEntry {
+            data: std::ptr::null_mut(),
+            size: 0, overhead: 0, region_index: 0, flags: 0,
+            _union: [0u8; 24],
+        };
+        let base = &e as *const ProcessHeapEntry as usize;
+        assert_eq!(&e.data         as *const _ as usize - base, 0,  "lpData offset");
+        assert_eq!(&e.size         as *const _ as usize - base, 8,  "cbData offset");
+        assert_eq!(&e.overhead     as *const _ as usize - base, 12, "cbOverhead offset");
+        assert_eq!(&e.region_index as *const _ as usize - base, 13, "iRegionIndex offset");
+        assert_eq!(&e.flags        as *const _ as usize - base, 14, "wFlags offset");
+        assert_eq!(e._union.as_ptr() as usize - base,               16, "union offset");
+    }
 
     // ── Non-Windows stubs ─────────────────────────────────────────────────
 

