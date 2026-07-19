@@ -4,7 +4,7 @@
 # Two test suites:
 #
 #   Unit tests   — cargo test --lib (all Rust #[test] items, no server needed)
-#   Integration  — 12 bash scripts (test_01–test_12) against a live stack
+#   Integration  — bash scripts (test_01–test_15) against a live stack
 #
 # Usage:
 #   ./run_tests.sh                  # unit tests only  (fast, ~30s)
@@ -29,7 +29,7 @@ UNIT_COMPOSE="tests/docker/docker-compose.unit.yml"
 INT_COMPOSE="tests/docker/docker-compose.yml"
 PIVOT_OVERLAY="tests/docker/docker-compose.pivot.yml"
 WINDOWS_OVERLAY="tests/docker/docker-compose.windows.yml"
-UNIT_MODULES=(topology transport database hibernation interface extension)
+UNIT_MODULES=(topology transport database hibernation interface extension shellcode)
 
 BUILD_ARGS=()
 TARGET_MODULE=""
@@ -63,7 +63,7 @@ Run RCM tests inside Docker.
 
 Modes (combine freely):
   (default)        Unit tests only — no server needed (~30s)
-  --integration    All 12 integration tests (standard suite, ~5 min)
+  --integration    All integration tests (standard suite, ~5 min)
   --pivot          Integration + pivot chain agents (test_09, Linux-only chain ~10 min)
   --windows        Integration + Windows overlay (test_08; agent runs on Windows
                    Docker host only; on Linux the test skips gracefully)
@@ -175,6 +175,7 @@ run_unit_tests() {
     # unit-dga and unit-fallback can find it without a separate build.
     docker tag rcm-unit-tests-unit-all:latest rcm-unit-tests-unit-dga:latest 2>/dev/null || true
     docker tag rcm-unit-tests-unit-all:latest rcm-unit-tests-unit-fallback:latest 2>/dev/null || true
+    docker tag rcm-unit-tests-unit-all:latest rcm-unit-tests-unit-shellcode:latest 2>/dev/null || true
     info "Build: $(($(date +%s) - build_start))s"
     echo ""
 

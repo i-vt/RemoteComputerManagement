@@ -39,8 +39,10 @@ Located inside source files via `#[cfg(test)] mod tests`. Test private functions
 | `topology.rs` | 38 | CIDR normalisation, scoring (prefix length, interface type, flags), plan ranking, render output, multi-session conflict detection |
 | `agent/dga.rs` | 21 | FNV-1a mixing determinism, domain format (dot count, charset, label length, TLD), seed isolation, window rotation, uniqueness, endpoint count/port/transport, window boundary arithmetic |
 | `agent/fallback.rs` | 14 | All 4 strategies, failure tracking, all-dead reset, success clearing, per-endpoint profile override, DGA injection, static-vs-DGA priority ordering |
+| `shellcode.rs` | 6 | Bootstrap size/layout, embedded immediates (hash, offsets, flags), rejection of non-PE/32-bit/EXE/PE32 inputs, base64 RFC 4648 vectors, hex and C-array formatting |
+| `rdi_stub.rs` | 2 | Stub size pinned to 2772 bytes, prologue bytes (guards against truncation when regenerating) |
 
-**Total inline unit tests: 115** (contributing to the 164 reported by `cargo test --lib`)
+**Total inline unit tests: 123** (contributing to the count reported by `cargo test --lib`)
 
 ### Integration Tests
 Located in `tests/` directory. Test the public API across module boundaries.
@@ -53,8 +55,9 @@ Located in `tests/` directory. Test the public API across module boundaries.
 | `test_file_transfer.rs` | 10 | find_all_files (5 scenarios), read/write roundtrip, directory creation, report serialization |
 | `test_jobs.rs` | 7 | Spawn/complete lifecycle, ID increment, kill, purge, JSON output (parsed not string-searched), stream chunks |
 | `test_transport.rs` | 5 | SNI stored from config, TCP plain connect (error not panic), named pipe non-Windows error, target address formatting |
+| `test_shellcode.rs` | 24 | Golden vectors vs sRDI reference (stub SHA-256, full-blob SHA-256, exact bootstrap bytes), determinism, layout scaling, PE validation edge cases, encoders (base64 roundtrip, hex, C array), builder CLI (help text, platform guard, hash parsing, sc-output enum, --sni/--alpn alias regression) |
 
-**Total integration tests: 67**
+**Total integration tests: 91**
 
 ### Test Isolation
 - Database tests use temporary SQLite files (unique UUID per test, `/tmp/rcm_test_*.db`)
@@ -86,6 +89,7 @@ The Docker test environment builds the full project, runs unit and integration t
 # Single unit module
 ./run_tests.sh --module dga
 ./run_tests.sh --module fallback
+./run_tests.sh --module shellcode
 ```
 
 ### Docker Test Suites
@@ -114,7 +118,8 @@ Standard suite (130 tests):
 | `test_10_builder_features.sh` | SNI override in handshake, hibernation agent build | 2✓ |
 | `test_11_topology.sh` | Topology plan endpoint, candidate ranking, CIDR targeting | 28✓ |
 | `test_12_hibernation.sh` | Task queue API contract, enqueue, pending/cancel lifecycle, end-to-end completion | 23✓ 1⊘ |
-| **TOTAL** | | **130 passed, 0 failed, 3 skipped** |
+| `test_15_builder_shellcode.sh` | Shellcode build via API (raw + base64), artifact structure validation (bootstrap/stub/DLL offsets), request validation rejects (non-Windows, bad encoding, bad hash) | 32✓ |
+| **TOTAL** | | **162 passed, 0 failed, 3 skipped** |
 
 Pivot suite adds 4 more tests (134 total, 2 skipped).
 

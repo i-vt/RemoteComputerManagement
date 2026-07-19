@@ -105,3 +105,9 @@ services:
     image: rcm-unit-tests-unit-all   # reuse the pre-built unit-all image
     environment: *env
     command: cargo test --test test_fallback -- --nocapture --test-threads=1
+
+  unit-shellcode:
+    build: *build
+    image: rcm-unit-tests-unit-all   # reuse the pre-built unit-all image
+    environment: *env
+    command: cargo test --test test_shellcode -- --nocapture --test-threads=1
