@@ -96,7 +96,8 @@ window.LootBrowser = {
     // Preview in modal
     async preview(path, name) {
         const url   = window.Auth.url.replace(/\/$/, '');
-        const src   = `${url}/api/downloads/${path}`;
+        // ?key= fallback: /api/downloads requires auth; <img> can't send headers
+        const src   = `${url}/api/downloads/${path}?key=${encodeURIComponent(window.Auth.key)}`;
         const ext   = name.split('.').pop().toLowerCase();
         const modal = document.getElementById('loot-preview-modal');
         const title = document.getElementById('loot-preview-title');

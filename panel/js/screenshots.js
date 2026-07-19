@@ -96,7 +96,8 @@ window.ScreenshotView = {
     async _renderFromFolder(url, sessionId, folder, ctr) {
         const imgs = [];
         for (let i = 0; i < 16; i++) {
-            const src = `${url}/api/downloads/${folder}/monitor_${i}.png`;
+            // ?key= fallback: /api/downloads requires auth; <img>/<a> can't send headers
+            const src = `${url}/api/downloads/${folder}/monitor_${i}.png?key=${encodeURIComponent(window.Auth.key)}`;
             try {
                 const r = await fetch(src, { headers: { 'X-API-KEY': window.Auth.key } });
                 if (!r.ok) break;
