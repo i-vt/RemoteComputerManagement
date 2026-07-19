@@ -934,7 +934,39 @@
                     <option value="dll">DLL</option>
                     <option value="service">Service</option>
                     <option value="stager">Stager</option>
+                    <option value="shellcode">Shellcode (.bin)</option>
                   </select>
+                </div>
+              </div>
+
+              <!-- Shellcode options — only relevant for format=shellcode (Windows x64) -->
+              <div id="builder-shellcode-opts" style="display:none;border:1px solid var(--border,#333);border-radius:8px;padding:10px;">
+                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+                  <div>
+                    <label class="form-label">Export hash (0x10 = DllMain only)</label>
+                    <input type="text" id="builder-sc-hash" value="0x10" class="form-input">
+                  </div>
+                  <div>
+                    <label class="form-label">Output encoding</label>
+                    <select id="builder-sc-output" class="form-select">
+                      <option value="bin">Raw .bin</option>
+                      <option value="b64">Base64</option>
+                      <option value="c">C array</option>
+                      <option value="hex">Hex string</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="form-label">Loader flags (0–3)</label>
+                    <input type="number" id="builder-sc-flags" value="0" min="0" max="3" class="form-input">
+                  </div>
+                  <div>
+                    <label class="form-label">User data blob</label>
+                    <input type="text" id="builder-sc-userdata" value="None" class="form-input">
+                  </div>
+                </div>
+                <div class="text-xs" style="opacity:.7;margin-top:6px;">
+                  Requires Platform = Windows x64. Converts the agent DLL into position-independent
+                  shellcode via reflective loading (sRDI-style).
                 </div>
               </div>
 

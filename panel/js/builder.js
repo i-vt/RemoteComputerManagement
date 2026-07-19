@@ -270,6 +270,11 @@
             guard_hour_start:  intVal('builder-guard-hour-start', 0),
             guard_hour_end:    intVal('builder-guard-hour-end',   0),
             guard_no_system:   chk('builder-guard-no-system'),
+            // Shellcode (only used when format === 'shellcode')
+            sc_hash:     val('builder-sc-hash',     '0x10').trim(),
+            sc_userdata: val('builder-sc-userdata', 'None'),
+            sc_flags:    intVal('builder-sc-flags',  0),
+            sc_output:   val('builder-sc-output',   'bin'),
         };
 
         clearLog();
@@ -519,6 +524,26 @@
             // Constrain the log container immediately on page load so it is
             // already the right size before any build is started or viewed.
             _applyScrollStyle();
+
+            // Show shellcode options only when that format is selected, and
+            // force platform=windows (the only target shellcode supports).
+            var fmtSel = document.getElementById('builder-format');
+            var scOpts = document.getElementById('builder-shellcode-opts');
+            if (fmtSel && scOpts) {
+                var syncScOpts = function () {
+                    var isSc = fmtSel.value === 'shellcode';
+                    scOpts.style.display = isSc ? '' : 'none';
+                    if (isSc) {
+                        var plat = document.getElementById('builder-platform');
+                        if (plat && plat.value !== 'windows') {
+                            plat.value = 'windows';
+                            if (window.Notify) window.Notify.toast('Shellcode requires Windows x64 — platform switched.', 'info');
+                        }
+                    }
+                };
+                fmtSel.addEventListener('change', syncScOpts);
+                syncScOpts();
+            }
         },
         build:          build,
         downloadJob:    downloadJob,
