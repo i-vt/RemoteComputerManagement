@@ -18,12 +18,12 @@
 ## Host Action Buttons
 
 Each session row has:
-- **Proxy** — start/stop SOCKS5 tunnel
-- **Beacon** — toggle fast mode (pulsing red bolt when active)
-- **Shell** — open interactive terminal modal
-- **Processes** — view process list with inject buttons
-- **Screenshot** — capture and view all monitors
-- **Notes** — add tags and notes to the session
+- **Proxy** - start/stop SOCKS5 tunnel
+- **Beacon** - toggle fast mode (pulsing red bolt when active)
+- **Shell** - open interactive terminal modal
+- **Processes** - view process list with inject buttons
+- **Screenshot** - capture and view all monitors
+- **Notes** - add tags and notes to the session
 
 ## Keyboard Shortcuts
 
@@ -38,9 +38,9 @@ Each session row has:
 
 ## Notifications
 
-- **Toast system** — slide-in cards (top-right) for events
-- **New session alert** — green toast + audio ping when a session checks in
-- **Webhook** — POST to Slack/Discord on new sessions (configure via Listeners page or `POST /api/config/webhook`)
+- **Toast system** - slide-in cards (top-right) for events
+- **New session alert** - green toast + audio ping when a session checks in
+- **Webhook** - POST to Slack/Discord on new sessions (configure via Listeners page or `POST /api/config/webhook`)
 
 ## Theming
 

@@ -46,8 +46,8 @@ All commands are sent to the agent via the terminal or API. Unrecognized command
 
 | Command | Description |
 |---------|-------------|
-| `evasion:patch_amsi` | Patch AmsiScanBuffer → return E_INVALIDARG |
-| `evasion:patch_etw` | Patch EtwEventWrite → return STATUS_SUCCESS |
+| `evasion:patch_amsi` | Patch AmsiScanBuffer -> return E_INVALIDARG |
+| `evasion:patch_etw` | Patch EtwEventWrite -> return STATUS_SUCCESS |
 | `evasion:unhook_ntdll` | Replace hooked ntdll .text with clean copy from disk |
 | `evasion:patch_all` | Run all three patches in sequence |
 | `evasion:syscall_check` | Resolve and display syscall numbers + gadget address |
@@ -97,7 +97,7 @@ Reverse port forwarding is typically managed via the API rather than raw command
 |--------|----------|------|-------------|
 | `POST` | `/api/hosts/:id/rportfwd` | `{"bind_port": 8888, "target_host": "10.1.1.5", "target_port": 3389}` | Bind port 8888 on the team server, tunnel through the agent to 10.1.1.5:3389 |
 | `DELETE` | `/api/hosts/:id/rportfwd` | `{"bind_port": 8888}` | Stop the reverse port forward |
-| `GET` | `/api/rportfwds` | — | List all active reverse port forwards |
+| `GET` | `/api/rportfwds` | - | List all active reverse port forwards |
 
 ## Topology
 
@@ -116,7 +116,7 @@ curl -s -H "X-API-KEY: $KEY" \
 ```json
 {
   "target": "10.10.5.0/24",
-  "rendered": "✔  Session #3 (agent-tls)  via eth0 10.10.5.22/24  [score 85]\n   Session #1 (agent-http) via eth1 10.10.0.5/24   [score 42]",
+  "rendered": "✔  Session #3 (agent-tls) via eth0 10.10.5.22/24 [score 85]\n Session #1 (agent-http) via eth1 10.10.0.5/24 [score 42]",
   "candidates": [
     {"session_id": 3, "hostname": "agent-tls", "interface": "eth0",
      "address": "10.10.5.22/24", "score": 85},

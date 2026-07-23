@@ -5,9 +5,9 @@
 Open the panel, enter the server URL and your credentials. The admin creates operator accounts via the **Audit Log** page or API.
 
 Roles:
-- **admin** — full access, can manage operators and listeners
-- **operator** — can execute commands, manage sessions
-- **viewer** — read-only, can see sessions and history but not run commands
+- **admin** - full access, can manage operators and listeners
+- **operator** - can execute commands, manage sessions
+- **viewer** - read-only, can see sessions and history but not run commands
 
 ## Workflow
 
@@ -55,12 +55,12 @@ Execute the agent on the target. When it checks in, a green toast notification a
 
 ### 5. Operate
 Click **Shell** on a session to open a terminal. Or use the action buttons:
-- **Shell** — interactive command terminal
-- **Proxy** — start SOCKS5 tunnel through the session
-- **Beacon** — toggle fast mode (100ms polling)
-- **Processes** — view process list with inject buttons
-- **Screenshot** — capture all monitors
-- **Notes** — tag and annotate the session
+- **Shell** - interactive command terminal
+- **Proxy** - start SOCKS5 tunnel through the session
+- **Beacon** - toggle fast mode (100ms polling)
+- **Processes** - view process list with inject buttons
+- **Screenshot** - capture all monitors
+- **Notes** - tag and annotate the session
 
 ### 6. Evasion (do this first on Windows)
 In the terminal:
@@ -82,7 +82,7 @@ Before pivoting manually, use the topology planner to identify which session has
 curl -s -H "X-API-KEY: $KEY" \
   "http://server:8080/api/topology/plan?target=10.10.5.0/24" | jq .rendered
 ```
-The planner uses the network interfaces reported by agents at registration — no probes are sent. It ranks candidates by interface type, prefix specificity, and operational flags.
+The planner uses the network interfaces reported by agents at registration - no probes are sent. It ranks candidates by interface type, prefix specificity, and operational flags.
 
 ### 9. Operating Hibernation Agents
 Hibernation agents check in, claim tasks, execute, and disconnect. Operate them through the task queue rather than live commands:
@@ -111,7 +111,7 @@ The panel's **Queue** tab shows pending and completed tasks with live status.
 - Set a kill date on agents (`--days 30`) so they don't persist forever
 - Use `--sni` to send a CDN hostname in TLS ClientHello, even when the actual connection is to your server
 - Use `--alpn h2,http/1.1` to match what browsers send; `h2` only if you speak HTTP/2
-- Use DGA (`--dga-seed`) for campaigns that need to survive domain sinkholing — register the week's domains before deployment
+- Use DGA (`--dga-seed`) for campaigns that need to survive domain sinkholing - register the week's domains before deployment
 - Hibernation agents (`--hibernation`) avoid long-connection detection; pair with a longer sleep interval to minimize check-in frequency
 - Check `evasion:syscall_check` to verify syscall numbers resolved correctly before injection
-- Use the topology planner before choosing pivot paths — it scores by interface type and avoids virtual/Docker interfaces automatically
+- Use the topology planner before choosing pivot paths - it scores by interface type and avoids virtual/Docker interfaces automatically

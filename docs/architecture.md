@@ -6,10 +6,10 @@ RCM is a client-server C2 framework with three compiled binaries and a static-fi
 
 ```
 ┌──────────────┐     ┌─────────────────────────────────┐
-│  Operator    │────▶│  Team Server                    │
-│  (Panel UI)  │ API │  ┌───────────┐ ┌─────────────┐  │
-│              │◀────│  │ API (8080)│ │ Listeners   │  │
-└──────────────┘     │  └───────────┘ │ (TCP/HTTP)  │  │
+│  Operator │────▶│  Team Server │
+│  (Panel UI) │ API │  ┌───────────┐ ┌─────────────┐  │
+│              │◀────│  │ API (8080)│ │ Listeners │  │
+└──────────────┘     │  └───────────┘ │ (TCP/HTTP) │  │
                      │  ┌───────────┐ └──────┬──────┘  │
                      │  │ SQLite DB │        │         │
                      │  └───────────┘        │         │
@@ -18,8 +18,8 @@ RCM is a client-server C2 framework with three compiled binaries and a static-fi
                           ┌──────────────────┼──────────────┐
                           │                  │              │
                      ┌────▼────┐       ┌─────▼────┐  ┌─────▼────┐
-                     │ Agent 1 │       │ Agent 2  │  │ Agent 3  │
-                     │ (TLS)   │──────▶│ (Pivot)  │  │ (Hiber.) │
+                     │ Agent 1 │       │ Agent 2 │  │ Agent 3 │
+                     │ (TLS) │──────▶│ (Pivot) │  │ (Hiber.) │
                      └─────────┘       └──────────┘  └──────────┘
 ```
 
@@ -57,7 +57,7 @@ Additional bin targets: `client_dll` (DLL entry), `client_service` (Windows serv
 3. Agent claims up to `batch_size` pending tasks from the queue (`/api/hosts/:id/queue`)
 4. Agent executes each task and reports results
 5. Agent disconnects and sleeps for `sleep_interval` seconds
-6. Repeat — no persistent socket is held between check-ins
+6. Repeat - no persistent socket is held between check-ins
 
 ## Key Components
 
@@ -90,10 +90,10 @@ Additional bin targets: `client_dll` (DLL entry), `client_service` (Windows serv
 - Per-endpoint failure tracking with dead-time rotation
 - `DgaConfig` (seed, window_secs, count, tlds) embedded at build time
 - At startup, `inject_dga_endpoints()` generates the current window's domain list and appends them to the fallback list with `priority ≥ 100`
-- DGA uses FNV-1a mixing of `(seed, window, index)` → syllable-based hostname generation
+- DGA uses FNV-1a mixing of `(seed, window, index)` -> syllable-based hostname generation
 
 ### Hibernation Agent (`agent/hibernation.rs`)
-- Separate agent loop: connect → hello → claim task batch → execute → disconnect → sleep
+- Separate agent loop: connect -> hello -> claim task batch -> execute -> disconnect -> sleep
 - `queued_tasks` SQLite table stores pending commands with status (pending/claimed/completed/failed/cancelled)
 - Tasks are atomically claimed in batches to prevent double-execution across concurrent check-ins
 - Execution output stored back into the task record; operators poll via `GET /api/hosts/:id/tasks/:task_id`
@@ -111,5 +111,5 @@ Additional bin targets: `client_dll` (DLL entry), `client_service` (Windows serv
 
 ### Multi-Operator (`api/middleware.rs`)
 - Operator accounts with roles (admin/operator/viewer)
-- Per-request auth via API key → operator resolution
+- Per-request auth via API key -> operator resolution
 - Audit log for every action

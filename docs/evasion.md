@@ -44,15 +44,15 @@ Same as direct syscalls, but instead of executing `syscall` from agent memory (d
 
 During the beacon sleep interval, the agent:
 
-1. **Config encryption** — AES-256-GCM encrypts the serialized C2 config
-2. **Heap encryption** — walks the process heap via `HeapWalk`, XORs every allocated block with a random 16-byte key. This encrypts all strings, decoded payloads, and data structures in memory
-3. **Stack spoofing** — converts the thread to a fiber, creates a clean fiber whose entry point is `kernel32!Sleep`, switches to it. During sleep, any stack walk sees `Sleep → NtDelayExecution` with no unbacked memory frames
-4. **On wake** — switches back to agent fiber, decrypts heap, decrypts config
+1. **Config encryption** - AES-256-GCM encrypts the serialized C2 config
+2. **Heap encryption** - walks the process heap via `HeapWalk`, XORs every allocated block with a random 16-byte key. This encrypts all strings, decoded payloads, and data structures in memory
+3. **Stack spoofing** - converts the thread to a fiber, creates a clean fiber whose entry point is `kernel32!Sleep`, switches to it. During sleep, any stack walk sees `Sleep -> NtDelayExecution` with no unbacked memory frames
+4. **On wake** - switches back to agent fiber, decrypts heap, decrypts config
 
 ## OPSEC Considerations
 
-- Run `evasion:patch_all` before `inmem:dotnet` or `inmem:bof` — ETW will otherwise log the assembly load
+- Run `evasion:patch_all` before `inmem:dotnet` or `inmem:bof` - ETW will otherwise log the assembly load
 - Ntdll unhooking is detectable by integrity checks (some EDR periodically verify ntdll hasn't been modified)
-- Direct syscalls avoid ntdll hooks but the `syscall` instruction from unbacked memory is a signal — use indirect mode when possible
-- The sleep mask's heap encryption is coarse (XOR) — it defeats static memory scanning but not targeted analysis
-- Stack spoofing only covers the sleep interval — during active command execution, the real stack is visible
+- Direct syscalls avoid ntdll hooks but the `syscall` instruction from unbacked memory is a signal - use indirect mode when possible
+- The sleep mask's heap encryption is coarse (XOR) - it defeats static memory scanning but not targeted analysis
+- Stack spoofing only covers the sleep interval - during active command execution, the real stack is visible

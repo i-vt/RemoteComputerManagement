@@ -30,11 +30,11 @@ cargo run --bin builder -- \
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `host` | string | — | C2 hostname or IP |
-| `port` | number | — | C2 port |
+| `host` | string | - | C2 hostname or IP |
+| `port` | number | - | C2 port |
 | `transport` | string | `tls` | `tls`, `tcp_plain`, `http`, `https`, `named_pipe` |
-| `profile` | object | — | Per-endpoint malleable profile override |
-| `proxy` | object | — | Per-endpoint proxy override |
+| `profile` | object | - | Per-endpoint malleable profile override |
+| `proxy` | object | - | Per-endpoint proxy override |
 | `priority` | number | `0` | Lower = tried first (priority/failover) |
 | `weight` | number | `1` | Higher = more likely (random) |
 | `max_failures` | number | `5` | Mark dead after N consecutive failures |
@@ -51,7 +51,7 @@ When an endpoint accumulates `max_failures` consecutive failures it is marked de
 | `multi_cloud_round_robin.json` | Spread across AWS/Azure/GCP |
 | `redirector_chain.json` | Fast redirector + slow CDN fallback |
 | `corporate_proxy.json` | HTTPS through corp proxy + direct TLS backup |
-| `mixed_transport.json` | HTTPS → TLS → named pipe cascade |
+| `mixed_transport.json` | HTTPS -> TLS -> named pipe cascade |
 | `weighted_random.json` | 60/30/10 weighted distribution |
 | `staged_infrastructure.json` | Short-haul (disposable) + long-haul (persistent) |
 
@@ -61,7 +61,7 @@ See `fallback_profiles/` for full JSON examples.
 
 ## Domain Generation Algorithm (DGA)
 
-The DGA extends the fallback system with algorithmically-derived domains. Both the agent and the operator compute the same domain list from a shared seed, so the operator can pre-register the domains before the agent needs them — without hard-coding them in the binary.
+The DGA extends the fallback system with algorithmically-derived domains. Both the agent and the operator compute the same domain list from a shared seed, so the operator can pre-register the domains before the agent needs them - without hard-coding them in the binary.
 
 ### How It Works
 
@@ -73,10 +73,10 @@ The DGA extends the fallback system with algorithmically-derived domains. Both t
 
 ### Algorithm Properties
 
-- **Deterministic** — same `(seed, window)` always produces identical domains on any host.
-- **Seed-isolated** — different seeds produce statistically independent domain sets. Changing the seed effectively rotates the campaign's infrastructure fingerprint.
-- **Window-rotated** — domains change on a schedule the operator controls. The default is daily; shorter windows increase resilience at the cost of more pre-registration.
-- **No external dependencies** — pure arithmetic, no RNG state. Works identically on x86-64 Linux, Windows, and macOS.
+- **Deterministic** - same `(seed, window)` always produces identical domains on any host.
+- **Seed-isolated** - different seeds produce statistically independent domain sets. Changing the seed effectively rotates the campaign's infrastructure fingerprint.
+- **Window-rotated** - domains change on a schedule the operator controls. The default is daily; shorter windows increase resilience at the cost of more pre-registration.
+- **No external dependencies** - pure arithmetic, no RNG state. Works identically on x86-64 Linux, Windows, and macOS.
 
 ### Operator Workflow
 
@@ -119,7 +119,7 @@ python3 tools/dga_precompute.py --seed 9183726450 --days 7 --tlds com,net,org
   "strategy": "priority",
   "endpoints": [
     {"host": "primary.example.com", "port": 443, "transport": "https", "priority": 0},
-    {"host": "backup.example.com",  "port": 4443, "transport": "tls",   "priority": 10}
+    {"host": "backup.example.com", "port": 4443, "transport": "tls", "priority": 10}
   ]
 }
 ```
@@ -129,4 +129,4 @@ cargo run --bin builder -- \
   --fallback-file my_fallback.json \
   --dga-seed 9183726450 --dga-count 16
 ```
-The agent tries `primary` (priority 0), then `backup` (priority 10), then the 16 DGA domains (priority 100–115).
+The agent tries `primary` (priority 0), then `backup` (priority 10), then the 16 DGA domains (priority 100-115).

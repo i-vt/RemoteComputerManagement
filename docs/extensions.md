@@ -75,12 +75,12 @@ Extensions run as background jobs automatically. Output streams back in real-tim
 ### Utility
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `print_log(msg)` | — | Print to agent's stderr |
+| `print_log(msg)` | - | Print to agent's stderr |
 
 ## Example Script
 
 ```rhai
-// recon.rhai — Basic host enumeration
+// recon.rhai - Basic host enumeration
 let hostname = exec_os("hostname");
 let whoami = exec_os("whoami");
 let ips = exec_os("ip addr show");
