@@ -2,22 +2,22 @@
 //
 // Python bridge for the RHAI scripting engine.
 //
-// Design: subprocess-based rather than PyO3 embedding.  This means:
+// Design: subprocess-based rather than PyO3 embedding. This means:
 //   • No python3-dev headers needed at agent build time.
 //   • Works with whatever Python is installed on the target at runtime.
-//   • VENVs are real Python venvs — operator can install arbitrary packages.
+//   • VENVs are real Python venvs - operator can install arbitrary packages.
 //
 // Data exchange pattern:
 //   RHAI calls internal_python_in_venv_json(venv, code)
 //   Python script prints a single JSON line to stdout
-//   RHAI receives the JSON string → use internal_json_get to extract fields
+//   RHAI receives the JSON string -> use internal_json_get to extract fields
 //
 // Persistent session:
-//   internal_python_session_start(venv_path) → session_id
-//   internal_python_session_exec(session_id, code) → String
+//   internal_python_session_start(venv_path) -> session_id
+//   internal_python_session_exec(session_id, code) -> String
 //   internal_python_session_stop(session_id)
 //   The session keeps a Python subprocess alive between calls, amortising
-//   startup cost.  Useful for iterative workflows.
+//   startup cost. Useful for iterative workflows.
 
 use rhai::Engine;
 use std::{
@@ -296,7 +296,7 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
-    /// Install packages from a requirements.txt string (not a file path — the content itself).
+    /// Install packages from a requirements.txt string (not a file path - the content itself).
     engine.register_fn("internal_pip_install_requirements", |venv_path: &str, req_content: &str| -> String {
         let pip = venv_pip(venv_path);
         if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
@@ -329,7 +329,7 @@ pub fn register(engine: &mut Engine) {
         else { format!("Error: {}", err) }
     });
 
-    /// List installed packages in a venv — returns JSON array of {name, version}.
+    /// List installed packages in a venv - returns JSON array of {name, version}.
     engine.register_fn("internal_pip_list", |venv_path: &str| -> String {
         let pip = venv_pip(venv_path);
         if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
@@ -611,9 +611,9 @@ print(json.dumps(result))
 
     /// Install a curated set of offensive Python packages into a venv.
     /// tier: "minimal" | "standard" | "full"
-    ///   minimal:  requests, cryptography, dnspython
+    ///   minimal: requests, cryptography, dnspython
     ///   standard: + impacket, ldap3, paramiko, scapy
-    ///   full:     + bloodhound, pypykatz, certipy-ad, pwntools
+    ///   full: + bloodhound, pypykatz, certipy-ad, pwntools
     engine.register_fn("internal_python_install_offensive", |venv_path: &str, tier: &str| -> String {
         let pip = venv_pip(venv_path);
         if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
@@ -646,14 +646,14 @@ print(json.dumps(result))
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Python installation — called from register() at the bottom of the file.
+// Python installation - called from register() at the bottom of the file.
 //
 // Strategy (attempted in order):
-//   1. System already has Python → return its path immediately.
-//   2. Portable install already exists at install_dir → return that path.
-//   3. OS package manager (apt/yum/dnf/pacman/apk/brew/winget) — may need root.
-//   4. python-build-standalone — pre-compiled portable binary downloaded from
-//      GitHub, extracted into install_dir.  No root, no compilation, ~50 MB.
+//   1. System already has Python -> return its path immediately.
+//   2. Portable install already exists at install_dir -> return that path.
+//   3. OS package manager (apt/yum/dnf/pacman/apk/brew/winget) - may need root.
+//   4. python-build-standalone - pre-compiled portable binary downloaded from
+//      GitHub, extracted into install_dir. No root, no compilation, ~50 MB.
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ── Portable-install helpers ──────────────────────────────────────────────────
@@ -668,7 +668,7 @@ fn portable_python_bin(install_dir: &str) -> PathBuf {
 
 /// Current target triple suffix used in python-build-standalone asset names.
 fn pbs_asset_suffix() -> &'static str {
-    // Determined at Rust compile time → correct for the agent binary's target.
+    // Determined at Rust compile time -> correct for the agent binary's target.
     #[cfg(all(target_os = "linux",   target_arch = "x86_64"))]   return "x86_64-unknown-linux-gnu-install_only.tar.gz";
     #[cfg(all(target_os = "linux",   target_arch = "aarch64"))]  return "aarch64-unknown-linux-gnu-install_only.tar.gz";
     #[cfg(all(target_os = "macos",   target_arch = "x86_64"))]   return "x86_64-apple-darwin-install_only.tar.gz";
@@ -760,7 +760,7 @@ fn install_portable_python(install_dir: &str) -> Result<String, String> {
 fn try_package_managers() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        // winget — available on Windows 10 1709+ without admin for user installs.
+        // winget - available on Windows 10 1709+ without admin for user installs.
         let (_, _, code) = run_cmd(
             Path::new("winget"),
             &["install", "--id", "Python.Python.3.12", "--silent",
@@ -770,7 +770,7 @@ fn try_package_managers() -> Result<String, String> {
         if code == 0 {
             if let Some(p) = find_python() { return Ok(p); }
         }
-        // Chocolatey — if installed.
+        // Chocolatey - if installed.
         let (_, _, code) = run_cmd(
             Path::new("choco"),
             &["install", "python3", "-y", "--no-progress"],
@@ -877,7 +877,7 @@ pub fn register_python_install(engine: &mut Engine) {
     });
 
     /// Force-download python-build-standalone into install_dir regardless of
-    /// whether Python is already present.  Returns interpreter path or error.
+    /// whether Python is already present. Returns interpreter path or error.
     engine.register_fn("internal_python_install_portable", |install_dir: &str| -> String {
         match install_portable_python(install_dir) {
             Ok(p)  => p,
@@ -886,7 +886,7 @@ pub fn register_python_install(engine: &mut Engine) {
     });
 
     /// Try only the OS package manager (apt/yum/winget/brew …).
-    /// Returns interpreter path or error.  May require elevated privileges.
+    /// Returns interpreter path or error. May require elevated privileges.
     engine.register_fn("internal_python_install_system", || -> String {
         match try_package_managers() {
             Ok(p)  => p,
@@ -896,11 +896,11 @@ pub fn register_python_install(engine: &mut Engine) {
 
     // ── One-shot bootstrap ────────────────────────────────────────────────────
 
-    /// Ensure Python → create a venv → optionally install packages → return
-    /// the venv Python path.  This is the single call that sets up everything.
+    /// Ensure Python -> create a venv -> optionally install packages -> return
+    /// the venv Python path. This is the single call that sets up everything.
     ///
-    /// install_dir:   where to put portable Python if needed
-    /// venv_path:     where to create the venv
+    /// install_dir: where to put portable Python if needed
+    /// venv_path: where to create the venv
     /// packages_json: JSON array of pip packages to install, or "" to skip
     engine.register_fn("internal_python_bootstrap",
         |install_dir: &str, venv_path: &str, packages_json: &str| -> String {
@@ -928,7 +928,7 @@ pub fn register_python_install(engine: &mut Engine) {
             return format!("Error: {}", e);
         }
 
-        // 3. Create venv (idempotent — venv skips if already valid).
+        // 3. Create venv (idempotent - venv skips if already valid).
         let venv_bin = venv_python(venv_path);
         if !venv_bin.exists() {
             let (out, err, code) = run_cmd(
@@ -977,7 +977,7 @@ pub fn register_python_install(engine: &mut Engine) {
     // ── Download URL introspection ────────────────────────────────────────────
 
     /// Return the download URL for the latest python-build-standalone release
-    /// matching the current agent platform.  Useful for verifying or pre-staging.
+    /// matching the current agent platform. Useful for verifying or pre-staging.
     engine.register_fn("internal_python_pbs_url", || -> String {
         match fetch_pbs_url() {
             Ok(url) => url,

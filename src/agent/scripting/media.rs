@@ -62,8 +62,8 @@ pub fn register(engine: &mut Engine) {
     });
 
     // ── Microphone ────────────────────────────────────────────────────────────
-    // Shell-based recording — requires `arecord` (Linux), `sox`/`ffmpeg` (macOS),
-    // or `ffmpeg -f dshow` (Windows) on the target.  Returns base64 WAV on
+    // Shell-based recording - requires `arecord` (Linux), `sox`/`ffmpeg` (macOS),
+    // or `ffmpeg -f dshow` (Windows) on the target. Returns base64 WAV on
     // success; a descriptive error string if the tool is absent.
 
     engine.register_fn("internal_mic_record", |seconds: i64| -> String {

@@ -24,3 +24,4 @@ pub mod traffic;
 pub mod topology;
 pub mod rdi_stub;
 pub mod shellcode;
+pub mod rcm;

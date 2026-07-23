@@ -109,7 +109,7 @@ pub fn register(engine: &mut Engine) {
         "Error: Registry is Windows only".into()
     });
 
-    // Enumerate subkeys of a registry key — returns JSON array of names.
+    // Enumerate subkeys of a registry key - returns JSON array of names.
     engine.register_fn("internal_reg_enum_keys", |hive: &str, key: &str| -> String {
         #[cfg(target_os = "windows")]
         {
@@ -145,7 +145,7 @@ pub fn register(engine: &mut Engine) {
         "Error: Registry is Windows only".into()
     });
 
-    // Enumerate values in a registry key — returns JSON array of {name, type, data}.
+    // Enumerate values in a registry key - returns JSON array of {name, type, data}.
     engine.register_fn("internal_reg_enum_values", |hive: &str, key: &str| -> String {
         #[cfg(target_os = "windows")]
         {

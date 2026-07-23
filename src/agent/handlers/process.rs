@@ -1,4 +1,4 @@
-// src/agent/handlers/process.rs — Process injection, migration, keylogger
+// src/agent/handlers/process.rs - Process injection, migration, keylogger
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 

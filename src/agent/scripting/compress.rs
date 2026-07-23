@@ -36,7 +36,7 @@ pub fn register(engine: &mut Engine) {
     // ── Zip ───────────────────────────────────────────────────────────────────
 
     // Create a zip archive from a JSON array of file paths.
-    // ["path1", "path2", ...] → writes output_path, returns entry count or error.
+    // ["path1", "path2", ...] -> writes output_path, returns entry count or error.
     engine.register_fn("internal_zip_create", |paths_json: &str, output_path: &str| -> String {
         let paths: Vec<String> = match serde_json::from_str(paths_json) {
             Ok(p)  => p,
@@ -106,7 +106,7 @@ pub fn register(engine: &mut Engine) {
         else { format!("Extracted {}; errors: {}", count, errors.join(", ")) }
     });
 
-    // List entries in a zip archive — returns JSON array of {name, size, compressed}.
+    // List entries in a zip archive - returns JSON array of {name, size, compressed}.
     engine.register_fn("internal_zip_list", |zip_path: &str| -> String {
         let file = match fs::File::open(zip_path) {
             Ok(f)  => f,

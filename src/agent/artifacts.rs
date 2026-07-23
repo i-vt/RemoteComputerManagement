@@ -132,7 +132,7 @@ fn set_file_times_unix(path: &str, accessed: std::time::SystemTime, modified: st
 
 /// Overwrite a file with random data (3 passes), then zero, then delete.
 /// More thorough than simple `remove_file` but not DOD-grade (which
-/// doesn't matter on SSDs anyway — this defeats casual forensics).
+/// doesn't matter on SSDs anyway - this defeats casual forensics).
 pub fn secure_delete(path: &str) -> Result<String, String> {
     let meta = fs::metadata(path).map_err(|e| format!("Stat: {}", e))?;
     let size = meta.len() as usize;

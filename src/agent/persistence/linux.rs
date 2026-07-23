@@ -3,13 +3,13 @@
 // Linux persistence implementations.
 //
 // Crontab (T1053.003): Uses std::process::Command to read and write the
-// user crontab — the cron file location (/var/spool/cron/crontabs/<user>)
+// user crontab - the cron file location (/var/spool/cron/crontabs/<user>)
 // is mode 600 owned by root, so direct write requires root. Using the
 // `crontab` binary is the only reliable non-root path on all distros.
 //
 // Systemd user service (T1543.002): Pure file I/O to
 // ~/.config/systemd/user/<name>.service. Does NOT exec systemctl to enable
-// — the unit is placed on disk and picked up on next login when
+// - the unit is placed on disk and picked up on next login when
 // `systemctl --user daemon-reload` is called naturally by the session.
 // For immediate activation, the operator can issue `shell systemctl --user enable <name>`.
 //
@@ -169,7 +169,7 @@ pub fn remove_cron(binary_path: &str) -> Result<String, String> {
     }
 }
 
-// ── T1543.002 — Systemd User Service ─────────────────────────────────
+// ── T1543.002 - Systemd User Service ─────────────────────────────────
 
 fn systemd_unit_dir() -> Result<PathBuf, String> {
     Ok(home_dir()?.join(".config").join("systemd").join("user"))
@@ -256,7 +256,7 @@ pub fn remove_systemd(unit_name: &str) -> Result<String, String> {
     }
 }
 
-// ── T1546.004 — Shell Profile Injection ───────────────────────────────
+// ── T1546.004 - Shell Profile Injection ───────────────────────────────
 //
 // Injects a backgrounded launch line into ~/.bashrc and ~/.profile.
 // The entry is wrapped in a sentinel-guarded block so:
@@ -481,7 +481,7 @@ mod tests {
         let bin_dir = format!("{}/.local/bin", h.path());
         std::fs::create_dir_all(&bin_dir).unwrap();
         let src = fake_bin(&bin_dir, "already_stable");
-        // Source is already at the stable location — should not error
+        // Source is already at the stable location - should not error
         let dst = stable_drop(&src, "already_stable").unwrap();
         assert_eq!(src, dst, "No-op: src and dst should match");
     }
@@ -706,7 +706,7 @@ mod tests {
     fn systemd_install_idempotent_overwrite() {
         let h = TempHome::new("sys_idem");
         let src = fake_bin(h.path(), "agent");
-        // Installing twice should not error — second call overwrites
+        // Installing twice should not error - second call overwrites
         install_systemd("idem-svc", &src).unwrap();
         install_systemd("idem-svc", &src).unwrap();
 

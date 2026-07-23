@@ -1,7 +1,7 @@
 // src/agent/scripting/loader.rs
 //
 // Allows a running Rhai script to download and execute another script,
-// or to evaluate an arbitrary Rhai string — the standard staged-payload pattern.
+// or to evaluate an arbitrary Rhai string - the standard staged-payload pattern.
 //
 // Each call creates a fresh ExtensionManager so the child script has the full
 // API surface but its own scope. State written with internal_state_set is shared

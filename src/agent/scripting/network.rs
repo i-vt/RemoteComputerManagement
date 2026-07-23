@@ -52,7 +52,7 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
-    // Raw TCP connect probe — returns "open", "closed", or "Error: ..."
+    // Raw TCP connect probe - returns "open", "closed", or "Error: ..."
     engine.register_fn("internal_tcp_connect", |host: &str, port: i64, timeout_ms: i64| -> String {
         let addr    = format!("{}:{}", host, port);
         let timeout = Duration::from_millis(timeout_ms.max(100) as u64);
@@ -88,7 +88,7 @@ pub fn register(engine: &mut Engine) {
 pub fn register_network_ext(engine: &mut rhai::Engine) {
     use std::net::UdpSocket;
 
-    // Send a UDP datagram.  data_hex is hex-encoded payload.
+    // Send a UDP datagram. data_hex is hex-encoded payload.
     // Returns "Sent N bytes" or "Error: ...".
     engine.register_fn("internal_udp_send", |host: &str, port: i64, data_hex: &str| -> String {
         let data = match hex::decode(data_hex) { Ok(d) => d, Err(_) => data_hex.as_bytes().to_vec() };
@@ -122,7 +122,7 @@ pub fn register_network_ext(engine: &mut rhai::Engine) {
     // POST data in fixed-size chunks to url.
     // Useful for exfiltrating large buffers (memory dumps, ZIP archives)
     // without triggering content-length alerts.
-    // headers_json: extra headers as {"X-Seq": "auto"} — "auto" is replaced by chunk index.
+    // headers_json: extra headers as {"X-Seq": "auto"} - "auto" is replaced by chunk index.
     // Returns JSON: {chunks_sent, errors}
     engine.register_fn("internal_http_upload_chunks",
         |url: &str, data_hex: &str, chunk_size: i64, headers_json: &str| -> String {
@@ -151,7 +151,7 @@ pub fn register_network_ext(engine: &mut rhai::Engine) {
         serde_json::json!({ "chunks_sent": sent, "total": total, "errors": errors }).to_string()
     });
 
-    // Launch a process and detach — the child outlives the script.
+    // Launch a process and detach - the child outlives the script.
     // Linux: double-fork so the child is reparented to init (PID 1).
     // Windows: DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP so it has no controlling terminal.
     // Returns the child PID string or "Error: ...".

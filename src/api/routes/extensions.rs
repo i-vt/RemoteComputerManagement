@@ -3,15 +3,15 @@
 // CRUD for `.rhai` script files in two directories:
 //
 //   extensions (agent-side, pushed via ext:load):
-//     GET    /api/extensions           → list names
-//     GET    /api/extensions/:name     → read content
-//     PUT    /api/extensions/:name     → create / overwrite
-//     DELETE /api/extensions/:name     → delete
+//     GET /api/extensions -> list names
+//     GET /api/extensions/:name -> read content
+//     PUT /api/extensions/:name -> create / overwrite
+//     DELETE /api/extensions/:name -> delete
 //
 //   modules (server-side Rhai, run on session connect or via /api/hosts/:id/modules/:name):
-//     GET    /api/modules/:name        → read content   (list is still /api/modules in modules.rs)
-//     PUT    /api/modules/:name        → create / overwrite
-//     DELETE /api/modules/:name        → delete
+//     GET /api/modules/:name -> read content (list is still /api/modules in modules.rs)
+//     PUT /api/modules/:name -> create / overwrite
+//     DELETE /api/modules/:name -> delete
 
 use axum::{
     extract::{Extension, Path},
@@ -51,7 +51,7 @@ fn list_rhai_in(dir: &str) -> Vec<String> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Extensions  (/api/extensions[/:name])
+// Extensions (/api/extensions[/:name])
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub async fn list_extensions() -> impl IntoResponse {
@@ -83,7 +83,7 @@ pub async fn delete_extension(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Modules  (/api/modules/:name)
+// Modules (/api/modules/:name)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Note: GET /api/modules (list) lives in modules.rs; we only add per-file CRUD.
@@ -157,7 +157,7 @@ async fn delete_script(op: OperatorInfo, dir: &str, name: &str) -> Response {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Unit tests — safe_name validator
+// Unit tests - safe_name validator
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod unit {

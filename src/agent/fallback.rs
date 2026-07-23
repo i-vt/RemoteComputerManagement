@@ -4,10 +4,10 @@
 // the configured strategy, tracks failures, and handles dead-endpoint
 // rotation. Supports four strategies:
 //
-//   Priority    — always try lowest-priority first, fall to next on failure
-//   RoundRobin  — cycle through in order
-//   Random      — weighted random selection
-//   Failover    — use first until dead, then permanently switch to next
+//   Priority - always try lowest-priority first, fall to next on failure
+//   RoundRobin - cycle through in order
+//   Random - weighted random selection
+//   Failover - use first until dead, then permanently switch to next
 
 use std::time::Instant;
 use rand::Rng;
@@ -147,7 +147,7 @@ impl FallbackManager {
     pub fn check_and_reset_if_all_dead(&mut self) {
         let all_dead = self.states.iter().all(|s| s.is_dead(self.dead_time_secs));
         if !all_dead {
-            return; // At least one endpoint is alive — nothing to do
+            return; // At least one endpoint is alive - nothing to do
         }
         // All are dead. Selectively reset only those whose dead time expired.
         for state in &mut self.states {
@@ -254,7 +254,7 @@ impl FallbackManager {
             }
             self.failover_index += 1;
         }
-        // All exhausted — wrap around
+        // All exhausted - wrap around
         self.failover_index = 0;
         self.check_and_reset_if_all_dead();
         Some(self.resolve(0, config))

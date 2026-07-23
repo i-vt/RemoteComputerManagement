@@ -2,7 +2,7 @@
 //
 // Entry point for the Rhai extension engine.
 // Each sub-module owns a focused slice of the API surface and exposes one
-// `register(engine)` call.  Adding a new capability = new file + one line here.
+// `register(engine)` call. Adding a new capability = new file + one line here.
 
 mod win_ffi;
 mod helpers;
@@ -47,7 +47,7 @@ use std::collections::HashMap;
 pub struct ExtensionManager {
     engine: Engine,
     scope:  Scope<'static>,
-    // Shared KV store — all state::register closures hold an Arc clone.
+    // Shared KV store - all state::register closures hold an Arc clone.
     state:  Arc<Mutex<HashMap<String, String>>>,
 }
 

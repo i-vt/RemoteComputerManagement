@@ -2,13 +2,13 @@
 //
 // Task queue endpoints for hibernating agents.
 //
-// Hibernating agents don't hold persistent connections — they check in on a
+// Hibernating agents don't hold persistent connections - they check in on a
 // jitter-bounded interval, claim whatever is queued, execute, and disconnect.
 // These endpoints let operators enqueue commands ahead of the next check-in.
 //
 // Routes to register in src/api/mod.rs:
-//   .route("/api/hosts/:id/queue",          post(tasks::queue_task))
-//   .route("/api/hosts/:id/tasks",          get(tasks::list_tasks))
+//   .route("/api/hosts/:id/queue", post(tasks::queue_task))
+//   .route("/api/hosts/:id/tasks", get(tasks::list_tasks))
 //   .route("/api/hosts/:id/tasks/:task_id", get(tasks::get_task))
 //   .route("/api/hosts/:id/tasks/:task_id", delete(tasks::cancel_task))
 
@@ -80,7 +80,7 @@ impl From<QueuedTask> for QueuedTaskDto {
 /// Body: { "command": "shell id" }
 ///
 /// Enqueue a command for a hibernating agent's next check-in.
-/// The session doesn't need to be connected — tasks persist in the DB until
+/// The session doesn't need to be connected - tasks persist in the DB until
 /// the agent connects and claims them.
 ///
 /// Returns 201 Created with the task_id on success.
@@ -239,7 +239,7 @@ pub async fn cancel_task(
         }
     };
 
-    // Only cancel if still pending — don't interrupt an in-flight batch
+    // Only cancel if still pending - don't interrupt an in-flight batch
     let affected = conn
         .execute(
             "UPDATE queued_tasks SET status = 'cancelled'

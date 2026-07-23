@@ -1,12 +1,12 @@
 // src/agent/evasion/mod.rs
 //
-// Evasion module — split from the original monolithic evasion.rs.
+// Evasion module - split from the original monolithic evasion.rs.
 //
 // Submodule layout:
-//   detection  — VM/sandbox checks, decoy exit, parent-process validation
-//   patching   — AMSI/ETW patching, ntdll .text unhooking
-//   heap       — thread suspension, XOR + AES-256-GCM heap encryption
-//   sleep      — fiber stack spoof, PE self-location, Ekko sleep mask
+//   detection - VM/sandbox checks, decoy exit, parent-process validation
+//   patching - AMSI/ETW patching, ntdll .text unhooking
+//   heap - thread suspension, XOR + AES-256-GCM heap encryption
+//   sleep - fiber stack spoof, PE self-location, Ekko sleep mask
 //
 // All public symbols are re-exported here so every existing call-site of
 // the form `crate::agent::evasion::foo()` continues to compile unchanged.

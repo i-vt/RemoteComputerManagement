@@ -22,7 +22,7 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
-    // TXT record lookup via Google DNS-over-HTTPS — no extra dep needed.
+    // TXT record lookup via Google DNS-over-HTTPS - no extra dep needed.
     // Used by DGA templates to resolve next-hop C2 addresses from TXT records.
     engine.register_fn("internal_dns_txt", |domain: &str| -> String {
         let url = format!("https://dns.google/resolve?name={}&type=TXT", domain);

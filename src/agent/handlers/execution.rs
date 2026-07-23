@@ -1,4 +1,4 @@
-// src/agent/handlers/execution.rs — In-memory execution, extensions, shell
+// src/agent/handlers/execution.rs - In-memory execution, extensions, shell
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 

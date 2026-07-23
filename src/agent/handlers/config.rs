@@ -1,4 +1,4 @@
-// src/agent/handlers/config.rs — Sleep, beacon mode, fallback configuration
+// src/agent/handlers/config.rs - Sleep, beacon mode, fallback configuration
 
 use crate::lc;
 use super::{DispatchResult, AgentAction};

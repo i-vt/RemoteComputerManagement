@@ -4,8 +4,8 @@ use rhai::Engine;
 pub fn register(engine: &mut Engine) {
     // Decrypt a DPAPI-protected blob (Windows only).
     //
-    // blob_hex    — hex-encoded ciphertext (the pb/cb pair from CryptProtectData)
-    // entropy_hex — optional hex-encoded entropy; pass "" when none was used
+    // blob_hex - hex-encoded ciphertext (the pb/cb pair from CryptProtectData)
+    // entropy_hex - optional hex-encoded entropy; pass "" when none was used
     //
     // Returns hex-encoded plaintext on success.
     // Use this after internal_chrome_cookies to decrypt the encrypted_value field,

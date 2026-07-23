@@ -4,11 +4,11 @@
 // DB helpers live in database.rs; this file just exposes them over HTTP.
 //
 // Routes (all protected by X-API-KEY middleware):
-//   GET    /api/iocs                — all IOCs, active first
-//   GET    /api/hosts/:id/iocs      — IOCs for one session
-//   POST   /api/hosts/:id/iocs      — record a new artifact
-//   POST   /api/iocs/:id/clean      — stamp cleaned_at (idempotent)
-//   DELETE /api/iocs/:id            — hard-delete a record
+//   GET /api/iocs - all IOCs, active first
+//   GET /api/hosts/:id/iocs - IOCs for one session
+//   POST /api/hosts/:id/iocs - record a new artifact
+//   POST /api/iocs/:id/clean - stamp cleaned_at (idempotent)
+//   DELETE /api/iocs/:id - hard-delete a record
 
 use axum::{
     extract::{Path, State},

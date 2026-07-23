@@ -6,7 +6,7 @@ pub fn register(engine: &mut Engine) {
     // Create a server-side named pipe, block until one client connects,
     // read up to 64 KB, and return the data as hex.
     // Use for staging payloads over SMB (\\target\pipe\name).
-    // Windows only — returns descriptive error on other platforms.
+    // Windows only - returns descriptive error on other platforms.
     engine.register_fn("internal_named_pipe_listen", |name: &str, timeout_ms: i64| -> String {
         #[cfg(target_os = "windows")]
         {
@@ -51,7 +51,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Connect to an existing named pipe as a client and write hex-encoded data.
-    // Windows only — returns descriptive error on other platforms.
+    // Windows only - returns descriptive error on other platforms.
     engine.register_fn("internal_named_pipe_write", |name: &str, data_hex: &str| -> String {
         #[cfg(target_os = "windows")]
         {

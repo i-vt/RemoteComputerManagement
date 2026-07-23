@@ -25,6 +25,7 @@ use crate::database::DbPool;
 pub use state::{ApiContext, SharedResults, SharedProxies, SharedScripts, SharedListenerManager, SharedBuildJobs};
 use crate::api::routes::downloads;
 use crate::api::routes::iocs;
+use crate::api::routes::rcm;
 use crate::api::routes::{hosts, proxies, modules, extensions, history, operators, listeners, builder, topology, tasks};
 
 pub use state::SharedResults as ResultsType;
@@ -124,7 +125,7 @@ pub async fn start_api_server(
         .max_age(std::time::Duration::from_secs(3600));
 
     // ── Public routes (no auth) ────────────────────────────────────────
-    // Only the panel shell and the login endpoint belong here.  NOTHING
+    // Only the panel shell and the login endpoint belong here. NOTHING
     // that returns operator data, agent data, or files may be added to
     // this router.
     let public_routes = Router::new()
@@ -175,21 +176,25 @@ pub async fn start_api_server(
         .route("/api/downloads/*path",             get(downloads::serve_download))
         .route("/api/loot",                       get(downloads::list_loot).delete(downloads::delete_loot))
         .route("/api/loot/zip",                   get(downloads::zip_loot))
+        // RCM package management (SPEC §5) - authenticated like everything else
+        .route("/api/rcm/packages",               get(rcm::list_packages))
+        .route("/api/rcm/seal",                   post(rcm::seal_package))
+        .route("/api/rcm/verify",                 post(rcm::verify_package))
         .route("/api/iocs",                       get(iocs::list_all))
         .route("/api/hosts/:id/iocs",             get(iocs::list_for_session).post(iocs::add))
         .route("/api/iocs/:id/clean",             post(iocs::mark_clean))
         .route("/api/iocs/:id",                   delete(iocs::delete))
         .route("/api/rportfwds",                  get(proxies::list_rportfwds))
         .route("/api/hosts/:id/rportfwd",         post(proxies::start_rportfwd).delete(proxies::stop_rportfwd))
-        // Builder — all behind auth; download uses fetch+blob in JS so X-API-KEY is sent
+        // Builder - all behind auth; download uses fetch+blob in JS so X-API-KEY is sent
         .route("/api/builder/build",              post(builder::start_build))
         .route("/api/builder/jobs",               get(builder::list_jobs))
         .route("/api/builder/jobs/:id/status",    get(builder::job_status))
         .route("/api/builder/jobs/:id/download",  get(builder::download_artifact))
-        // Topology — passive route-planning over already-reported agent interfaces
+        // Topology - passive route-planning over already-reported agent interfaces
         .route("/api/topology/plan",              get(topology::plan))
         .route("/api/topology/snapshot",          get(topology::snapshot))
-        // Hibernation task queue — queue commands for low-beacon-rate agents
+        // Hibernation task queue - queue commands for low-beacon-rate agents
         .route("/api/hosts/:id/queue",            post(tasks::queue_task))
         .route("/api/hosts/:id/tasks",            get(tasks::list_tasks))
         .route("/api/hosts/:id/tasks/:task_id",   get(tasks::get_task))

@@ -9,7 +9,7 @@ use std::sync::{Mutex, OnceLock};
 use std::collections::HashMap;
 
 // Global store for mutex handles so they survive the duration of the script.
-// Keyed by name → platform handle (stored as usize for Send-safety).
+// Keyed by name -> platform handle (stored as usize for Send-safety).
 static MUTEX_STORE: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 
 fn mutex_store() -> &'static Mutex<HashMap<String, usize>> {

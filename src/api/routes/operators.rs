@@ -59,7 +59,7 @@ fn verify_password(password: &str, stored_hash: &str) -> bool {
     a.ct_eq(b).into()
 }
 
-/// POST /api/auth/login — authenticate with username/password, get API key
+/// POST /api/auth/login - authenticate with username/password, get API key
 pub async fn login(
     State(state): State<Arc<ApiContext>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -122,7 +122,7 @@ pub async fn login(
             // Regenerate the API key so the browser receives a raw key.
             // The DB only stores HMAC(raw_key); returning the stored value
             // would give the browser a hash, and middleware would hash it
-            // again on every request → permanent 401.
+            // again on every request -> permanent 401.
             let fresh_key = database::regenerate_api_key(&conn, op.id)
                 .unwrap_or_default();
 
@@ -146,7 +146,7 @@ pub async fn login(
     }
 }
 
-/// GET /api/operators — list all operators (admin only)
+/// GET /api/operators - list all operators (admin only)
 pub async fn list(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -173,7 +173,7 @@ pub async fn list(
     (StatusCode::OK, Json(serde_json::json!(safe))).into_response()
 }
 
-/// POST /api/operators — create a new operator (admin only)
+/// POST /api/operators - create a new operator (admin only)
 pub async fn create(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -213,7 +213,7 @@ pub async fn create(
     }
 }
 
-/// DELETE /api/operators/:id — delete an operator (admin only)
+/// DELETE /api/operators/:id - delete an operator (admin only)
 pub async fn delete(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -240,7 +240,7 @@ pub async fn delete(
     }
 }
 
-/// GET /api/audit — get audit log (admin/operator)
+/// GET /api/audit - get audit log (admin/operator)
 pub async fn audit_log_handler(
     State(state): State<Arc<ApiContext>>,
     Extension(_operator): Extension<OperatorInfo>,
@@ -254,7 +254,7 @@ pub async fn audit_log_handler(
     (StatusCode::OK, Json(serde_json::json!(log))).into_response()
 }
 
-/// GET /api/auth/me — get current operator info
+/// GET /api/auth/me - get current operator info
 pub async fn whoami(
     Extension(operator): Extension<OperatorInfo>,
 ) -> Response {
@@ -272,7 +272,7 @@ pub struct WebhookRequest {
     pub url: String,
 }
 
-/// GET /api/config/webhook — get current webhook URL
+/// GET /api/config/webhook - get current webhook URL
 pub async fn get_webhook(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -316,7 +316,7 @@ fn validate_webhook_url(raw_url: &str) -> Result<(), String> {
     }
 
     // Resolve and check every IP. Unlike the previous version, resolution
-    // failure is now a hard block — an unresolvable host could resolve to
+    // failure is now a hard block - an unresolvable host could resolve to
     // a private IP later (DNS rebinding / delayed provisioning).
     // In test mode (RCM_TEST_MODE=1), skip IP resolution so Docker-internal
     // service names (which resolve to private 172.x IPs) are allowed.
@@ -342,7 +342,7 @@ fn validate_webhook_url(raw_url: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// POST /api/config/webhook — set webhook URL (Slack/Discord/custom)
+/// POST /api/config/webhook - set webhook URL (Slack/Discord/custom)
 pub async fn set_webhook(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -370,7 +370,7 @@ pub struct AddReconRequest {
     pub command: String,
 }
 
-/// GET /api/config/recon — list auto-recon commands
+/// GET /api/config/recon - list auto-recon commands
 pub async fn list_recon(
     State(state): State<Arc<ApiContext>>,
     Extension(_operator): Extension<OperatorInfo>,
@@ -383,7 +383,7 @@ pub async fn list_recon(
     (StatusCode::OK, Json(serde_json::json!(entries))).into_response()
 }
 
-/// POST /api/config/recon — add an auto-recon command
+/// POST /api/config/recon - add an auto-recon command
 
 fn normalise_recon_cmd(raw: &str) -> String {
     let raw = raw.trim();
@@ -424,7 +424,7 @@ pub async fn add_recon(
     }
 }
 
-/// DELETE /api/config/recon/:id — remove an auto-recon command
+/// DELETE /api/config/recon/:id - remove an auto-recon command
 pub async fn remove_recon(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,

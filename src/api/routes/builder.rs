@@ -211,7 +211,7 @@ pub fn build_args(req: &BuildRequest) -> Vec<String> {
         args.push("--auto-pivot-port".into());
         args.push(port.to_string());
     }
-    // Shellcode options — only meaningful (and only accepted) for that format
+    // Shellcode options - only meaningful (and only accepted) for that format
     if req.format == "shellcode" {
         args.extend(["--sc-hash".into(),     req.sc_hash.clone()]);
         args.extend(["--sc-userdata".into(), req.sc_userdata.clone()]);
@@ -397,7 +397,7 @@ pub async fn list_jobs(
 /// Protected by the standard X-API-KEY auth middleware.
 /// The JS side uses fetch() + blob to trigger the save dialog,
 /// which correctly sends the header. Direct browser navigation
-/// won't work (no header) — that's intentional.
+/// won't work (no header) - that's intentional.
 pub async fn download_artifact(
     State(state): State<Arc<ApiContext>>,
     Extension(_op): Extension<OperatorInfo>,
@@ -985,7 +985,7 @@ mod tests {
         assert_eq!(r.days,       0);
     }
 
-    // ── validate_request — profile ────────────────────────────────────
+    // ── validate_request - profile ────────────────────────────────────
 
     #[test]
     fn validate_ok_all_profiles() {
@@ -1001,7 +1001,7 @@ mod tests {
         assert!(validate_request(&r).unwrap_err().contains("profile"));
     }
 
-    // ── build_args — core fields not yet explicitly covered ───────────
+    // ── build_args - core fields not yet explicitly covered ───────────
 
     #[test]
     fn args_bloat_nonzero_forwarded() {
@@ -1049,7 +1049,7 @@ mod tests {
         assert!(has_pair(&build_args(&r), "--format", "stager"));
     }
 
-    // ── build_args — guard hours edge cases ──────────────────────────
+    // ── build_args - guard hours edge cases ──────────────────────────
 
     #[test]
     fn args_guard_hours_only_end_set() {
@@ -1073,7 +1073,7 @@ mod tests {
         assert!(has_pair(&build_args(&r), "--guard-hours", "0-23"));
     }
 
-    // ── build_args — no unexpected duplicates ─────────────────────────
+    // ── build_args - no unexpected duplicates ─────────────────────────
 
     #[test]
     fn args_sleep_mask_appears_exactly_once() {

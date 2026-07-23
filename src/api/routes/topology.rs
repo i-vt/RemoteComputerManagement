@@ -2,7 +2,7 @@
 //
 // GET /api/topology/plan?target=<ip>
 //   Returns route candidates across all connected sessions that can reach
-//   the target IP or CIDR. Completely passive — no probes sent, no new
+//   the target IP or CIDR. Completely passive - no probes sent, no new
 //   network traffic generated. Analysis is over data agents already reported
 //   at registration.
 //
@@ -11,7 +11,7 @@
 //   overlapping-CIDR conflicts.
 //
 // Routes to register in src/api/mod.rs:
-//   .route("/api/topology/plan",     get(topology::plan))
+//   .route("/api/topology/plan", get(topology::plan))
 //   .route("/api/topology/snapshot", get(topology::snapshot))
 
 use axum::{
@@ -123,7 +123,7 @@ pub async fn plan(
 ) -> impl IntoResponse {
     let target = params.target.trim().to_string();
 
-    // Basic validation — TopologyManager::plan returns empty for invalid IPs,
+    // Basic validation - TopologyManager::plan returns empty for invalid IPs,
     // but we want a 400 here instead of a silent empty 200.
     if target.is_empty()
         || target

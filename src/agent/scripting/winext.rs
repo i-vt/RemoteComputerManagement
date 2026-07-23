@@ -7,8 +7,8 @@ pub fn register(engine: &mut Engine) {
 
     // Query Windows Event Log.
     // log_name: "Security" | "System" | "Application" | custom channel
-    // xpath:    XPath filter string, e.g. "*[System[EventID=4624]]" or "*"
-    // max:      maximum number of events to return (capped at 500)
+    // xpath: XPath filter string, e.g. "*[System[EventID=4624]]" or "*"
+    // max: maximum number of events to return (capped at 500)
     // Returns JSON array of raw XML event strings.
     engine.register_fn("internal_eventlog_query", |log_name: &str, xpath: &str, max: i64| -> String {
         #[cfg(target_os = "windows")]
@@ -69,7 +69,7 @@ pub fn register(engine: &mut Engine) {
 
     // ── Windows Services ──────────────────────────────────────────────────────
 
-    // Enumerate all services — returns JSON array of {name, display_name, state, pid}.
+    // Enumerate all services - returns JSON array of {name, display_name, state, pid}.
     engine.register_fn("internal_service_enum", || -> String {
         #[cfg(target_os = "windows")]
         {

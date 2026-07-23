@@ -47,8 +47,8 @@ pub async fn auth(
         .unwrap_or("");
 
     // Streaming download and <img>/<a href> endpoints cannot send custom
-    // headers.  Accept ?key=<api_key> as a fallback so the browser streams
-    // directly (or renders images) without fetch→blob memory buffering.
+    // headers. Accept ?key=<api_key> as a fallback so the browser streams
+    // directly (or renders images) without fetch->blob memory buffering.
     // /api/downloads/ is included so panel image previews keep working now
     // that the route is authenticated.
     let download_paths = ["/api/loot/zip", "/api/builder/jobs/", "/api/downloads/"];

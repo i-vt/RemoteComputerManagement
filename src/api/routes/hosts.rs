@@ -77,12 +77,12 @@ pub async fn send_command(
 
     // ── ext:load resolution ───────────────────────────────────────────
     // When the terminal sends `ext:load <name>` the agent expects
-    // `ext:load <base64_script_content>`.  If the argument looks like a
+    // `ext:load <base64_script_content>`. If the argument looks like a
     // script name rather than already-encoded content, look it up in
     // ./extensions/ then ./modules/ and encode it on the fly.
     //
     // "Looks like a name" heuristic: arg is ≤ 64 chars and matches a
-    // .rhai file on disk.  Longer strings are assumed to already be
+    // .rhai file on disk. Longer strings are assumed to already be
     // base64 and passed through unchanged.
     let command = resolve_ext_load(&payload.command, &["./extensions", "./modules"]);
 
@@ -328,7 +328,7 @@ pub fn resolve_ext_load(cmd: &str, search_dirs: &[&str]) -> String {
     let name          = tokens.next().unwrap_or("").trim();
     let extra_args    = tokens.next().unwrap_or("").trim();
 
-    // Long argument → already base64; pass through unchanged.
+    // Long argument -> already base64; pass through unchanged.
     if name.len() > 64 {
         return cmd.to_string();
     }
@@ -457,11 +457,11 @@ mod ext_load_tests {
     #[test]
     fn long_argument_assumed_base64_not_re_encoded() {
         // The passthrough threshold is > 64 chars in the "name" slot.
-        // base64 length = ceil(n / 3) * 4, so n = 49 bytes → 68 chars (> 64).
-        // "return \"hello world\";" is only 22 bytes → 32 chars of base64, which
+        // base64 length = ceil(n / 3) * 4, so n = 49 bytes -> 68 chars (> 64).
+        // "return \"hello world\";" is only 22 bytes -> 32 chars of base64, which
         // is ≤ 64 and would be treated as a filename, not already-encoded content.
         // Use 49 bytes to land clearly above the threshold.
-        let script  = "a".repeat(49);   // 49 bytes → 68 base64 chars
+        let script  = "a".repeat(49);   // 49 bytes -> 68 base64 chars
         let b64_arg = BASE64.encode(&script);
         assert_eq!(b64_arg.len(), 68, "sanity: 49 bytes must produce 68 base64 chars");
         assert!(b64_arg.len() > 64,   "sanity: must be above the 64-char passthrough threshold");
@@ -472,7 +472,7 @@ mod ext_load_tests {
 
     #[test]
     fn long_argument_with_args_also_unchanged() {
-        let b64_arg = "A".repeat(65);                // 65 chars → "already encoded" path
+        let b64_arg = "A".repeat(65);                // 65 chars -> "already encoded" path
         let cmd     = format!("ext:load {} arg1 arg2", b64_arg);
         let result  = resolve_ext_load(&cmd, &[]);
         assert_eq!(result, cmd);
@@ -483,7 +483,7 @@ mod ext_load_tests {
     #[test]
     fn path_traversal_attempt_finds_no_file() {
         // "../etc/passwd" is 14 chars (≤ 64), but the formatted path
-        // "./<dir>/../etc/passwd.rhai" won't exist → returns unchanged.
+        // "./<dir>/../etc/passwd.rhai" won't exist -> returns unchanged.
         let dir  = tempfile::tempdir().unwrap();
         let dirs = [dir.path().to_str().unwrap()];
         let cmd  = "ext:load ../etc/passwd";
@@ -495,14 +495,14 @@ mod ext_load_tests {
         // "subdir/ps" as a name would produce the path "<dir>/subdir/ps.rhai".
         // The intermediate "subdir/" directory does not exist in the temp dir,
         // so fs::read_to_string returns NotFound and the command passes through
-        // unchanged.  The important guarantee: no panic, no path escape.
-        // Do NOT use make_ext_dir here — writing "<tempdir>/subdir/ps.rhai"
+        // unchanged. The important guarantee: no panic, no path escape.
+        // Do NOT use make_ext_dir here - writing "<tempdir>/subdir/ps.rhai"
         // would itself fail with NotFound because tempdir() creates a flat dir.
         let dir  = tempfile::tempdir().unwrap();   // empty temp dir, no subdirs
         let dirs = [dir.path().to_str().unwrap()];
         let result = resolve_ext_load("ext:load subdir/ps", &dirs);
         // Either the file happened to exist (resolved) or it didn't (passthrough).
-        // Either outcome is acceptable — the contract is only "no panic".
+        // Either outcome is acceptable - the contract is only "no panic".
         let _ = result;
     }
 
@@ -530,7 +530,7 @@ pub(crate) fn is_valid_upload_path(path: &str) -> bool {
 }
 
 /// Returns false if `s` contains any character outside the Base64 alphabet
-/// (A–Z a–z 0–9 + / =).  Catches obviously malformed payloads before they
+/// (A-Z a-z 0-9 + / =). Catches obviously malformed payloads before they
 /// are queued to the agent.
 pub(crate) fn is_valid_b64_alphabet(s: &str) -> bool {
     s.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
@@ -542,11 +542,11 @@ pub(crate) fn is_valid_b64_alphabet(s: &str) -> bool {
 //
 // Accepts one 8 MB slice of a file at a time (base64-encoded in JSON).
 // The server queues a `file:write_chunk` command to the agent, which
-// creates the file on chunk 0 and appends on subsequent chunks — no
+// creates the file on chunk 0 and appends on subsequent chunks - no
 // in-memory accumulation of the full file on either side.
 //
 // The global DefaultBodyLimit::max(50 MB) comfortably covers each request:
-//   8 MB raw → ~10.7 MB base64 → ~10.7 MB JSON body  (well under 50 MB)
+//   8 MB raw -> ~10.7 MB base64 -> ~10.7 MB JSON body (well under 50 MB)
 pub async fn upload_chunk(
     State(state): State<Arc<ApiContext>>,
     Extension(operator): Extension<OperatorInfo>,
@@ -558,13 +558,13 @@ pub async fn upload_chunk(
             Json(serde_json::json!({"error": "Viewers cannot upload files"}))).into_response();
     }
 
-    // Basic path sanity — full validation happens on the agent side.
+    // Basic path sanity - full validation happens on the agent side.
     if !is_valid_upload_path(&payload.path) {
         return (StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "Invalid path"}))).into_response();
     }
 
-    // Sanity: base64 alphabet only (A–Z a–z 0–9 + / =).  Reject obviously
+    // Sanity: base64 alphabet only (A-Z a-z 0-9 + / =). Reject obviously
     // malformed data before queueing to avoid confusing the agent.
     if !is_valid_b64_alphabet(&payload.data_b64) {
         return (StatusCode::BAD_REQUEST,
@@ -645,13 +645,13 @@ mod upload_tests {
 
     #[test]
     fn windows_path_is_valid() {
-        // Backslashes and colons are legal — agent-side validation handles them.
+        // Backslashes and colons are legal - agent-side validation handles them.
         assert!(is_valid_upload_path(r"C:\Users\user\Desktop\tool.exe"));
     }
 
     #[test]
     fn path_traversal_string_is_valid_at_server_level() {
-        // The server does NOT reject "../" — that is the agent's job.
+        // The server does NOT reject "../" - that is the agent's job.
         // We only verify the predicate is permissive here (agent tightens it).
         assert!(is_valid_upload_path("../../../etc/passwd"));
     }

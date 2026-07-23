@@ -103,7 +103,7 @@ pub async fn dispatch(ctx: &HandlerContext, msg: SecuredCommand) -> AgentAction 
 // ── Command router ─────────────────────────────────────────────────────
 //
 // Each arm delegates to a focused submodule. The router itself does no
-// business logic — it is a pure command-string → handler mapping.
+// business logic - it is a pure command-string -> handler mapping.
 
 async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
     // ── Config & Mode ──────────────────────────────────────────────

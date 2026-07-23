@@ -1,8 +1,8 @@
 // evasion/patching.rs
 //
 // In-process userland hook removal and function patching:
-//   - AMSI patching  (AmsiScanBuffer → immediate E_INVALIDARG)
-//   - ETW patching   (EtwEventWrite  → immediate STATUS_SUCCESS / no-op)
+//   - AMSI patching (AmsiScanBuffer -> immediate E_INVALIDARG)
+//   - ETW patching (EtwEventWrite -> immediate STATUS_SUCCESS / no-op)
 //   - Ntdll unhooking (overwrite hooked .text with clean on-disk copy)
 
 // ── AMSI Patching ──────────────────────────────────────────────────────
@@ -24,12 +24,12 @@ pub fn patch_amsi() -> Result<String, String> { Err("Windows only".into()) }
 
 // ── ETW Patching ───────────────────────────────────────────────────────
 // Patches EtwEventWrite in ntdll.dll to return 0 (STATUS_SUCCESS)
-// immediately, blinding all ETW consumers in this process — .NET CLR,
+// immediately, blinding all ETW consumers in this process - .NET CLR,
 // PowerShell scriptblock logging, Windows Defender ATP sensors, and
 // any EDR hooking ETW providers.
 //
 // Patch bytes: 33 C0 C3
-//   xor eax, eax   ; STATUS_SUCCESS = 0
+//   xor eax, eax ; STATUS_SUCCESS = 0
 //   ret
 
 #[cfg(target_os = "windows")]
@@ -82,12 +82,12 @@ unsafe fn patch_function(dll: &str, func: &str, patch: &[u8]) -> Result<String, 
 // ── Ntdll Unhooking ────────────────────────────────────────────────────
 // Maps a clean copy of ntdll.dll from disk (read-only file mapping, so
 // it does not trigger any hooks on the open) and overwrites the .text
-// section of the already-loaded (potentially hooked) ntdll.  After this,
+// section of the already-loaded (potentially hooked) ntdll. After this,
 // all EDR inline hooks on Nt* functions are removed and direct API calls
 // go through the clean code.
 //
 // Detection note: some EDR products periodically re-check ntdll .text
-// integrity via a kernel callback.  Combine with indirect syscalls for
+// integrity via a kernel callback. Combine with indirect syscalls for
 // operations that must survive periodic re-hooking.
 
 #[cfg(target_os = "windows")]
@@ -236,7 +236,7 @@ mod tests {
         assert!(e.contains("Windows only"), "got: {e}");
     }
 
-    // ── Result contract — no panics on any platform ───────────────────────
+    // ── Result contract - no panics on any platform ───────────────────────
     // These run on every OS: they verify each function returns a Result
     // rather than panicking, without asserting which variant it is.
 

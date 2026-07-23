@@ -21,7 +21,7 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
-    // Exposes utils::get_network_interfaces() — already cross-platform.
+    // Exposes utils::get_network_interfaces() - already cross-platform.
     // Returns JSON: [{name, mac, ipv4, ipv6, flags}]
     engine.register_fn("internal_network_interfaces", || -> String {
         let ifaces = crate::utils::get_network_interfaces();

@@ -1,7 +1,7 @@
 // src/agent/scripting/win_ffi.rs
 //
 // Windows FFI types, constants, and extern linkage declarations used across
-// the scripting sub-modules.  Import with:
+// the scripting sub-modules. Import with:
 //
 //   #[cfg(target_os = "windows")]
 //   use super::win_ffi::win_ext::*;
@@ -158,7 +158,7 @@ pub mod win_ext {
         ) -> BOOL;
     }
 
-    // ── kernel32 (LocalFree — needed after CryptUnprotectData) ───────────────
+    // ── kernel32 (LocalFree - needed after CryptUnprotectData) ───────────────
 
     extern "system" {
         pub fn LocalFree(mem: *mut c_void) -> *mut c_void;

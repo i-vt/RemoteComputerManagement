@@ -11,3 +11,4 @@ pub mod tasks;
 pub mod downloads;
 pub mod iocs;
 pub mod extensions;
+pub mod rcm;

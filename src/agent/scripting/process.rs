@@ -20,7 +20,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Read another process's environment variables.
-    // Linux: reads /proc/{pid}/environ  |  Other platforms: returns error.
+    // Linux: reads /proc/{pid}/environ |  Other platforms: returns error.
     engine.register_fn("internal_proc_env", |pid_str: &str| -> String {
         match pid_str.parse::<u32>() {
             Ok(pid) => proc_env(pid),
@@ -38,7 +38,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Duplicate the token of a running process and impersonate it.
-    // Windows only — no-op stub on other platforms.
+    // Windows only - no-op stub on other platforms.
     engine.register_fn("internal_token_steal", |pid_str: &str| -> String {
         #[cfg(target_os = "windows")]
         {
@@ -78,7 +78,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Enable an SE_* privilege on the current process token.
-    // Windows only — no-op stub on other platforms.
+    // Windows only - no-op stub on other platforms.
     engine.register_fn("internal_enable_privilege", |priv_name: &str| -> String {
         #[cfg(target_os = "windows")]
         {

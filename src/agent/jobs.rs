@@ -50,7 +50,7 @@ struct JobEntry {
 pub struct JobManager {
     jobs: HashMap<u32, JobEntry>,
     next_id: u32,
-    /// Cloned C2 sender – job tasks use this to push streamed results.
+    /// Cloned C2 sender - job tasks use this to push streamed results.
     c2_tx: mpsc::Sender<Vec<u8>>,
 }
 

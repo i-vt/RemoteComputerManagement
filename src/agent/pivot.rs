@@ -218,7 +218,7 @@ fn create_security_pipe(path: &str) -> std::io::Result<NamedPipeServer> {
         .create(path)?;
 
     // Step 2: Apply a permissive DACL via SetKernelObjectSecurity.
-    // This is needed for cross-user pivoting (e.g., SYSTEM → user agent).
+    // This is needed for cross-user pivoting (e.g., SYSTEM -> user agent).
     unsafe {
         use std::os::windows::io::AsRawHandle;
         let handle = pipe.as_raw_handle();

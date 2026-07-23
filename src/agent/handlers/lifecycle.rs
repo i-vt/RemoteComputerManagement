@@ -1,4 +1,4 @@
-// src/agent/handlers/lifecycle.rs — Agent lifecycle (self-destruct, exit)
+// src/agent/handlers/lifecycle.rs - Agent lifecycle (self-destruct, exit)
 
 use crate::common::CommandResponse;
 use crate::utils;

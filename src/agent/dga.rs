@@ -9,18 +9,18 @@
 //
 // Algorithm
 // ─────────
-//   1. Mix: FNV-1a over seed ‖ window ‖ index  (20 bytes → u64)
-//   2. Syllables: extract 2–4 syllables (CV or CVC pattern)
+//   1. Mix: FNV-1a over seed ‖ window ‖ index (20 bytes -> u64)
+//   2. Syllables: extract 2-4 syllables (CV or CVC pattern)
 //      from consecutive 3-byte slices of the hash chain.
-//   3. TLD: high 8 bits of hash → index into tld list.
+//   3. TLD: high 8 bits of hash -> index into tld list.
 //
 // Properties
 // ──────────
-//   • Deterministic — same inputs always yield the same domain.
-//   • Seed-isolated — different seeds produce statistically independent sets.
-//   • Window-rotated — the list rolls every `window_secs` seconds (default 1 day).
-//   • No external deps — pure Rust, no RNG state.
-//   • No crypto — deliberately fast; security comes from seed secrecy.
+//   • Deterministic - same inputs always yield the same domain.
+//   • Seed-isolated - different seeds produce statistically independent sets.
+//   • Window-rotated - the list rolls every `window_secs` seconds (default 1 day).
+//   • No external deps - pure Rust, no RNG state.
+//   • No crypto - deliberately fast; security comes from seed secrecy.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::common::{C2Config, DgaConfig, FallbackEndpoint, TransportProtocol};
@@ -64,7 +64,7 @@ const VOWELS:     &[u8] = b"aeiou";                // 5
 fn syllable(h: u64) -> (char, char, Option<char>) {
     let c1 = CONSONANTS[(h         as usize) % CONSONANTS.len()] as char;
     let v  = VOWELS    [((h >> 8)  as usize) % VOWELS.len()]     as char;
-    // Trailing consonant only when bits 16–17 == 0b00 (25% of the time)
+    // Trailing consonant only when bits 16-17 == 0b00 (25% of the time)
     let trail = if (h >> 16) & 3 == 0 {
         Some(CONSONANTS[((h >> 18) as usize) % CONSONANTS.len()] as char)
     } else {
@@ -88,10 +88,10 @@ pub fn current_window(window_secs: u64) -> u64 {
 /// Generate a single domain for `(seed, window, index)`.
 ///
 /// # Arguments
-/// * `seed`   — Per-campaign secret embedded in the agent at build time.
-/// * `window` — Time bucket (use `current_window` or a fixed value for tests).
-/// * `index`  — Ordinal within the window's domain set (0-based).
-/// * `tlds`   — Slice of TLD strings, e.g. `&["com", "net", "org"]`.
+/// * `seed`   - Per-campaign secret embedded in the agent at build time.
+/// * `window` - Time bucket (use `current_window` or a fixed value for tests).
+/// * `index`  - Ordinal within the window's domain set (0-based).
+/// * `tlds`   - Slice of TLD strings, e.g. `&["com", "net", "org"]`.
 ///
 /// # Returns
 /// A lowercase hostname like `"bekal.com"` or `"torinvex.net"`.
@@ -100,7 +100,7 @@ pub fn generate_domain(seed: u64, window: u64, index: u32, tlds: &[&str]) -> Str
 
     let mut h = fnv1a_mix(seed, window, index);
 
-    // 2–4 syllables
+    // 2-4 syllables
     let syllable_count = 2 + (h as usize % 3);
     let mut domain = String::with_capacity(14);
 
@@ -114,7 +114,7 @@ pub fn generate_domain(seed: u64, window: u64, index: u32, tlds: &[&str]) -> Str
         }
     }
 
-    // TLD — use high bits (less correlated with syllable generation)
+    // TLD - use high bits (less correlated with syllable generation)
     let tld = tlds[(h >> 56) as usize % tlds.len()];
     domain.push('.');
     domain.push_str(tld);
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn window_calculation_divides_correctly() {
-        // window_secs=86400 → daily rotation.
+        // window_secs=86400 -> daily rotation.
         // Anchor to the exact start of a window so the 12h check is
         // unconditionally safe regardless of the chosen epoch value.
         let window_secs = 86400u64;

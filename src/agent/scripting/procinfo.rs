@@ -145,7 +145,7 @@ pub fn register(engine: &mut Engine) {
 
         #[cfg(target_os = "linux")]
         {
-            // Parse /proc/{pid}/maps — filter to file-backed executable regions.
+            // Parse /proc/{pid}/maps - filter to file-backed executable regions.
             match std::fs::read_to_string(format!("/proc/{}/maps", pid)) {
                 Ok(content) => {
                     let mut seen = std::collections::HashSet::new();

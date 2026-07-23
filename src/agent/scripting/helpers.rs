@@ -227,7 +227,7 @@ pub(super) fn spawn_hidden(binary: &str, args_json: &str) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Directory / drive enumeration (pub — used by agent/mod.rs file browser)
+// Directory / drive enumeration (pub - used by agent/mod.rs file browser)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "windows")]

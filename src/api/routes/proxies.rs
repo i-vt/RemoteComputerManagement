@@ -106,7 +106,7 @@ pub async fn start_proxy(
             _ = &mut stop_rx => return,
         };
 
-        // Wrap in yamux (server mode — we open streams, agent accepts them).
+        // Wrap in yamux (server mode - we open streams, agent accepts them).
         let stream = Box::pin(TokioAsyncReadCompatExt::compat(stream));
         let connection = yamux::Connection::new(stream, yamux::Config::default(), yamux::Mode::Server);
         let control = connection.control();
@@ -117,15 +117,15 @@ pub async fn start_proxy(
         //   `_ = runner.next() => break`
         //
         // This is broken in two ways:
-        //   1. yamux MUST be polled continuously — putting it in a select! arm
+        //   1. yamux MUST be polled continuously - putting it in a select! arm
         //      means it only gets one poll per loop iteration, starving the
         //      internal event loop of ACKs and window updates.
         //   2. Any return from runner.next() (including normal control frames
         //      yamux sends on connection setup) caused the arm to fire and
         //      break the loop, dropping the connection. open_stream() then
-        //      silently fails and SOCKS traffic never flows → timeout.
+        //      silently fails and SOCKS traffic never flows -> timeout.
         //
-        // Fix: spawn the runner as its own task and use a oneshot channel to
+        // Spawn the runner as its own task and use a oneshot channel to
         // signal the main accept loop when the yamux connection truly dies.
         let (dead_tx, mut dead_rx) = oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -142,7 +142,7 @@ pub async fn start_proxy(
         // ── Main accept loop ─────────────────────────────────────────────────
         loop {
             tokio::select! {
-                // Tunnel died — clean up.
+                // Tunnel died - clean up.
                 _ = &mut dead_rx => break,
 
                 // New SOCKS connection from the operator's tool.
@@ -336,7 +336,7 @@ pub async fn start_rportfwd(
     let rportfwds_clone = state.rportfwds.clone();
     let bind_port = payload.bind_port;
     // Clone before the spawn so target_desc_for_response is still available
-    // for the JSON return value below — async move would otherwise consume it.
+    // for the JSON return value below - async move would otherwise consume it.
     let target_desc_for_response = format!("{}:{}", payload.target_host, payload.target_port);
     let target_desc_for_spawn   = target_desc_for_response.clone();
 

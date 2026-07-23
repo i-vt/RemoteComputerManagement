@@ -108,7 +108,7 @@ pub fn register(engine: &mut Engine) {
         hex::encode(out)
     });
 
-    // ── In-memory AES-256-GCM (hex buffer → hex buffer) ───────────────────────
+    // ── In-memory AES-256-GCM (hex buffer -> hex buffer) ───────────────────────
 
     engine.register_fn("internal_encrypt_bytes", |data_hex: &str, key_hex: &str| -> String {
         let data   = match hex::decode(data_hex) {
@@ -219,7 +219,7 @@ pub fn register_crypto_ext(engine: &mut rhai::Engine) {
     });
 
     // AES-128-CBC decryption.
-    // All inputs are hex-encoded.  Returns hex plaintext or "Error: ...".
+    // All inputs are hex-encoded. Returns hex plaintext or "Error: ...".
     engine.register_fn("internal_aes128_cbc_decrypt", |data_hex: &str, key_hex: &str, iv_hex: &str| -> String {
         let data = match hex::decode(data_hex) { Ok(d) => d, Err(e) => return format!("Error: {}", e) };
         let key  = match hex::decode(key_hex)  { Ok(k) => k, Err(e) => return format!("Error: {}", e) };
@@ -255,7 +255,7 @@ pub fn register_crypto_ext(engine: &mut rhai::Engine) {
     });
 
     // Convenience: decrypt a Chrome Linux encrypted cookie value.
-    // Chrome uses: PBKDF2-SHA1("peanuts", "saltysalt", 1, 16) → AES-128-CBC
+    // Chrome uses: PBKDF2-SHA1("peanuts", "saltysalt", 1, 16) -> AES-128-CBC
     // with IV = b"\x20" * 16, and the ciphertext starts at byte 3 (after "v10" prefix).
     engine.register_fn("internal_chrome_decrypt_linux", |encrypted_hex: &str| -> String {
         let mut data = match hex::decode(encrypted_hex) {

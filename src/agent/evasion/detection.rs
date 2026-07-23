@@ -41,7 +41,7 @@ pub fn is_virtualized() -> bool {
 }
 
 // ── Decoy Exit ────────────────────────────────────────────────────────
-// Prints a plausible runtime error and exits.  Called when any pre-flight
+// Prints a plausible runtime error and exits. Called when any pre-flight
 // check fails; the resulting process tree gives the analyst nothing useful.
 
 pub fn run_decoy() {
@@ -60,7 +60,7 @@ pub fn run_decoy() {
 // ── Parent Process Validation ─────────────────────────────────────────
 //
 // Falcon's behavioral detection engine is built on parent-child process
-// relationships.  When an agent is spawned from an unexpected parent (an
+// relationships. When an agent is spawned from an unexpected parent (an
 // analysis tool, a sandbox harness, or a detonation runner) its process tree
 // creates an immediate detection signal regardless of what the binary does.
 //
@@ -71,12 +71,12 @@ pub fn run_decoy() {
 //
 // If the parent is NOT on the allowlist the caller should invoke run_decoy().
 //
-// Config field:  valid_parents: ["explorer.exe", "svchost.exe"]
-// Leave empty (default) to disable — the check is a no-op when the list
+// Config field: valid_parents: ["explorer.exe", "svchost.exe"]
+// Leave empty (default) to disable - the check is a no-op when the list
 // is empty so existing configs need no changes.
 //
-// ATT&CK: T1134.004 (PPID Spoofing — awareness / inverse)
-//         T1622     (Debugger Evasion — detonation sandbox variant)
+// ATT&CK: T1134.004 (PPID Spoofing - awareness / inverse)
+//         T1622 (Debugger Evasion - detonation sandbox variant)
 
 #[cfg(target_os = "windows")]
 pub fn is_bad_parent(valid_parents: &[String]) -> bool {
@@ -115,7 +115,7 @@ pub fn is_bad_parent(valid_parents: &[String]) -> bool {
     }
 
     // PROCESS_QUERY_LIMITED_INFORMATION works even when the parent runs at
-    // higher integrity — no SeDebugPrivilege needed.
+    // higher integrity - no SeDebugPrivilege needed.
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
     unsafe {
@@ -127,14 +127,14 @@ pub fn is_bad_parent(valid_parents: &[String]) -> bool {
             mem::size_of::<ProcessBasicInformation>() as u32,
             &mut 0u32,
         );
-        // On failure be permissive — avoid false-positive self-termination.
+        // On failure be permissive - avoid false-positive self-termination.
         if status != 0 { return false; }
 
         let parent_pid = pbi.inherited_from_unique_process_id as u32;
 
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, parent_pid);
         if handle.is_null() {
-            // Parent exited (race) or access denied — be permissive.
+            // Parent exited (race) or access denied - be permissive.
             return false;
         }
 
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn is_virtualized_returns_bool_without_panic() {
-        // Don't assert the value — CI may legitimately run inside a VM.
+        // Don't assert the value - CI may legitimately run inside a VM.
         // The test proves the function completes on any supported OS.
         let result = is_virtualized();
         assert!(result == true || result == false);
@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(is_virtualized(), is_virtualized());
     }
 
-    // ── is_bad_parent — empty allowlist ───────────────────────────────────
+    // ── is_bad_parent - empty allowlist ───────────────────────────────────
     // Core invariant: when no allowlist is configured the feature is disabled
     // and must never cause self-termination regardless of the actual parent.
 
@@ -197,22 +197,22 @@ mod tests {
         assert!(!is_bad_parent(&Vec::new()));
     }
 
-    // ── is_bad_parent — non-Windows stub ──────────────────────────────────
+    // ── is_bad_parent - non-Windows stub ──────────────────────────────────
 
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn non_windows_stub_is_always_permissive() {
-        // /proc fallback not yet implemented — must not self-terminate.
+        // /proc fallback not yet implemented - must not self-terminate.
         assert!(!is_bad_parent(&["explorer.exe".to_string()]));
         assert!(!is_bad_parent(&["svchost.exe".to_string(), "bash".to_string()]));
     }
 
-    // ── is_bad_parent — Windows live path ─────────────────────────────────
+    // ── is_bad_parent - Windows live path ─────────────────────────────────
 
     #[cfg(target_os = "windows")]
     #[test]
     fn nonempty_list_does_not_panic_on_windows() {
-        // Exercises the full NtQueryInformationProcess → QueryFullProcessImageNameW
+        // Exercises the full NtQueryInformationProcess -> QueryFullProcessImageNameW
         // path. Return value depends on the test runner's parent; only
         // assert the call completes without panic.
         let _ = is_bad_parent(&["definitely_not_real_9999.exe".to_string()]);
@@ -232,7 +232,7 @@ mod tests {
             "bash".to_string(),
             "sh".to_string(),
         ];
-        // Not asserting false — just verifying no panic and Result is valid.
+        // Not asserting false - just verifying no panic and Result is valid.
         let _ = is_bad_parent(&broad);
     }
 }

@@ -6,7 +6,7 @@ pub fn register(engine: &mut Engine) {
 
     // ── Chrome cookies ────────────────────────────────────────────────────────
     // Reads Chrome's SQLite Cookies database with SQLITE_OPEN_READ_ONLY so a
-    // running browser is not disturbed.  The `encrypted_value` column is
+    // running browser is not disturbed. The `encrypted_value` column is
     // returned as lowercase hex; pipe it through internal_dpapi_decrypt
     // (Windows) or the linux-keyring AES path to recover plaintext cookies.
     engine.register_fn("internal_chrome_cookies", |profile_path: &str| -> String {
@@ -54,7 +54,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // ── Firefox logins ────────────────────────────────────────────────────────
-    // Returns the raw contents of logins.json.  Credentials are encrypted with
+    // Returns the raw contents of logins.json. Credentials are encrypted with
     // NSS (3DES-CBC); decrypt with the mozilla-decrypt library or the
     // `firefox_decrypt` tool using the profile's key4.db + cert9.db.
     engine.register_fn("internal_firefox_logins", |profile_path: &str| -> String {
