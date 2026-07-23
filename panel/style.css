@@ -12,7 +12,7 @@
   --border-light: #253348;
   --border-focus: #10b981;
 
-  /* Accent — emerald */
+  /* Accent - emerald */
   --accent:       #10b981;
   --accent-dim:   #059669;
   --accent-glow:  rgba(16,185,129,0.18);
@@ -1161,7 +1161,7 @@ input[type="checkbox"] {
 ::selection { background: var(--accent); color: #000; }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   RESPONSIVE — MOBILE (≤ 767px)
+   RESPONSIVE - MOBILE (≤ 767px)
    ═══════════════════════════════════════════════════════════════════════ */
 @media (max-width: 767px) {
   #sidebar      { display: none; }
@@ -1197,14 +1197,14 @@ input[type="checkbox"] {
 
   .form-row { grid-template-columns: 1fr; }
 
-  /* Tables → scrollable on mobile */
+  /* Tables -> scrollable on mobile */
   .table-scroll-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     border-radius: var(--r-lg);
   }
 
-  /* Modals — full screen on mobile */
+  /* Modals - full screen on mobile */
   .modal-overlay {
     padding: 0;
     align-items: flex-end;
@@ -1236,7 +1236,7 @@ input[type="checkbox"] {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   RESPONSIVE — TABLET (768px – 1023px)
+   RESPONSIVE - TABLET (768px - 1023px)
    ═══════════════════════════════════════════════════════════════════════ */
 @media (min-width: 768px) and (max-width: 1023px) {
   :root { --sidebar-w: 200px; }
@@ -1249,7 +1249,7 @@ input[type="checkbox"] {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   RESPONSIVE — DESKTOP (≥ 1024px)
+   RESPONSIVE - DESKTOP (≥ 1024px)
    ═══════════════════════════════════════════════════════════════════════ */
 @media (min-width: 1024px) {
   #mobile-topbar { display: none; }

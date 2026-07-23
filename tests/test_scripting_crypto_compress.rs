@@ -2,11 +2,11 @@
 //
 // Tests for scripting/crypto.rs and scripting/compress.rs.
 //
-// Crypto: every function is pure Rust — results are deterministic and
+// Crypto: every function is pure Rust - results are deterministic and
 // verified against published test vectors (NIST, RFC 1321, RFC 4231, etc.).
 // Any regression in hash output, encoding, or AES correctness fails immediately.
 //
-// Compress: round-trip invariant — compress(decompress(x)) == x, and the
+// Compress: round-trip invariant - compress(decompress(x)) == x, and the
 // produced ZIP archives must be readable by the `zip` crate.
 
 use rcm::agent::scripting::ExtensionManager;
@@ -16,7 +16,7 @@ fn run(script: &str) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SHA-256  (NIST FIPS 180-4 test vectors)
+// SHA-256 (NIST FIPS 180-4 test vectors)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -59,7 +59,7 @@ fn sha256_bytes_of_known_hex_input() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MD5  (RFC 1321 §A.5 test vectors)
+// MD5 (RFC 1321 §A.5 test vectors)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -88,12 +88,12 @@ fn md5_output_is_32_hex_chars() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HMAC-SHA256  (RFC 4231 Test Case 1)
+// HMAC-SHA256 (RFC 4231 Test Case 1)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn hmac_rfc4231_case1() {
-    // Key  = 20 × 0x0b
+    // Key = 20 × 0x0b
     // Data = "Hi There"
     // HMAC = b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
     let expected = "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7";
@@ -116,7 +116,7 @@ fn hmac_is_deterministic() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CRC-32  (ISO 3309 / ITU-T V.42 — standard "check value" vector)
+// CRC-32 (ISO 3309 / ITU-T V.42 - standard "check value" vector)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -169,7 +169,7 @@ fn fnv1a_output_is_integer_string() {
 
 #[test]
 fn base64_encode_man() {
-    // RFC 4648 §10: "Man" → "TWFu"
+    // RFC 4648 §10: "Man" -> "TWFu"
     assert_eq!(run(r#"internal_base64_encode("Man")"#), "TWFu");
 }
 
@@ -230,7 +230,7 @@ fn hex_encode_empty() {
 
 #[test]
 fn xor_single_byte_key() {
-    // ff ^ aa = 55,  00 ^ aa = aa,  ff ^ aa = 55
+    // ff ^ aa = 55, 00 ^ aa = aa, ff ^ aa = 55
     assert_eq!(run(r#"internal_xor("ff00ff", "aa")"#), "55aa55");
 }
 
@@ -242,7 +242,7 @@ fn xor_same_key_twice_is_identity() {
 
 #[test]
 fn xor_multi_byte_key_cycles() {
-    // data: 0a 0b 0c, key: ff ff → result: f5 f4 f3
+    // data: 0a 0b 0c, key: ff ff -> result: f5 f4 f3
     assert_eq!(run(r#"internal_xor("0a0b0c", "ffff")"#), "f5f4f3");
 }
 
@@ -253,7 +253,7 @@ fn xor_multi_byte_key_cycles() {
 #[test]
 fn uuid_format() {
     let u = run(r#"internal_uuid()"#);
-    // xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx  (36 chars)
+    // xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (36 chars)
     assert_eq!(u.len(), 36, "UUID should be 36 chars: {}", u);
     let parts: Vec<&str> = u.split('-').collect();
     assert_eq!(parts.len(), 5, "UUID should have 5 hyphen-separated groups: {}", u);
@@ -315,7 +315,7 @@ internal_decrypt_bytes(ct, "{}")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AES-128-CBC  (NIST SP 800-38A F.2.1 decrypt vector)
+// AES-128-CBC (NIST SP 800-38A F.2.1 decrypt vector)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]

@@ -1,5 +1,5 @@
 /**
- * MusicManager — Ambient music player for RCM Panel
+ * MusicManager - Ambient music player for RCM Panel
  * Injects a bottom-right player that fetches ./panel/media/index.json,
  * visualizes audio via Web Audio API, and provides shuffle/repeat controls.
  * Theme-matched to the RCM design system (style.css variables).
@@ -597,7 +597,7 @@ window.MusicManager = (function() {
     if (ctx.state === 'suspended') ctx.resume();
 
     audio.play().catch(() => {
-      // Autoplay blocked — user must click play
+      // Autoplay blocked - user must click play
     });
   }
 

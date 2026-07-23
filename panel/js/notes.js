@@ -1,4 +1,4 @@
-// panel/js/notes.js — Session tags & notes
+// panel/js/notes.js - Session tags & notes
 window.Notes = {
     // Escape HTML entities to prevent XSS from agent-controlled data
     esc(s) {
@@ -33,7 +33,7 @@ window.Notes = {
         modal.innerHTML = `
             <div class="bg-gray-900 w-full max-w-lg rounded-lg border border-gray-600 shadow-2xl">
                 <div class="bg-gray-800 p-3 flex justify-between items-center border-b border-gray-700 rounded-t-lg">
-                    <span class="text-white font-bold text-sm"><i class="fas fa-sticky-note"></i> Notes — ${safeHostname} (#${parseInt(sessionId)})</span>
+                    <span class="text-white font-bold text-sm"><i class="fas fa-sticky-note"></i> Notes - ${safeHostname} (#${parseInt(sessionId)})</span>
                     <button onclick="document.getElementById('notes-modal').remove()" class="text-red-400 hover:text-white"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="p-4 max-h-80 overflow-y-auto">${noteRows}</div>

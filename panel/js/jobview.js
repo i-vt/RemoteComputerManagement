@@ -1,4 +1,4 @@
-// panel/js/jobview.js — Job status panel with per-session job listing
+// panel/js/jobview.js - Job status panel with per-session job listing
 window.JobView = {
     jobs: {},
 
@@ -59,7 +59,7 @@ window.JobView = {
                 <td class="p-3 text-gray-300 text-sm truncate max-w-[200px]" title="${j.description}">${j.description}</td>
                 <td class="p-3"><span class="px-2 py-1 rounded text-xs font-bold ${statusColor}">${j.status}</span></td>
                 <td class="p-3 text-xs text-gray-400">${j.started_at?.split('T')[1]?.split('.')[0] || ''}</td>
-                <td class="p-3 text-xs text-gray-400">${j.finished_at?.split('T')[1]?.split('.')[0] || '—'}</td>
+                <td class="p-3 text-xs text-gray-400">${j.finished_at?.split('T')[1]?.split('.')[0] || '-'}</td>
                 <td class="p-3 text-right">${killBtn}</td>
             </tr>`;
         }).join('');

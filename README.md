@@ -3,7 +3,7 @@
 A modular command-and-control framework written in Rust, built for authorized red team operations.
 
 ![Rust](https://img.shields.io/badge/rust-1.75%2B-orange)
-![Tests](https://img.shields.io/badge/tests-317%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-886%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 <img width="2882" height="1910" alt="image" src="https://github.com/user-attachments/assets/9e9f5f1e-b5ea-4d75-b637-9367c78cc8c3" />
@@ -123,7 +123,7 @@ See [`docs/`](docs/README.md):
 - [Fallback & DGA](docs/fallback.md) — multi-host resilience templates and domain generation
 - [Evasion](docs/evasion.md) — defense bypass techniques
 - [Panel Guide](docs/panel.md) — UI walkthrough and keyboard shortcuts
-- [Testing](docs/testing.md) — 317+ tests across 19 test locations
+- [Testing](docs/testing.md) — 886+ tests across 50 test locations
 
 ## Project Structure
 
@@ -154,7 +154,7 @@ extensions/           # 44 built-in Rhai agent-side scripts
 modules/              # server-side Rhai modules
 fallback_profiles/    # 7 pre-built fallback JSON templates
 traffic_profiles/     # 5 malleable C2 traffic profiles
-tests/                # 13 integration test files
+tests/                # 23 integration test files
 docs/                 # full documentation
 ```
 
@@ -174,7 +174,7 @@ docs/                 # full documentation
 ./run_tests.sh --all --pivot
 ```
 
-317 tests passing across 19 test locations (13 integration test files + 6 inline `#[test]` modules).
+886 tests passing across 50 test locations (23 integration test files + 27 inline `#[test]` modules).
 
 ## Contributors
 

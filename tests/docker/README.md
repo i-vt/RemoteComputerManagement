@@ -6,14 +6,14 @@ Docker Compose environment that builds the full project, runs unit tests as a bu
 
 ```
                     ┌─────────────────────────────────┐
-                    │        Docker Build              │
+                    │        Docker Build │
                     │  ┌──────────┐   ┌────────────┐  │
-  cargo test fails  │  │ builder  │──▶│ unit-test   │──┼──▶ BUILD FAILS
-  = build fails     │  │ (compile)│   │ cargo test  │  │
+  cargo test fails │  │ builder │──▶│ unit-test │──┼──▶ BUILD FAILS
+  = build fails │  │ (compile)│   │ cargo test │  │
                     │  └──────────┘   └─────┬──────┘  │
                     │                       │         │
                     │                 ┌─────▼──────┐  │
-                    │                 │  agents     │  │
+                    │                 │  agents │  │
                     │                 │ (build bins)│  │
                     │                 └─────┬──────┘  │
                     │                       │         │
@@ -24,19 +24,19 @@ Docker Compose environment that builds the full project, runs unit tests as a bu
                     └─────────────────────────────────┘
                                     │
                     ┌───────────────▼─────────────────┐
-                    │      Docker Compose              │
+                    │      Docker Compose │
                     │  ┌──────────┐  ┌─────────────┐  │
-                    │  │c2-server │◀─│ agent-1/2   │  │
+                    │  │c2-server │◀─│ agent-1/2 │  │
                     │  └────┬─────┘  └─────────────┘  │
                     │       │                          │
                     │  ┌────▼──────────────────────┐  │
                     │  │ test-runner (bash/curl/jq) │  │
-                    │  │ integration tests only     │  │
+                    │  │ integration tests only │  │
                     │  └───────────────────────────┘  │
                     └─────────────────────────────────┘
 ```
 
-**Key principle:** Unit tests run during the Docker build and fail the build on failure. The Compose stack only runs integration tests — it cannot produce a green result while Rust tests are broken.
+**Key principle:** Unit tests run during the Docker build and fail the build on failure. The Compose stack only runs integration tests - it cannot produce a green result while Rust tests are broken.
 
 ## Quick Start
 
@@ -92,18 +92,18 @@ wait_agents 2 60
 
 ```
 ┌────────────┐        ┌─────────────┐
-│test-runner  │───────▶│  c2-server  │◀───── agent-1 (TLS :4443)
-│ curl + jq   │  API   │  API  :8080 │◀───── agent-2 (HTTP :4480)
-│ bash tests  │ :8080  │  TLS  :4443 │
+│test-runner │───────▶│  c2-server │◀───── agent-1 (TLS :4443)
+│ curl + jq │  API │  API :8080 │◀───── agent-2 (HTTP :4480)
+│ bash tests │ :8080 │  TLS :4443 │
 └────────────┘        │  HTTP :4480 │
                       └──────┬──────┘
 ┌────────────┐               │
 │mock-service │  (nginx, returns known payload for rportfwd)
-│  :80        │
+│  :80 │
 └────────────┘
 ┌────────────┐
 │webhook-sink│  (python, captures POST payloads to /webhooks/)
-│  :9999     │
+│  :9999 │
 └────────────┘
 ```
 
@@ -125,11 +125,11 @@ wait_agents 2 60
 
 The `Dockerfile` is multi-stage:
 
-1. **builder** — Rust 1.85, compiles `server`, `builder`, and `client` binaries
-2. **unit-test** — Runs `cargo test --lib --tests`; fails the build on failure
-3. **agents** — Builds test agent binaries using the compiled builder
-4. **server** — Debian slim runtime with server + certs + panel
-5. **agent** — Minimal Debian slim that runs a pre-built agent binary
+1. **builder** - Rust 1.85, compiles `server`, `builder`, and `client` binaries
+2. **unit-test** - Runs `cargo test --lib --tests`; fails the build on failure
+3. **agents** - Builds test agent binaries using the compiled builder
+4. **server** - Debian slim runtime with server + certs + panel
+5. **agent** - Minimal Debian slim that runs a pre-built agent binary
 
 ## Adding Tests
 
@@ -148,9 +148,9 @@ assert_contains "has expected field" "my_value" "$RESP"
 Available helpers: `api_get`, `api_post`, `api_delete`, `login_as`, `wait_agents`, `assert_eq`, `assert_ne`, `assert_contains`, `assert_http`, `skip`, `suite`.
 
 To classify your test, add its name to the appropriate tier in `run_tests.sh`:
-- `SMOKE_TESTS` — API-only, no agents needed
-- `AGENT_TESTS` — needs connected agents
-- `PIVOT_TESTS` — needs pivot chain infrastructure
+- `SMOKE_TESTS` - API-only, no agents needed
+- `AGENT_TESTS` - needs connected agents
+- `PIVOT_TESTS` - needs pivot chain infrastructure
 
 ## Pinned Toolchain
 
@@ -163,5 +163,5 @@ The Dockerfile uses `rust:1.85-bookworm`. The committed `Cargo.lock` pins all tr
 ## Cleanup
 
 ```bash
-docker compose down -v   # removes volumes too
+docker compose down -v # removes volumes too
 ```

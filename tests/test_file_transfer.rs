@@ -1,4 +1,4 @@
-// tests/test_file_transfer.rs — File transfer and serialization tests
+// tests/test_file_transfer.rs - File transfer and serialization tests
 
 use rcm::file_transfer;
 use std::fs;

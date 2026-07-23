@@ -114,7 +114,7 @@ window.HistoryManager = {
             tdOutput.className = `p-4 font-mono break-all transition-colors align-top ${cursorClass}`;
             tdOutput.textContent = outputPreview;
 
-            // Store full data safely in memory/properties, not attributes if possible, 
+            // Store full data safely in memory/properties, not attributes if possible,
             // but dataset is okay if we strictly use textContent when retrieving.
             if (fullOutput) {
                 // Attach event listeners programmatically

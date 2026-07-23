@@ -18,7 +18,7 @@ window.ModuleManager = {
                 // Only re-render if the list actually changed
                 if(JSON.stringify(newModules) !== JSON.stringify(this.availableModules)) {
                     this.availableModules = newModules;
-                    // FIX: push the updated dropdown into every existing host row
+                    // Push the updated dropdown into every existing host row
                     // immediately rather than waiting for the next 2-second poll
                     // cycle. Without this, the "No modules" placeholder sticks
                     // until the host table happens to re-render.

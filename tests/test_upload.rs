@@ -1,8 +1,8 @@
-// tests/test_upload.rs — Integration tests for chunked file upload.
+// tests/test_upload.rs - Integration tests for chunked file upload.
 //
 // These tests call the public `handle_file_write_chunked` function directly
 // (it is `pub fn` in the `pub mod rcm::agent::handlers::files` chain) and
-// verify end-to-end behaviour: base64 encode → chunk → reconstruct on disk.
+// verify end-to-end behaviour: base64 encode -> chunk -> reconstruct on disk.
 //
 // Structure:
 //   - Helper utilities
@@ -29,7 +29,7 @@ fn file_path(dir: &TempDir, name: &str) -> String {
 }
 
 /// Upload `content` to `filename` inside `dir` using `chunk_size`-byte pieces,
-/// all with the given `batch_ts`.  Panics on any chunk error.
+/// all with the given `batch_ts`. Panics on any chunk error.
 fn upload(dir: &TempDir, filename: &str, batch: &str, content: &[u8], chunk_size: usize) {
     if content.is_empty() {
         // Zero-byte file: one empty chunk
@@ -95,7 +95,7 @@ fn roundtrip_single_byte() {
 #[test]
 fn roundtrip_content_exactly_one_chunk_boundary() {
     let dir = tempfile::tempdir().unwrap();
-    // 32 bytes content, 32 bytes chunk → exactly 1 chunk, no remainder
+    // 32 bytes content, 32 bytes chunk -> exactly 1 chunk, no remainder
     let content: Vec<u8> = (0..32u8).collect();
     upload(&dir, "exact.bin", "bexact", &content, 32);
     assert_file_eq(&dir, "exact.bin", &content);
@@ -104,7 +104,7 @@ fn roundtrip_content_exactly_one_chunk_boundary() {
 #[test]
 fn roundtrip_content_one_byte_over_chunk_boundary() {
     let dir = tempfile::tempdir().unwrap();
-    // 33 bytes, 32-byte chunks → 2 chunks: full + 1-byte remainder
+    // 33 bytes, 32-byte chunks -> 2 chunks: full + 1-byte remainder
     let content: Vec<u8> = (0..33u8).collect();
     upload(&dir, "over.bin", "bover", &content, 32);
     assert_file_eq(&dir, "over.bin", &content);
@@ -148,7 +148,7 @@ fn chunk_0_always_truncates_regardless_of_previous_content() {
     upload(&dir, "trunc.bin", "b_large", &large, 32);
     assert_file_eq(&dir, "trunc.bin", &large);
 
-    // Now send a single small chunk_idx=0 — must truncate, not append
+    // Now send a single small chunk_idx=0 - must truncate, not append
     let path = file_path(&dir, "trunc.bin");
     let cmd = format!("file:write_chunk|b_small|{}|0|1|{}", path, BASE64.encode(b"TINY"));
     let (_, err, code) = handle_file_write_chunked(&cmd);
@@ -161,12 +161,12 @@ fn chunk_0_always_truncates_regardless_of_previous_content() {
 
 #[test]
 fn out_of_order_delivery_fails_not_corrupts() {
-    // The handler requires strict in-order delivery.  Sending a non-zero
+    // The handler requires strict in-order delivery. Sending a non-zero
     // chunk index when the file has not yet been initialised (chunk 0 never
     // arrived) fails immediately with an OS error rather than creating a
     // ghost file or silently writing corrupt data.
     //
-    // This is a stronger guarantee than "wrong content" — the transport
+    // This is a stronger guarantee than "wrong content" - the transport
     // layer must deliver in order, and deviations cause a visible, auditable
     // error rather than a silent data integrity failure.
     let dir = tempfile::tempdir().unwrap();
@@ -186,7 +186,7 @@ fn out_of_order_delivery_fails_not_corrupts() {
     let (_, err0, code0) = handle_file_write_chunked(&c0);
     assert_eq!(code0, 0, "chunk 0 after failed chunk 1 must succeed; err: {}", err0);
 
-    // Only chunk 0's content is present — the rejected chunk 1 was never written
+    // Only chunk 0's content is present - the rejected chunk 1 was never written
     assert_eq!(std::fs::read(&path).unwrap(), b"FIRST_",
         "only chunk 0 content should be present; chunk 1 was rejected");
 }
@@ -242,7 +242,7 @@ fn progress_message_contains_chunk_fraction() {
     let dir = tempfile::tempdir().unwrap();
     let path = file_path(&dir, "frac.bin");
 
-    // chunk 0 of 5 → "1/5"
+    // chunk 0 of 5 -> "1/5"
     let cmd = format!("file:write_chunk|bf|{}|0|5|{}", path, BASE64.encode(b"x"));
     let (msg, _, code) = handle_file_write_chunked(&cmd);
     assert_eq!(code, 0);

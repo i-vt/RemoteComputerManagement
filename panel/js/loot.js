@@ -1,4 +1,4 @@
-// panel/js/loot.js — Loot browser
+// panel/js/loot.js - Loot browser
 // Browses the server's downloads/ folder (files pulled from agents during ops).
 
 window.LootBrowser = {
@@ -24,10 +24,18 @@ window.LootBrowser = {
             const { entries } = await r.json();
             this.render(entries || []);
         } catch (e) {
-            ctr.innerHTML = `<p class="text-red-400 p-6">Error: ${e.message}</p>`;
+            ctr.textContent = '';
+            const p = document.createElement('p');
+            p.className = 'text-red-400 p-6';
+            p.textContent = `Error: ${e.message}`;
+            ctr.appendChild(p);
         }
     },
 
+    // Rows are built with DOM APIs (never innerHTML interpolation):
+    // agent-controlled file names/paths must not reach inline handler
+    // strings or HTML, or a crafted filename becomes stored XSS in the
+    // operator panel (window.Auth.key theft).
     render(entries) {
         const ctr = document.getElementById('loot-container');
         if (!entries.length) {
@@ -35,62 +43,94 @@ window.LootBrowser = {
             return;
         }
 
-        ctr.innerHTML = entries.map(e => {
-            const icon  = this._icon(e);
-            const size  = e.is_dir ? '' : this._size(e.size);
-            const date  = e.modified ? new Date(e.modified * 1000).toLocaleString() : '';
-            const click = e.is_dir
-                ? `window.LootBrowser.load('${e.path}')`
-                : `window.LootBrowser.preview('${e.path}', '${e.name}')`;
+        ctr.textContent = '';
+        entries.forEach(e => {
+            const row = document.createElement('div');
+            row.className = 'flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/60 ' +
+                            'border-b border-gray-700/40 last:border-0 cursor-pointer group';
+            row.addEventListener('click', () => {
+                if (e.is_dir) this.load(e.path); else this.preview(e.path, e.name);
+            });
 
-            return `
-            <div class="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-700/60
-                        border-b border-gray-700/40 last:border-0 cursor-pointer group"
-                 onclick="${click}">
-              <div class="w-8 text-center text-lg">${icon}</div>
-              <div class="flex-1 min-w-0">
-                <div class="text-sm text-gray-200 truncate">${e.name}</div>
-                <div class="text-xs text-gray-500">${date}</div>
-              </div>
-              <div class="text-xs text-gray-500 font-mono w-20 text-right">${size}</div>
-              <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                ${!e.is_dir ? `
-                  <button onclick="event.stopPropagation();window.LootBrowser.download('${e.path}','${e.name}')"
-                          class="text-green-400 hover:text-white text-xs px-2 py-1
-                                 bg-gray-800 rounded" title="Download file">
-                    <i class="fas fa-download"></i>
-                  </button>` : `
-                  <button onclick="event.stopPropagation();window.LootBrowser.downloadFolder('${e.path}','${e.name}')"
-                          class="text-blue-400 hover:text-white text-xs px-2 py-1
-                                 bg-gray-800 rounded" title="Download folder as .zip">
-                    <i class="fas fa-file-archive"></i> zip
-                  </button>`}
-                <button onclick="event.stopPropagation();window.LootBrowser.confirmDelete('${e.path}','${e.name}')"
-                        class="text-red-400 hover:text-white text-xs px-2 py-1
-                               bg-gray-800 rounded" title="Delete">
-                  <i class="fas fa-trash"></i>
-                </button>
-              </div>
-            </div>`;
-        }).join('');
+            const icon = document.createElement('div');
+            icon.className = 'w-8 text-center text-lg';
+            icon.innerHTML = this._icon(e); // static markup, no user data
+            row.appendChild(icon);
+
+            const mid = document.createElement('div');
+            mid.className = 'flex-1 min-w-0';
+            const nm = document.createElement('div');
+            nm.className = 'text-sm text-gray-200 truncate';
+            nm.textContent = e.name;
+            const dt = document.createElement('div');
+            dt.className = 'text-xs text-gray-500';
+            dt.textContent = e.modified ? new Date(e.modified * 1000).toLocaleString() : '';
+            mid.appendChild(nm);
+            mid.appendChild(dt);
+            row.appendChild(mid);
+
+            const sz = document.createElement('div');
+            sz.className = 'text-xs text-gray-500 font-mono w-20 text-right';
+            sz.textContent = e.is_dir ? '' : this._size(e.size);
+            row.appendChild(sz);
+
+            const btns = document.createElement('div');
+            btns.className = 'flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity';
+            const mkBtn = (cls, title, iconHtml, fn) => {
+                const b = document.createElement('button');
+                b.className = cls;
+                b.title = title;
+                b.innerHTML = iconHtml; // static markup, no user data
+                b.addEventListener('click', (ev) => { ev.stopPropagation(); fn(); });
+                return b;
+            };
+            if (!e.is_dir) {
+                btns.appendChild(mkBtn(
+                    'text-green-400 hover:text-white text-xs px-2 py-1 bg-gray-800 rounded',
+                    'Download file', '<i class="fas fa-download"></i>',
+                    () => this.download(e.path, e.name)));
+            } else {
+                btns.appendChild(mkBtn(
+                    'text-blue-400 hover:text-white text-xs px-2 py-1 bg-gray-800 rounded',
+                    'Download folder as .zip', '<i class="fas fa-file-archive"></i> zip',
+                    () => this.downloadFolder(e.path, e.name)));
+            }
+            btns.appendChild(mkBtn(
+                'text-red-400 hover:text-white text-xs px-2 py-1 bg-gray-800 rounded',
+                'Delete', '<i class="fas fa-trash"></i>',
+                () => this.confirmDelete(e.path, e.name)));
+            row.appendChild(btns);
+
+            ctr.appendChild(row);
+        });
     },
 
     renderBreadcrumb(path) {
         const bc = document.getElementById('loot-breadcrumb');
         if (!bc) return;
-        const parts  = path ? path.split('/') : [];
-        let html = `<button onclick="window.LootBrowser.load('')"
-                            class="text-green-400 hover:text-white text-xs font-mono">
-                      downloads/</button>`;
+        // DOM-built breadcrumb: path segments are agent-controlled
+        // directory names, so they go through textContent/addEventListener.
+        bc.textContent = '';
+        const root = document.createElement('button');
+        root.className = 'text-green-400 hover:text-white text-xs font-mono';
+        root.textContent = 'downloads/';
+        root.addEventListener('click', () => this.load(''));
+        bc.appendChild(root);
+        const parts = path ? path.split('/') : [];
         let cumulative = '';
         parts.forEach(p => {
             cumulative += (cumulative ? '/' : '') + p;
             const cp = cumulative;
-            html += `<span class="text-gray-600 mx-1">/</span>
-                     <button onclick="window.LootBrowser.load('${cp}')"
-                             class="text-gray-300 hover:text-white text-xs font-mono">${p}</button>`;
+            const sep = document.createElement('span');
+            sep.className = 'text-gray-600 mx-1';
+            sep.textContent = '/';
+            const btn = document.createElement('button');
+            btn.className = 'text-gray-300 hover:text-white text-xs font-mono';
+            btn.textContent = p;
+            btn.addEventListener('click', () => this.load(cp));
+            bc.appendChild(sep);
+            bc.appendChild(btn);
         });
-        bc.innerHTML = html;
     },
 
     // Preview in modal
@@ -107,26 +147,42 @@ window.LootBrowser = {
         modal.classList.remove('hidden');
 
         if (['png','jpg','jpeg','gif','bmp','webp'].includes(ext)) {
-            body.innerHTML = `<img src="${src}" class="max-w-full max-h-full object-contain mx-auto"
-                                   style="max-height:70vh">`;
+            body.textContent = '';
+            const img = document.createElement('img');
+            img.src = src;
+            img.className = 'max-w-full max-h-full object-contain mx-auto';
+            img.style.maxHeight = '70vh';
+            body.appendChild(img);
         } else if (['txt','log','json','xml','md','sh','bat','ps1','ini','cfg','csv'].includes(ext)) {
             body.innerHTML = '<div class="text-gray-400 p-4">Loading…</div>';
             try {
                 const r = await fetch(src, { headers: { 'X-API-KEY': window.Auth.key } });
                 const text = await r.text();
-                const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-                body.innerHTML = `<pre class="text-xs text-green-300 font-mono whitespace-pre-wrap
-                                            p-4 overflow-auto" style="max-height:65vh">${safe}</pre>`;
+                const pre = document.createElement('pre');
+                pre.className = 'text-xs text-green-300 font-mono whitespace-pre-wrap ' +
+                                'p-4 overflow-auto';
+                pre.style.maxHeight = '65vh';
+                pre.textContent = text;
+                body.textContent = '';
+                body.appendChild(pre);
             } catch (e) {
-                body.innerHTML = `<p class="text-red-400 p-4">${e.message}</p>`;
+                body.textContent = '';
+                const p = document.createElement('p');
+                p.className = 'text-red-400 p-4';
+                p.textContent = e.message;
+                body.appendChild(p);
             }
         } else {
-            body.innerHTML = `<p class="text-gray-400 p-6 text-center">
-                No preview available for .${ext} files.<br>
-                <button onclick="window.LootBrowser.download('${path}','${name}')"
-                        class="mt-3 px-4 py-2 bg-green-700 hover:bg-green-600 text-white rounded text-sm">
-                  <i class="fas fa-download mr-1"></i> Download
-                </button></p>`;
+            body.textContent = '';
+            const p = document.createElement('p');
+            p.className = 'text-gray-400 p-6 text-center';
+            p.append(`No preview available for .${ext} files.`, document.createElement('br'));
+            const btn = document.createElement('button');
+            btn.className = 'mt-3 px-4 py-2 bg-green-700 hover:bg-green-600 text-white rounded text-sm';
+            btn.innerHTML = '<i class="fas fa-download mr-1"></i> Download';
+            btn.addEventListener('click', () => this.download(path, name));
+            p.appendChild(btn);
+            body.appendChild(p);
         }
     },
 
@@ -148,7 +204,7 @@ window.LootBrowser = {
     // Download an entire folder as a single zip file.
     // The server zips it on-the-fly via GET /api/loot/zip?path=...
     // Download an entire folder as a single zip file.
-    // Direct <a href> with ?key= streams straight to disk — no fetch+blob
+    // Direct <a href> with ?key= streams straight to disk - no fetch+blob
     // buffering that would OOM the browser for large loot folders.
     downloadFolder(path, name) {
         const url  = window.Auth.url.replace(/\/+$/, '');

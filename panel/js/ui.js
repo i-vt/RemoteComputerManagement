@@ -150,7 +150,7 @@ window.UI = {
                 </span>
               </td>
               <td style="padding:10px 16px;font-family:monospace;font-size:12px;color:var(--text-muted);">
-                ${escHtml(h.ip||'—')}
+                ${escHtml(h.ip||'-')}
               </td>
               <td style="padding:10px 16px;font-size:12px;${fresh}">${ago} ago</td>
               <td style="padding:10px 16px;text-align:right;">
@@ -291,7 +291,7 @@ window.UI = {
                 const badges = window.EvasionFlags?.renderBadges(h.id) || '';
                 const badgesHtml = badges
                     ? `<div style="display:flex;gap:3px;flex-wrap:wrap;">${badges}</div>`
-                    : '<span style="font-size:10px;color:var(--text-muted);">—</span>';
+                    : '<span style="font-size:10px;color:var(--text-muted);">-</span>';
                 if (evasionCell.innerHTML !== badgesHtml) evasionCell.innerHTML = badgesHtml;
             }
             const proxyBtn   = h.has_proxy
@@ -338,7 +338,7 @@ window.UI = {
 
 window.EvasionFlags = {
 
-    // Map of command string fragments → flag name
+    // Map of command string fragments -> flag name
     _cmdMap: {
         'evasion:patch_amsi':    'amsi',
         'evasion:patch_etw':     'etw',

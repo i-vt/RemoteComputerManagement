@@ -1,4 +1,4 @@
-// panel/js/app.js — Router, responsive helpers, mobile session cards
+// panel/js/app.js - Router, responsive helpers, mobile session cards
 
 window.Router = {
     current: 'stats',

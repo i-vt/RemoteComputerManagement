@@ -1,8 +1,8 @@
-// panel/js/ioc.js — Artifact / IOC Tracker
+// panel/js/ioc.js - Artifact / IOC Tracker
 //
 // Displays all artifacts recorded across all sessions, lets operators
 // add new entries, dispatch pre-filled cleanup commands, and mark items
-// as cleaned.  Data lives in the server-side `iocs` table.
+// as cleaned. Data lives in the server-side `iocs` table.
 
 window.IocTracker = {
 
@@ -98,7 +98,7 @@ window.IocTracker = {
           <td class="px-3 py-2 text-gray-200 font-mono text-xs max-w-xs truncate"
               title="${esc(i.path)}">${esc(i.path)}</td>
           <td class="px-3 py-2 text-gray-400 text-xs max-w-xs truncate"
-              title="${esc(i.detail || '')}">${esc(i.detail) || '—'}</td>
+              title="${esc(i.detail || '')}">${esc(i.detail) || '-'}</td>
           <td class="px-3 py-2 text-gray-500 text-xs">${esc(i.operator)}</td>
           <td class="px-3 py-2 text-gray-500 text-xs whitespace-nowrap">${i.created_at?.split('T')[0] || ''}</td>
           <td class="px-3 py-2">${status}</td>
@@ -190,7 +190,7 @@ window.IocTracker = {
                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-sm text-white">
               </div>
               <div>
-                <label class="text-xs text-gray-400 mb-1 block">Cleanup command <span class="text-gray-600">(optional — dispatched on Clean)</span></label>
+                <label class="text-xs text-gray-400 mb-1 block">Cleanup command <span class="text-gray-600">(optional - dispatched on Clean)</span></label>
                 <input id="ioc-new-cleanup" type="text" placeholder="e.g. shell del C:\\Windows\\Temp\\payload.exe"
                        class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-sm text-white font-mono">
               </div>

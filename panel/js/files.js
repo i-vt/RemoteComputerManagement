@@ -661,7 +661,7 @@ window.FileManager = {
                 addSep();
                 let clickPath;
                 if (idx === 0) {
-                    // Drive letter root: "D:" → "D:\"
+                    // Drive letter root: "D:" -> "D:\"
                     clickPath = p.includes(':') ? p + '\\' : 'C:\\';
                 } else {
                     const drivePart = parts[0].includes(':') ? parts[0] + '\\' : 'C:\\';
@@ -821,14 +821,14 @@ window.FileManager = {
     },
 
     // Reads `file` in 8 MB slices and POSTs each to /api/hosts/:id/upload.
-    // Each chunk body is ~11 MB — well under the 50 MB API body limit.
+    // Each chunk body is ~11 MB - well under the 50 MB API body limit.
     // The old approach (readAsDataURL on the whole file) loaded the entire
     // file into browser memory and was limited to ~37.5 MB by the 50 MB cap.
     async _uploadChunked(file, baseUrl) {
         const CHUNK = 8 * 1024 * 1024;                     // 8 MB per chunk
         const total = Math.max(1, Math.ceil(file.size / CHUNK));
         const path  = this.resolvePath(file.name);
-        // Unique ID per upload session — prevents chunk interleaving when
+        // Unique ID per upload session - prevents chunk interleaving when
         // multiple files are uploaded concurrently to the same agent.
         const batchTs = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -836,7 +836,7 @@ window.FileManager = {
             const slice = file.slice(i * CHUNK, Math.min((i + 1) * CHUNK, file.size));
 
             // FileReader.readAsDataURL is the browser-native way to base64-encode
-            // a binary slice reliably across all browsers.  The spread-into-btoa
+            // a binary slice reliably across all browsers. The spread-into-btoa
             // pattern fails with a call-stack overflow for slices > ~1 MB.
             let b64;
             try {
@@ -847,7 +847,7 @@ window.FileManager = {
                     r.readAsDataURL(slice);
                 });
             } catch (err) {
-                if (window.UI) window.UI.addLog(`Upload error: ${file.name} — ${err.message}`);
+                if (window.UI) window.UI.addLog(`Upload error: ${file.name} - ${err.message}`);
                 return;
             }
 
@@ -863,7 +863,7 @@ window.FileManager = {
                     }),
                 });
             } catch (err) {
-                if (window.UI) window.UI.addLog(`Upload error: ${file.name} — ${err.message}`);
+                if (window.UI) window.UI.addLog(`Upload error: ${file.name} - ${err.message}`);
                 return;
             }
 
@@ -925,13 +925,13 @@ window.FileManager = {
 
         const isWin = this.getOsType() === 'windows';
 
-        // At a Windows drive root (e.g. "D:\") → go to drive listing
+        // At a Windows drive root (e.g. "D:\") -> go to drive listing
         if (isWin && /^[A-Za-z]:\\?$/.test(this.currentPath)) {
             this.browse('__drives__');
             return;
         }
 
-        // At a Linux __drives__ mount-point entry (full path like "/media/usb") → go to __drives__
+        // At a Linux __drives__ mount-point entry (full path like "/media/usb") -> go to __drives__
         if (!isWin && this.currentPath !== '/' && this.cachedFiles.length === 0) {
             this.browse('__drives__');
             return;

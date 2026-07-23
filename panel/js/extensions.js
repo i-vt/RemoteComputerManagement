@@ -1,12 +1,12 @@
-// panel/js/extensions.js — Scripts & Extensions Manager
+// panel/js/extensions.js - Scripts & Extensions Manager
 //
 // Manages two kinds of .rhai files:
 //
-//   extensions  (./extensions/)
+//   extensions (./extensions/)
 //     Agent-side: pushed to the agent via ext:load.
 //     API: GET/PUT/DELETE /api/extensions/:name
 //
-//   modules  (./modules/)
+//   modules (./modules/)
 //     Server-side: executed by the server's Rhai engine on session events.
 //     Run with access to send_c2_command() / send_c2_extension().
 //     API: GET /api/modules (list), GET/PUT/DELETE /api/modules/:name

@@ -1,4 +1,4 @@
-// panel/js/users.js — Operator / user management (admin only)
+// panel/js/users.js - Operator / user management (admin only)
 window.UserManager = {
 
     async init() {
@@ -40,7 +40,7 @@ window.UserManager = {
                 }[op.role] || 'bg-gray-700 text-gray-400';
 
                 const isSelf  = op.username === window.Auth.username;
-                const created = op.created_at ? new Date(op.created_at).toLocaleDateString() : '—';
+                const created = op.created_at ? new Date(op.created_at).toLocaleDateString() : '-';
                 const login   = op.last_login  ? new Date(op.last_login).toLocaleString()   : 'Never';
 
                 return `

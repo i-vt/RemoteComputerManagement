@@ -78,7 +78,7 @@ window.Terminal = {
         // Echo command immediately so the user sees it before the network round-trip.
         this.log(`$ ${cmd}`, 'text-white font-bold font-mono mt-2');
 
-        // FIX: The server-side send_command endpoint blocks for up to 30 seconds
+        // The server-side send_command endpoint blocks for up to 30 seconds
         // waiting for the agent to acknowledge the command via a oneshot channel.
         // If the agent is in beacon mode with a long sleep, this produces a 30-second
         // silent wait followed by a 504 timeout. Show a status line immediately so
@@ -113,7 +113,7 @@ window.Terminal = {
             }
 
             if (res.status === 504 || data?.error?.includes('timed out')) {
-                // FIX: The 30-second callback timeout fires when the agent hasn't
+                // The 30-second callback timeout fires when the agent hasn't
                 // checked in within that window. This is normal for beacon-mode agents
                 // with long sleep intervals. Give actionable guidance instead of a raw
                 // JSON error blob.
@@ -132,7 +132,7 @@ window.Terminal = {
             }
 
             this.log(
-                `[+] Queued (Req #${data.request_id}) — waiting for output…`,
+                `[+] Queued (Req #${data.request_id}) - waiting for output…`,
                 'text-gray-500 italic text-xs'
             );
             this.pollOutput(id, data.request_id);
@@ -171,9 +171,9 @@ window.Terminal = {
                     const data = await res.json();
                     clearInterval(poller);
 
-                    // FIX: Only show the exit-code line when it is non-zero.
+                    // Only show the exit-code line when it is non-zero.
                     // A command that succeeds silently (no stdout, no stderr,
-                    // exit_code 0) would previously show nothing at all — the
+                    // exit_code 0) would previously show nothing at all - the
                     // user had no idea the command completed. Confirm completion.
                     if (data.output) {
                         this.log(data.output, 'text-green-300 font-mono whitespace-pre-wrap');
@@ -190,10 +190,10 @@ window.Terminal = {
                     return;
                 }
 
-                // 404 means "not ready yet" — keep polling silently.
+                // 404 means "not ready yet" - keep polling silently.
                 if (res.status === 404) return;
 
-                // FIX: Any other status (401, 403, 500, …) previously cleared the
+                // Any other status (401, 403, 500, …) previously cleared the
                 // interval with no message, leaving the terminal in a silent hang.
                 // Surface the problem now so the user knows what happened.
                 if (res.status === 401 || res.status === 403) {
@@ -206,7 +206,7 @@ window.Terminal = {
                 this.log(`[-] Unexpected status ${res.status} while polling for output.`, 'text-red-500');
 
             } catch (e) {
-                // FIX: Previously `clearInterval(poller)` with no message — silent failure.
+                // Previously `clearInterval(poller)` with no message - silent failure.
                 // Now we log the error so the user knows polling stopped.
                 clearInterval(poller);
                 this.log(`[-] Network error while polling: ${e.message}`, 'text-red-500');

@@ -1,11 +1,11 @@
-// panel/js/shortcuts.js — Global keyboard shortcuts
+// panel/js/shortcuts.js - Global keyboard shortcuts
 window.Shortcuts = {
     init() {
         document.addEventListener('keydown', (e) => {
             // Don't trigger shortcuts when typing in inputs
             if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
 
-            // Ctrl+K — Quick command palette (focus terminal if open)
+            // Ctrl+K - Quick command palette (focus terminal if open)
             if(e.ctrlKey && e.key === 'k') {
                 e.preventDefault();
                 const termInput = document.getElementById('term-input');
@@ -18,7 +18,7 @@ window.Shortcuts = {
                 return;
             }
 
-            // Escape — Close modals
+            // Escape - Close modals
             if(e.key === 'Escape') {
                 document.getElementById('terminal-modal')?.classList.add('hidden');
                 document.getElementById('proc-modal')?.classList.add('hidden');
@@ -36,7 +36,7 @@ window.Shortcuts = {
                 }
             }
 
-            // ? — Show shortcut help
+            // ? - Show shortcut help
             if(e.key === '?') {
                 window.Notify?.toast(
                     '1-9: Navigate pages | Esc: Close modals | Ctrl+K: Focus terminal | T: Toggle theme | ?: Help',
@@ -45,13 +45,13 @@ window.Shortcuts = {
                 return;
             }
 
-            // T — Toggle theme
+            // T - Toggle theme
             if(e.key === 't' || e.key === 'T') {
                 window.Theme?.toggle();
                 return;
             }
 
-            // R — Refresh current page
+            // R - Refresh current page
             if(e.key === 'r' || e.key === 'R') {
                 window.API?.refreshHosts();
                 window.Notify?.toast('Refreshed', 'info', 1500);

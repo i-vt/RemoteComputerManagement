@@ -39,9 +39,9 @@
         return el ? el.checked : false;
     }
 
-    // ── Log pane — scrollable ring-buffer with line numbers & filters ─
+    // ── Log pane - scrollable ring-buffer with line numbers & filters ─
 
-    var _logLines   = [];   // { type, text, cls } — never exceeds MAX_LINES entries
+    var _logLines   = [];   // { type, text, cls } - never exceeds MAX_LINES entries
     var _logFilter  = 'all';
     var _lineCounter = 0;   // monotonic; absolute line numbers never reset mid-build
 
@@ -148,7 +148,7 @@
         ].join(';');
         tdN.textContent = lineNum;
 
-        // Text cell — wraps long compiler output, never forces horizontal scroll
+        // Text cell - wraps long compiler output, never forces horizontal scroll
         var tdT = document.createElement('td');
         tdT.style.cssText = [
             'padding:1px 12px 1px 0',
@@ -370,10 +370,10 @@
                     }
                     refreshJobList();
                     if (window.Notify) window.Notify.toast(
-                        'Build failed — check log for job ' + jobId.slice(0,8), 'error', 8000);
+                        'Build failed - check log for job ' + jobId.slice(0,8), 'error', 8000);
                 }
             })
-            .catch(function () { /* transient — keep polling */ });
+            .catch(function () { /* transient - keep polling */ });
         }, 2000);
     }
 
@@ -455,7 +455,7 @@
             if (data.status === 'success') {
                 showSuccess(jobId, data.artifact_name);
             } else if (data.status === 'running') {
-                appendLog('[*] Build still running — tailing live...', 'text-cyan-400');
+                appendLog('[*] Build still running - tailing live...', 'text-cyan-400');
                 startPolling(jobId, true);
             }
         })
@@ -509,7 +509,7 @@
                     + '<td class="p-3"><span class="px-2 py-0.5 rounded text-xs font-bold ' + sCls + '">'
                     +   '<i class="fas ' + sIcon + ' mr-1"></i>' + escStr(j.status) + '</span></td>'
                     + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + escStr(ts) + '</td>'
-                    + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + escStr(fin || '—') + '</td>'
+                    + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + escStr(fin || '-') + '</td>'
                     + '<td class="p-3">' + dlBtn + viewBtn + '</td>'
                     + '</tr>';
             }).join('');
@@ -537,7 +537,7 @@
                         var plat = document.getElementById('builder-platform');
                         if (plat && plat.value !== 'windows') {
                             plat.value = 'windows';
-                            if (window.Notify) window.Notify.toast('Shellcode requires Windows x64 — platform switched.', 'info');
+                            if (window.Notify) window.Notify.toast('Shellcode requires Windows x64 - platform switched.', 'info');
                         }
                     }
                 };

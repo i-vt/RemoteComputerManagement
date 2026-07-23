@@ -1,4 +1,4 @@
-// panel/js/theme.js — Dark / Pastel Pink theme toggle
+// panel/js/theme.js - Dark / Pastel Pink theme toggle
 //
 // Dark (default): the existing green-on-dark palette from style.css.
 // Light: a soft blush-and-plum palette injected via a <style> block.
@@ -8,27 +8,27 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Palette reference
-//   bg-base      #fce8f3   full-page blush
-//   bg-surface   #fdf2f8   sidebar / elevated panels
-//   bg-elevated  #fff6fb   cards, modals, dropdowns
-//   bg-overlay   #fff0f7   hover backgrounds
-//   bg-hover     #fddaee   interactive hover
+//   bg-base #fce8f3 full-page blush
+//   bg-surface #fdf2f8 sidebar / elevated panels
+//   bg-elevated #fff6fb cards, modals, dropdowns
+//   bg-overlay #fff0f7 hover backgrounds
+//   bg-hover #fddaee interactive hover
 //
-//   accent       #c0397a   hot rose — replaces teal as the primary action colour
-//   accent-dim   #a02d66
-//   accent-glow  rgba(192,57,122,.15)
-//   accent-text  #c0397a
+//   accent #c0397a hot rose - replaces teal as the primary action colour
+//   accent-dim #a02d66
+//   accent-glow rgba(192,57,122,.15)
+//   accent-text #c0397a
 //
-//   text-primary   #2d0a2e   deep plum
-//   text-secondary #7a3060   medium rose-plum
-//   text-muted     #b070a0   dusty rose
+//   text-primary #2d0a2e deep plum
+//   text-secondary #7a3060 medium rose-plum
+//   text-muted #b070a0 dusty rose
 //
-//   border         #f0b0d8   soft pink rule
-//   border-light   #f8d0eb   very faint rule
+//   border #f0b0d8 soft pink rule
+//   border-light #f8d0eb very faint rule
 //
-//   red     #d44060   softer coral-red
-//   yellow  #c07830   amber (warm)
-//   blue    #7050c8   indigo-lavender (replaces flat blue)
+//   red #d44060 softer coral-red
+//   yellow #c07830 amber (warm)
+//   blue #7050c8 indigo-lavender (replaces flat blue)
 //
 //   Sidebar stays deep plum so the logo and nav remain legible.
 //   Terminal area keeps a dark background; output text shifts to lavender/pink.
@@ -74,7 +74,7 @@ html.light-theme {
 /* ── Page shell ──────────────────────────────────────────────────────── */
 html.light-theme body { background: var(--bg-base); color: var(--text-primary); }
 
-/* ── Sidebar — deep plum keeps contrast against the blush main area ──── */
+/* ── Sidebar - deep plum keeps contrast against the blush main area ──── */
 html.light-theme #sidebar,
 html.light-theme #mobile-topbar,
 html.light-theme #mobile-nav,
@@ -187,7 +187,7 @@ html.light-theme .modal-title          { color: var(--text-primary); }
 html.light-theme .modal-close          { color: var(--text-muted); }
 html.light-theme .modal-close:hover    { color: var(--text-primary); background: var(--bg-hover); }
 
-/* ── Terminal modal — keeps dark bg, shifts text to lavender/pink ─────── */
+/* ── Terminal modal - keeps dark bg, shifts text to lavender/pink ─────── */
 html.light-theme #terminal-modal .bg-gray-900,
 html.light-theme #terminal-modal [class*="bg-gray"] {
   background: #1a0520 !important;
@@ -260,7 +260,7 @@ html.light-theme ::-webkit-scrollbar-track { background: #fce8f3; }
 html.light-theme ::-webkit-scrollbar-thumb { background: #e8a0cc; }
 html.light-theme ::-webkit-scrollbar-thumb:hover { background: #d070a8; }
 
-/* ── Glow effects — rose tint ────────────────────────────────────────── */
+/* ── Glow effects - rose tint ────────────────────────────────────────── */
 html.light-theme .glow-text {
   text-shadow: 0 0 10px rgba(192,57,122,.5), 0 0 25px rgba(192,57,122,.25);
 }

@@ -1,9 +1,9 @@
-// panel/js/recon.js — Auto-recon manager
+// panel/js/recon.js - Auto-recon manager
 //
 // Three entry types, stored as plain strings with conventions:
-//   "shell whoami"          → command sent to agent  (prefix normalised server-side)
-//   "module:recon"          → Rhai script run server-side on session connect
-//   "ext:load <b64> [args]" → Rhai script pushed to agent as ext:load command
+//   "shell whoami"          -> command sent to agent (prefix normalised server-side)
+//   "module:recon"          -> Rhai script run server-side on session connect
+//   "ext:load <b64> [args]" -> Rhai script pushed to agent as ext:load command
 //
 // The server's normalise_recon_cmd() auto-prepends "shell " for OS commands.
 
@@ -61,11 +61,11 @@ window.ReconConfig = {
         const sel = document.getElementById('recon-ext-file-select');
         if (!sel) return;
         sel.innerHTML = this._extensions.length
-            ? ['<option value="">— paste custom code below —</option>',
+            ? ['<option value="">- paste custom code below -</option>',
                ...this._extensions.map(n =>
                    `<option value="${this._esc(n)}">${this._esc(n)}.rhai</option>`)
               ].join('')
-            : '<option value="">No extensions found — use custom code</option>';
+            : '<option value="">No extensions found - use custom code</option>';
     },
 
     // When operator selects an extension from the dropdown, fetch its code

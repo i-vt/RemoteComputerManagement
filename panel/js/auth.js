@@ -30,7 +30,7 @@ window.Auth = {
             document.getElementById('login-modal').classList.add('hidden');
             this.updateUserBadge();
             if(window.API) window.API.startPolling();
-            // FIX: fetch modules now that we have a valid key. The initial
+            // Fetch modules now that we have a valid key. The initial
             // DOMContentLoaded call in ModuleManager.init() runs before auth
             // is validated, so if the stored key was expired the /api/modules
             // request returned 401 and availableModules stayed empty.
@@ -90,7 +90,7 @@ window.Auth = {
             document.getElementById('login-modal').classList.add('hidden');
             this.updateUserBadge();
             if(window.API) window.API.startPolling();
-            // FIX: same as validateAndEnter — fetch modules with the new key.
+            // Same as validateAndEnter - fetch modules with the new key.
             if(window.ModuleManager) window.ModuleManager.fetchModules();
         } catch(e) {
             this._setLoginError('Connection failed: ' + e.message);
@@ -125,7 +125,7 @@ window.Auth = {
             document.getElementById('login-modal').classList.add('hidden');
             this.updateUserBadge();
             if(window.API) window.API.startPolling();
-            // FIX: fetch modules with the new key.
+            // Fetch modules with the new key.
             if(window.ModuleManager) window.ModuleManager.fetchModules();
         } catch(e) {
             this._setLoginError('Connection failed: ' + e.message);

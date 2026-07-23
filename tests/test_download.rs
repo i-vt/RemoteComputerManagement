@@ -1,282 +1,320 @@
-// tests/test_download.rs — Functional integration tests for chunked file download.
+// tests/test_download.rs - Functional integration tests for collected-file
+// storage through the RCM data collection packages (SPEC §5, §8).
 //
-// These tests drive the server-side half of the download path:
-//   agent sends file:chunk messages → session.rs calls save_file_chunk()
-//                                    → file is assembled on disk
+// These tests drive the same API surface that session.rs uses on receipt of
+// `file:data` / `file:chunk` wire messages:
+//   PackageManager::store_collected / store_collected_chunk
 //
-// Each test uses a unique batch identifier to isolate its output directory,
-// and a DropCleanup guard ensures the directory is removed even on panic.
+// Every test is hermetic: packages are created inside a `tempfile::TempDir`,
+// never in the real downloads/ tree.
 //
 // Test groups:
-//   - Single-chunk round-trips (small files, zero-byte files, binary content)
+//   - Single-shot round-trips (small files, zero-byte files, binary content)
 //   - Multi-chunk assembly (exact boundary, remainder, large content)
-//   - Overwrite and truncation semantics
-//   - Path sanitization (traversal blocked, special chars in root stripped)
-//   - Concurrent batches don't interfere with each other
+//   - Mid-transfer .part semantics and out-of-order rejection
+//   - Re-collection counter semantics (no silent overwrite)
+//   - Path traversal containment
+//   - Concurrent packages isolated (two targets, one base dir)
 
-use rcm::file_transfer::save_file_chunk;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use std::path::PathBuf;
+use rcm::rcm::{CollectedMeta, PackageManager};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 // ── Isolation helpers ─────────────────────────────────────────────────────────
 
-/// Drops the given path (as a directory tree) when it goes out of scope.
-struct DropCleanup(PathBuf);
-impl Drop for DropCleanup {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
+/// Create (or open) a package for `hostname` inside the tempdir base.
+fn pkg(base: &Path, hostname: &str) -> Arc<PackageManager> {
+    PackageManager::create_or_open(base, hostname, &format!("inst-{}", hostname))
+        .expect("create_or_open")
 }
 
-/// Build a batch identifier that is unique within this test binary run.
-/// Uses the function name + process ID to avoid clashes when tests run
-/// in parallel with `cargo test` (default: multiple threads).
-fn unique_batch(label: &str) -> String {
-    format!("dl_{}_{}", label, std::process::id())
+/// Absolute path of a collected file inside the package's downloads/ tree.
+fn collected(pkg: &PackageManager, rel: &str) -> PathBuf {
+    pkg.root().join("downloads").join(rel)
 }
 
-/// Compute the path where save_file_chunk will write a file, given the same
-/// inputs.  Mirrors the sanitization logic in save_file_chunk so tests can
-/// locate the output without depending on internals.
-fn expected_path(batch_ts: &str, session_id: u32, root_name: &str, rel_path: &str) -> PathBuf {
-    let safe_root: String = root_name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
-        .take(32)
-        .collect();
-    PathBuf::from("downloads")
-        .join(format!("{}_{}_{}", batch_ts, session_id, safe_root))
-        .join(rel_path)
+/// Absolute path of the sidecar for a collected file.
+fn sidecar(pkg: &PackageManager, rel: &str) -> PathBuf {
+    pkg.root()
+        .join("downloads.metadata")
+        .join(format!("{}.RCM.xml", rel))
 }
 
-/// Call save_file_chunk for every `chunk_size`-byte slice of `content`
-/// and assert each call succeeds.  Returns the assembled file path.
-fn save_all_chunks(
-    batch: &str,
-    session: u32,
-    root: &str,
-    rel: &str,
-    content: &[u8],
-    chunk_size: usize,
-) -> PathBuf {
+/// Store `content` in 1-chunk-or-more pieces via store_collected_chunk,
+/// mirroring the agent's chunked transfer. Returns Ok(()) when all chunks
+/// were accepted; the final call must report finalization.
+fn store_in_chunks(pkg: &PackageManager, path: &str, content: &[u8], chunk_size: usize) {
     if content.is_empty() {
-        let r = save_file_chunk(batch, session, root, rel, 0, 1, &BASE64.encode(b""));
-        assert!(r.is_ok(), "empty chunk failed: {}", r.unwrap_err());
-        return expected_path(batch, session, root, rel);
+        let fin = pkg
+            .store_collected_chunk(path, 0, 1, b"", path, &CollectedMeta::default())
+            .expect("empty chunk");
+        assert!(fin, "single empty chunk must finalize");
+        return;
     }
-
     let chunks: Vec<&[u8]> = content.chunks(chunk_size).collect();
     let total = chunks.len() as u64;
     for (i, chunk) in chunks.iter().enumerate() {
-        let r = save_file_chunk(batch, session, root, rel, i as u64, total, &BASE64.encode(chunk));
-        assert!(r.is_ok(), "chunk {}/{} failed: {}", i + 1, total, r.unwrap_err());
+        let fin = pkg
+            .store_collected_chunk(path, i as u64, total, chunk, path, &CollectedMeta::default())
+            .unwrap_or_else(|e| panic!("chunk {}/{} failed: {}", i + 1, total, e));
+        assert_eq!(fin, i as u64 + 1 == total, "finalization flag on chunk {}", i);
     }
-    expected_path(batch, session, root, rel)
 }
 
-// ── Single-chunk round-trips ──────────────────────────────────────────────────
+/// Assert the RCM layout for a stored collected file: data under downloads/,
+/// sidecar under downloads.metadata/, no leftover .part state.
+fn assert_rcm_layout(pkg: &PackageManager, rel: &str, content: &[u8]) {
+    let data = collected(pkg, rel);
+    assert!(data.is_file(), "collected file missing: {}", data.display());
+    assert_eq!(std::fs::read(&data).unwrap(), content, "content mismatch");
+
+    let sc = sidecar(pkg, rel);
+    assert!(sc.is_file(), "sidecar missing: {}", sc.display());
+    let sc_xml = std::fs::read_to_string(&sc).unwrap();
+    assert!(sc_xml.contains("<file version=\"1\">"), "sidecar not a file meta doc");
+    assert!(sc_xml.contains("<sha256>") || sc_xml.contains("sha256"),
+        "sidecar missing sha256: {}", sc_xml);
+
+    // No transfer residue.
+    let part = data.with_file_name(format!(
+        "{}.part",
+        data.file_name().unwrap().to_string_lossy()
+    ));
+    assert!(!part.exists(), ".part left behind: {}", part.display());
+}
+
+// ── Single-shot round-trips (file:data path) ─────────────────────────────────
 
 #[test]
 fn roundtrip_small_ascii() {
-    let batch = unique_batch("ascii");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
-    let content = b"Hello, chunked download!";
-    let path = save_all_chunks(&batch, 1, "root", "hello.txt", content, 1024);
-    assert_eq!(std::fs::read(path).unwrap(), content);
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
+    let content = b"Hello, RCM collection!";
+    let stored = p
+        .store_collected("C:/docs/hello.txt", content, &CollectedMeta::default())
+        .unwrap();
+    assert_eq!(stored, "downloads/C/docs/hello.txt");
+    assert_rcm_layout(&p, "C/docs/hello.txt", content);
 }
 
 #[test]
 fn roundtrip_empty_file() {
-    let batch = unique_batch("empty");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
-    let path = save_all_chunks(&batch, 1, "root", "empty.bin", b"", 1024);
-    assert_eq!(std::fs::read(path).unwrap(), b"");
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
+    let stored = p
+        .store_collected("/tmp/empty.bin", b"", &CollectedMeta::default())
+        .unwrap();
+    assert_eq!(stored, "downloads/tmp/empty.bin");
+    assert_rcm_layout(&p, "tmp/empty.bin", b"");
 }
 
 #[test]
 fn roundtrip_all_256_byte_values() {
-    let batch = unique_batch("all256");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
     let content: Vec<u8> = (0u8..=255).collect();
-    let path = save_all_chunks(&batch, 1, "root", "allbytes.bin", &content, 1024);
-    assert_eq!(std::fs::read(path).unwrap(), content);
+    p.store_collected("C:/bin/allbytes.bin", &content, &CollectedMeta::default())
+        .unwrap();
+    assert_rcm_layout(&p, "C/bin/allbytes.bin", &content);
 }
 
 #[test]
 fn roundtrip_single_byte() {
-    let batch = unique_batch("singlebyte");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
-    let path = save_all_chunks(&batch, 1, "root", "one.bin", b"\xde", 1024);
-    assert_eq!(std::fs::read(path).unwrap(), b"\xde");
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
+    p.store_collected("one.bin", b"\xde", &CollectedMeta::default()).unwrap();
+    assert_rcm_layout(&p, "one.bin", b"\xde");
 }
 
-// ── Multi-chunk assembly ──────────────────────────────────────────────────────
+// ── Multi-chunk assembly (file:chunk path) ────────────────────────────────────
 
 #[test]
 fn roundtrip_exact_chunk_boundary() {
-    // 64 bytes content, 64-byte chunks → exactly one chunk, no remainder
-    let batch = unique_batch("exactbnd");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
+    // 64 bytes content, 64-byte chunks -> exactly one chunk, no remainder
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
     let content: Vec<u8> = (0..64).map(|i| i as u8).collect();
-    let path = save_all_chunks(&batch, 1, "root", "exact.bin", &content, 64);
-    assert_eq!(std::fs::read(path).unwrap(), content);
+    store_in_chunks(&p, "exact.bin", &content, 64);
+    assert_rcm_layout(&p, "exact.bin", &content);
 }
 
 #[test]
 fn roundtrip_one_byte_over_boundary() {
-    // 65 bytes, 64-byte chunks → 2 chunks: full + 1-byte remainder
-    let batch = unique_batch("overbnd");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
+    // 65 bytes, 64-byte chunks -> 2 chunks: full + 1-byte remainder
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
     let content: Vec<u8> = (0..65).map(|i| i as u8).collect();
-    let path = save_all_chunks(&batch, 1, "root", "over.bin", &content, 64);
-    assert_eq!(std::fs::read(path).unwrap(), content);
+    store_in_chunks(&p, "over.bin", &content, 64);
+    assert_rcm_layout(&p, "over.bin", &content);
 }
 
 #[test]
 fn roundtrip_many_single_byte_chunks() {
-    let batch = unique_batch("manychunks");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
     let content = b"ABCDEFGH";
-    let path = save_all_chunks(&batch, 1, "root", "bytes.bin", content, 1);
-    assert_eq!(std::fs::read(path).unwrap(), content.as_ref());
+    store_in_chunks(&p, "bytes.bin", content, 1);
+    assert_rcm_layout(&p, "bytes.bin", content);
 }
 
 #[test]
 fn roundtrip_1mb_in_64kb_chunks() {
-    // 1 MB deterministic content, 64 KB chunk size → 16 chunks
-    let batch = unique_batch("1mb");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
+    // 1 MB deterministic content, 64 KB chunk size -> 16 chunks
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
     let content: Vec<u8> = (0u32..1_048_576)
         .map(|i| (i.wrapping_mul(1_664_525).wrapping_add(1_013_904_223) >> 8) as u8)
         .collect();
-    let path = save_all_chunks(&batch, 1, "root", "big.bin", &content, 65_536);
-    assert_eq!(std::fs::read(path).unwrap(), content);
+    store_in_chunks(&p, "big.bin", &content, 65_536);
+    assert_rcm_layout(&p, "big.bin", &content);
 }
 
-// ── Overwrite and truncation semantics ────────────────────────────────────────
+// ── .part semantics and ordering ──────────────────────────────────────────────
 
 #[test]
-fn second_batch_overwrites_first() {
-    let b1 = unique_batch("ow_b1");
-    let b2 = unique_batch("ow_b2");
-    let _c1 = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", b1, 1)));
-    let _c2 = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", b2, 1)));
+fn part_file_exists_only_mid_transfer() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
 
-    let p1 = save_all_chunks(&b1, 1, "root", "f.bin", b"FIRST", 64);
-    let p2 = save_all_chunks(&b2, 1, "root", "f.bin", b"SECOND", 64);
-    assert_eq!(std::fs::read(&p1).unwrap(), b"FIRST");
-    assert_eq!(std::fs::read(&p2).unwrap(), b"SECOND");
-}
+    let fin = p
+        .store_collected_chunk("f.bin", 0, 3, b"a", "t-f", &CollectedMeta::default())
+        .unwrap();
+    assert!(!fin, "chunk 0 of 3 is not final");
+    let part = collected(&p, "f.bin.part");
+    assert!(part.is_file(), ".part must exist mid-transfer");
+    assert!(collected(&p, "f.bin.part.state").is_file(), "state file must exist");
+    assert!(!collected(&p, "f.bin").exists(), "final file must not exist yet");
 
-#[test]
-fn chunk_0_truncates_a_larger_existing_file() {
-    let batch = unique_batch("trunc");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
+    assert!(!p.store_collected_chunk("f.bin", 1, 3, b"b", "t-f", &CollectedMeta::default()).unwrap());
+    assert!(p.store_collected_chunk("f.bin", 2, 3, b"c", "t-f", &CollectedMeta::default()).unwrap());
 
-    // First: write a large file via chunk 0 + chunk 1
-    let r0 = save_file_chunk(&batch, 1, "root", "trunc.bin", 0, 2, &BASE64.encode(&vec![0xAA; 100]));
-    assert!(r0.is_ok());
-    let r1 = save_file_chunk(&batch, 1, "root", "trunc.bin", 1, 2, &BASE64.encode(&vec![0xBB; 100]));
-    assert!(r1.is_ok());
-
-    let path = expected_path(&batch, 1, "root", "trunc.bin");
-    assert_eq!(std::fs::read(&path).unwrap().len(), 200);
-
-    // Now re-upload a single tiny chunk with chunk_idx=0 — must truncate
-    let r2 = save_file_chunk(&batch, 1, "root", "trunc.bin", 0, 1, &BASE64.encode(b"TINY"));
-    assert!(r2.is_ok());
-    assert_eq!(std::fs::read(&path).unwrap(), b"TINY",
-        "chunk_idx=0 must truncate, not append to, an existing file");
-}
-
-// ── is_final return value ─────────────────────────────────────────────────────
-
-#[test]
-fn save_chunk_returns_false_for_non_final_chunk() {
-    let batch = unique_batch("notfinal");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
-    let r = save_file_chunk(&batch, 1, "root", "f.bin", 0, 3, &BASE64.encode(b"x"));
-    assert_eq!(r.unwrap(), false, "chunk 0 of 3 is not final");
+    assert!(!part.exists(), ".part must be renamed away on finalize");
+    assert!(!collected(&p, "f.bin.part.state").exists(), "state file removed");
+    assert_rcm_layout(&p, "f.bin", b"abc");
 }
 
 #[test]
-fn save_chunk_returns_true_for_final_chunk() {
-    let batch = unique_batch("isfinal");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
-    // chunk_idx=2, total=3 → 2+1 == 3 → is_final
-    let r0 = save_file_chunk(&batch, 1, "root", "f.bin", 0, 3, &BASE64.encode(b"a"));
-    assert_eq!(r0.unwrap(), false);
-    let r1 = save_file_chunk(&batch, 1, "root", "f.bin", 1, 3, &BASE64.encode(b"b"));
-    assert_eq!(r1.unwrap(), false);
-    let r2 = save_file_chunk(&batch, 1, "root", "f.bin", 2, 3, &BASE64.encode(b"c"));
-    assert_eq!(r2.unwrap(), true, "last chunk must return true");
+fn out_of_order_chunk_is_rejected_and_part_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
 
-    let path = expected_path(&batch, 1, "root", "f.bin");
-    assert_eq!(std::fs::read(path).unwrap(), b"abc");
+    p.store_collected_chunk("f.bin", 0, 3, b"a", "t-f", &CollectedMeta::default())
+        .unwrap();
+    let r = p.store_collected_chunk("f.bin", 2, 3, b"c", "t-f", &CollectedMeta::default());
+    assert!(r.is_err(), "out-of-order chunk must be rejected");
+    assert!(collected(&p, "f.bin.part").is_file(), ".part kept for resumption");
+
+    // The transfer can still resume correctly afterwards.
+    assert!(!p.store_collected_chunk("f.bin", 1, 3, b"b", "t-f", &CollectedMeta::default()).unwrap());
+    assert!(p.store_collected_chunk("f.bin", 2, 3, b"c", "t-f", &CollectedMeta::default()).unwrap());
+    assert_rcm_layout(&p, "f.bin", b"abc");
 }
-
-// ── Concurrent batches don't interfere ───────────────────────────────────────
 
 #[test]
-fn concurrent_batches_write_to_separate_directories() {
-    let ba = unique_batch("concA");
-    let bb = unique_batch("concB");
-    let _ca = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", ba, 1)));
-    let _cb = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", bb, 1)));
-
-    // Interleave chunk saves from two separate logical transfers
-    let ra0 = save_file_chunk(&ba, 1, "root", "file.bin", 0, 2, &BASE64.encode(b"A0"));
-    let rb0 = save_file_chunk(&bb, 1, "root", "file.bin", 0, 2, &BASE64.encode(b"B0"));
-    let ra1 = save_file_chunk(&ba, 1, "root", "file.bin", 1, 2, &BASE64.encode(b"A1"));
-    let rb1 = save_file_chunk(&bb, 1, "root", "file.bin", 1, 2, &BASE64.encode(b"B1"));
-
-    for r in [ra0, rb0, ra1, rb1] { assert!(r.is_ok()); }
-
-    let pa = expected_path(&ba, 1, "root", "file.bin");
-    let pb = expected_path(&bb, 1, "root", "file.bin");
-    assert_eq!(std::fs::read(pa).unwrap(), b"A0A1");
-    assert_eq!(std::fs::read(pb).unwrap(), b"B0B1");
+fn chunk_indices_validated() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
+    assert!(p
+        .store_collected_chunk("f.bin", 0, 0, b"x", "t-f", &CollectedMeta::default())
+        .is_err());
+    assert!(p
+        .store_collected_chunk("f.bin", 5, 5, b"x", "t-f", &CollectedMeta::default())
+        .is_err());
 }
 
-// ── Subdirectory rel_path ─────────────────────────────────────────────────────
+// ── Re-collection counter semantics (REQ-3.4.3: never overwrite) ─────────────
+
+#[test]
+fn second_collection_gets_counter_suffix_first_preserved() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
+
+    let s1 = p.store_collected("f.bin", b"FIRST", &CollectedMeta::default()).unwrap();
+    let s2 = p.store_collected("f.bin", b"SECOND", &CollectedMeta::default()).unwrap();
+    assert_eq!(s1, "downloads/f.bin");
+    assert_eq!(s2, "downloads/f.bin.1");
+    assert_eq!(std::fs::read(collected(&p, "f.bin")).unwrap(), b"FIRST");
+    assert_eq!(std::fs::read(collected(&p, "f.bin.1")).unwrap(), b"SECOND");
+    assert!(sidecar(&p, "f.bin").is_file());
+    assert!(sidecar(&p, "f.bin.1").is_file());
+}
+
+#[test]
+fn chunk_zero_restarts_in_progress_transfer() {
+    // Chunk 0 is a FRESH RESTART: the stale .part/.part.state are discarded
+    // and the new transfer replaces the old one (the agent has no
+    // mid-transfer resume protocol, so a re-sent chunk 0 must not
+    // permanently block the file).
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
+
+    p.store_collected_chunk("trunc.bin", 0, 2, &[0xAA; 100], "t-tr", &CollectedMeta::default())
+        .unwrap();
+    // Restart at chunk 0 - accepted, stale state gone.
+    assert!(!p
+        .store_collected_chunk("trunc.bin", 0, 2, &[0xCC; 50], "t-tr", &CollectedMeta::default())
+        .unwrap());
+
+    // Finish the restarted transfer; content is the restarted bytes only.
+    assert!(p
+        .store_collected_chunk("trunc.bin", 1, 2, &[0xBB; 100], "t-tr", &CollectedMeta::default())
+        .unwrap());
+    let data = std::fs::read(collected(&p, "trunc.bin")).unwrap();
+    assert_eq!(data.len(), 150);
+    assert!(data[..50].iter().all(|&b| b == 0xCC));
+    assert!(data[50..].iter().all(|&b| b == 0xBB));
+    // No orphan transfer state remains.
+    assert!(!collected(&p, "trunc.bin.part").exists());
+    assert!(!collected(&p, "trunc.bin.part.state").exists());
+}
+
+// ── Traversal containment ─────────────────────────────────────────────────────
+
+#[test]
+fn path_traversal_is_contained_inside_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
+
+    // ".." components are dropped during reconstruction; the file can never
+    // escape the package's downloads/ tree.
+    let stored = p
+        .store_collected("../../../etc/passwd", b"pwned", &CollectedMeta::default())
+        .unwrap();
+    assert_eq!(stored, "downloads/etc/passwd");
+    let data = collected(&p, "etc/passwd");
+    assert!(data.is_file());
+    assert!(data.starts_with(p.root()), "must stay inside the package");
+    assert!(!dir.path().join("escape.txt").exists());
+    assert!(!Path::new("escape.txt").exists());
+}
+
+// ── Concurrent packages don't interfere ──────────────────────────────────────
+
+#[test]
+fn concurrent_packages_write_to_separate_roots() {
+    let dir = tempfile::tempdir().unwrap();
+    let pa = pkg(dir.path(), "HOST-A");
+    let pb = pkg(dir.path(), "HOST-B");
+
+    // Interleave chunk saves from two separate logical transfers.
+    assert!(!pa.store_collected_chunk("file.bin", 0, 2, b"A0", "t-a", &CollectedMeta::default()).unwrap());
+    assert!(!pb.store_collected_chunk("file.bin", 0, 2, b"B0", "t-b", &CollectedMeta::default()).unwrap());
+    assert!(pa.store_collected_chunk("file.bin", 1, 2, b"A1", "t-a", &CollectedMeta::default()).unwrap());
+    assert!(pb.store_collected_chunk("file.bin", 1, 2, b"B1", "t-b", &CollectedMeta::default()).unwrap());
+
+    assert_eq!(std::fs::read(collected(&pa, "file.bin")).unwrap(), b"A0A1");
+    assert_eq!(std::fs::read(collected(&pb, "file.bin")).unwrap(), b"B0B1");
+    assert_ne!(pa.root(), pb.root(), "packages must have distinct roots");
+    assert!(collected(&pa, "file.bin").starts_with(pa.root()));
+    assert!(collected(&pb, "file.bin").starts_with(pb.root()));
+}
+
+// ── Subdirectory rel paths ────────────────────────────────────────────────────
 
 #[test]
 fn rel_path_with_subdirectory_is_created() {
-    let batch = unique_batch("subdir");
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
-
-    // rel_path can contain subdirectories (happens when downloading folders)
-    let r = save_file_chunk(&batch, 1, "root", "sub/nested/file.bin", 0, 1,
-        &BASE64.encode(b"nested content"));
-    assert!(r.is_ok(), "subdirectory rel_path failed: {}", r.unwrap_err());
-
-    let path = expected_path(&batch, 1, "root", "sub/nested/file.bin");
-    assert_eq!(std::fs::read(path).unwrap(), b"nested content");
-}
-
-// ── Path sanitization visible at the output layer ────────────────────────────
-
-#[test]
-fn root_name_is_sanitized_in_output_directory() {
-    // Root names containing special characters are stripped to [a-zA-Z0-9_-].
-    // The test verifies that the call succeeds (no error) and that the output
-    // lands under the sanitized folder name.
-    let batch = unique_batch("rootsan");
-    // "r/oot!@#" → safe_root = "root"
-    let _c = DropCleanup(PathBuf::from(format!("downloads/{}_{}_root", batch, 1)));
-    let r = save_file_chunk(&batch, 1, "r/oot!@#", "f.bin", 0, 1, &BASE64.encode(b"data"));
-    assert!(r.is_ok(), "sanitized root should not error: {}", r.unwrap_err());
-    let path = expected_path(&batch, 1, "r/oot!@#", "f.bin");
-    assert_eq!(std::fs::read(path).unwrap(), b"data");
-}
-
-#[test]
-fn path_traversal_is_blocked() {
-    // The traversal check is purely in save_file_chunk; no file should be written.
-    let r = save_file_chunk("ptblock_batch", 1, "root", "../../escape.txt", 0, 1,
-        &BASE64.encode(b"pwned"));
-    assert!(r.is_err(), "path traversal must be rejected");
-    // Verify no file was written to the escape path
-    assert!(!std::path::Path::new("escape.txt").exists(),
-        "traversal must not write to the escape path");
+    let dir = tempfile::tempdir().unwrap();
+    let p = pkg(dir.path(), "HOST-A");
+    store_in_chunks(&p, "sub/nested/file.bin", b"nested content", 1024);
+    assert_rcm_layout(&p, "sub/nested/file.bin", b"nested content");
 }

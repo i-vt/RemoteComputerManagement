@@ -1,4 +1,4 @@
-// panel/js/procview.js — Process list viewer
+// panel/js/procview.js - Process list viewer
 window.ProcView = {
     async load(sessionId) {
         const url   = window.Auth.url.replace(/\/$/, '');
@@ -8,7 +8,7 @@ window.ProcView = {
         if (!modal || !tbody) return;
 
         modal.classList.remove('hidden');
-        title.textContent = `Processes — Session #${sessionId}`;
+        title.textContent = `Processes - Session #${sessionId}`;
         tbody.innerHTML = '<tr><td colspan="3" class="p-3 text-center text-gray-500">Loading…</td></tr>';
 
         // Detect OS from cached host list so we send the right command
@@ -16,7 +16,7 @@ window.ProcView = {
         const isWin = host?.os?.toLowerCase().includes('win');
 
         // Both commands produce output that renderProcesses understands.
-        // The "shell " prefix is required — bare OS commands are rejected
+        // The "shell " prefix is required - bare OS commands are rejected
         // by the agent's built-in command dispatcher.
         const cmd = isWin
             ? 'shell tasklist /fo csv /nh'
@@ -64,7 +64,7 @@ window.ProcView = {
         const procs = [];
 
         if (isWin) {
-            // tasklist /fo csv /nh  →  "Image Name","PID","Session Name",...
+            // tasklist /fo csv /nh ->  "Image Name","PID","Session Name",...
             for (const line of lines) {
                 const cols = line.split('","').map(c => c.replace(/^"|"$/g, ''));
                 if (cols.length >= 2) {
@@ -72,7 +72,7 @@ window.ProcView = {
                 }
             }
         } else {
-            // ps -eo pid,comm --no-headers  →  "  123 nginx"
+            // ps -eo pid,comm --no-headers ->  "  123 nginx"
             for (const line of lines) {
                 const parts = line.trim().split(/\s+/);
                 if (parts.length >= 2) {

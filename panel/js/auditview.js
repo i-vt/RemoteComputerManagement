@@ -1,4 +1,4 @@
-// panel/js/auditview.js — Audit log viewer
+// panel/js/auditview.js - Audit log viewer
 window.AuditView = {
     async refresh() {
         const url = window.Auth.url.replace(/\/$/, '');
@@ -36,8 +36,8 @@ window.AuditView = {
                     <td class="p-3 text-xs text-gray-400">${esc(date)} ${esc(time)}</td>
                     <td class="p-3 text-white text-sm font-bold">${esc(e.operator_name)}</td>
                     <td class="p-3 ${actionColor} text-sm font-mono">${esc(e.action)}</td>
-                    <td class="p-3 text-gray-400 text-xs font-mono">${e.target_session != null ? '#' + e.target_session : '—'}</td>
-                    <td class="p-3 text-gray-300 text-xs truncate max-w-[300px]" title="${esc(e.details || '')}">${esc(e.details) || '—'}</td>
+                    <td class="p-3 text-gray-400 text-xs font-mono">${e.target_session != null ? '#' + e.target_session : '-'}</td>
+                    <td class="p-3 text-gray-300 text-xs truncate max-w-[300px]" title="${esc(e.details || '')}">${esc(e.details) || '-'}</td>
                 </tr>`;
             }).join('');
         } catch(e) { console.error('Audit fetch error:', e); }

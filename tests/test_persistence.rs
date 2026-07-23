@@ -1,4 +1,4 @@
-// tests/test_persistence.rs — Persistence module integration tests.
+// tests/test_persistence.rs - Persistence module integration tests.
 //
 // Tests the public `rcm::agent::persistence::*` API end-to-end.
 // Each test that touches the filesystem gets a private HOME directory
@@ -6,7 +6,7 @@
 //
 // Structure:
 //   - Isolation helpers
-//   - Platform-guard tests (run everywhere — verify wrong-platform commands fail cleanly)
+//   - Platform-guard tests (run everywhere - verify wrong-platform commands fail cleanly)
 //   - Linux-only tests (systemd, profile, list)
 //   - Handler argument-parsing tests (run everywhere)
 
@@ -50,7 +50,7 @@ impl Drop for TempHome {
     }
 }
 
-/// Write a minimal fake executable. Does not need to be a real binary —
+/// Write a minimal fake executable. Does not need to be a real binary -
 /// only needs to exist on disk so `install_*` calls can `fs::copy` it.
 fn fake_bin(dir: &str, name: &str) -> String {
     let path = format!("{dir}/{name}");
@@ -226,7 +226,7 @@ mod linux {
         let src = fake_bin(&h.path, "copyme");
         let msg = persist::install_systemd("copy-svc", &src).unwrap();
 
-        // Message should show: "Copied: <src> → <dst>"
+        // Message should show: "Copied: <src> -> <dst>"
         assert!(msg.contains("Copied:") || msg.contains("→"),
             "Output must show the copy operation:\n{msg}");
     }
@@ -236,7 +236,7 @@ mod linux {
         let h = TempHome::new("sys_idem");
         let src = fake_bin(&h.path, "agent");
         persist::install_systemd("idem-svc", &src).unwrap();
-        // Second install must not error — overwrites existing unit
+        // Second install must not error - overwrites existing unit
         let result = persist::install_systemd("idem-svc", &src);
         assert!(result.is_ok(), "Second install must not fail");
     }
@@ -381,7 +381,7 @@ mod linux {
         assert!(fs::read_to_string(&bashrc).unwrap().contains("rcm-persist-start"),
             "Setup: sentinel must be present");
 
-        // remove_profile removes by sentinel, not by path — pass the stable path
+        // remove_profile removes by sentinel, not by path - pass the stable path
         let stable = format!("{}/.local/bin/rm_agent", h.path);
         persist::remove_profile(&stable).unwrap();
 

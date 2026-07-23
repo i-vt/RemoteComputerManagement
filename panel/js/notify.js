@@ -1,4 +1,4 @@
-// panel/js/notify.js — Toast notification system + session change detection
+// panel/js/notify.js - Toast notification system + session change detection
 window.Notify = {
     _prevSessionCount: -1,
     _toastId: 0,
@@ -49,7 +49,7 @@ window.Notify = {
             const newCount = hosts.length - this._prevSessionCount;
             const latest = hosts[hosts.length - 1];
             this.toast(
-                `New session: ${latest?.hostname || 'unknown'} (${latest?.ip || '?'}) — ${latest?.os || '?'}`,
+                `New session: ${latest?.hostname || 'unknown'} (${latest?.ip || '?'}) - ${latest?.os || '?'}`,
                 'success', 8000
             );
 
@@ -111,7 +111,7 @@ window.Modal = {
         setTimeout(() => { if (okBtn) okBtn.focus(); }, 60);
     },
 
-    // Non-blocking alert — returns Promise resolved with true when dismissed
+    // Non-blocking alert - returns Promise resolved with true when dismissed
     alert(msg, type = 'info') {
         return new Promise(resolve => {
             this._resolveFunc = resolve;
@@ -119,7 +119,7 @@ window.Modal = {
         });
     },
 
-    // Confirmation dialog — returns Promise<boolean>
+    // Confirmation dialog - returns Promise<boolean>
     confirm(msg, type = 'warning') {
         return new Promise(resolve => {
             this._resolveFunc = resolve;
