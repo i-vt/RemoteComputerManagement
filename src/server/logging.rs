@@ -25,7 +25,7 @@ pub fn init() -> Result<tracing_appender::non_blocking::WorkerGuard, Box<dyn std
         eprintln!("[-] Log cleanup failed: {}", e);
     }
 
-    // 3. Rolling daily appender — creates a new file each day automatically.
+    // 3. Rolling daily appender - creates a new file each day automatically.
     // File naming: logs/server.log.YYYY-MM-DD
     let file_appender = tracing_appender::rolling::daily(LOG_DIR, "server.log");
     let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
@@ -52,7 +52,7 @@ pub fn cleanup_logs() -> io::Result<()> {
     let log_path = Path::new(LOG_DIR);
     if !log_path.exists() { return Ok(()); }
 
-    // Current day's filename suffix — don't delete the active file
+    // Current day's filename suffix - don't delete the active file
     let today = Local::now().format("%Y-%m-%d").to_string();
 
     let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();

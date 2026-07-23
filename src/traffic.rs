@@ -136,7 +136,7 @@ impl DataMolder {
         let header_str = String::from_utf8_lossy(&header_buf).to_string();
 
         // Parse Content-Length with case-insensitive matching (no repeated
-        // allocation) and reject duplicate/conflicting values — ambiguous
+        // allocation) and reject duplicate/conflicting values - ambiguous
         // framing is a smuggling vector.
         let mut content_len: Option<usize> = None;
         for line in header_str.lines() {
@@ -149,7 +149,7 @@ impl DataMolder {
                     if prev != val {
                         return Err(io::Error::new(io::ErrorKind::InvalidData, "Conflicting Content-Length headers"));
                     }
-                    // Duplicate with same value — tolerated but already recorded
+                    // Duplicate with same value - tolerated but already recorded
                 } else {
                     content_len = Some(val);
                 }
@@ -389,7 +389,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_raw_send_recv_roundtrip() {
-        let profile = MalleableProfile::default(); // format_http = false → raw mode
+        let profile = MalleableProfile::default(); // format_http = false -> raw mode
         let data = b"test command payload";
 
         let (client, server) = duplex(4096);

@@ -1,33 +1,33 @@
 //! Passive network topology inference from session interface data.
 //!
-//! All analysis runs over data agents already reported at registration — no
+//! All analysis runs over data agents already reported at registration - no
 //! probes are sent and no new network traffic is ever generated.
 //!
 //! # Usage
 //!
 //! 1. Collect [`SessionSnapshot`]s from `SharedSessions` (each snapshot holds
-//!    the session id, hostname, and reported network interfaces).
+//! the session id, hostname, and reported network interfaces).
 //! 2. Call [`TopologyManager::plan`] with a target IP or CIDR to get ranked
-//!    [`RouteCandidate`]s — which sessions can reach the target, and how good
-//!    each route is.
+//! [`RouteCandidate`]s - which sessions can reach the target, and how good
+//! each route is.
 //! 3. Call [`TopologyManager::build_snapshot`] for the full cross-session view
-//!    including shared networks and overlapping-CIDR conflicts.
+//! including shared networks and overlapping-CIDR conflicts.
 //! 4. Call [`TopologyManager::render_plan`] to get a printable string for the
-//!    server console.
+//! server console.
 //!
 //! # Adding to the server command loop
 //!
 //! In `src/server/session.rs`, when `handle_connection` builds the `Session`
-//! it now stores `interfaces: hello.interfaces.clone()`.  In
+//! it now stores `interfaces: hello.interfaces.clone()`. In
 //! `src/server/mod.rs` add a `"plan"` command arm that:
 //! ```ignore
 //! let snaps: Vec<SessionSnapshot> = sessions.iter()
-//!     .map(|e| SessionSnapshot {
-//!         session_id: *e.key(),
-//!         hostname: e.value().hostname.clone(),
-//!         interfaces: e.value().interfaces.clone(),
-//!     })
-//!     .collect();
+//! .map(|e| SessionSnapshot {
+//! session_id: *e.key(),
+//! hostname: e.value().hostname.clone(),
+//! interfaces: e.value().interfaces.clone(),
+//! })
+//! .collect();
 //! let candidates = TopologyManager::plan(&snaps, target);
 //! println!("{}", TopologyManager::render_plan(target, &candidates));
 //! ```
@@ -39,7 +39,7 @@ use std::net::Ipv4Addr;
 // ── Public data types ──────────────────────────────────────────────────────
 
 /// Lightweight per-session snapshot carrying only the fields topology needs.
-/// Decoupled from `Session` so all topology functions are pure — no channels,
+/// Decoupled from `Session` so all topology functions are pure - no channels,
 /// no atomics, no locks needed in tests.
 #[derive(Debug, Clone)]
 pub struct SessionSnapshot {
@@ -58,7 +58,7 @@ pub struct RouteCandidate {
     pub interface: String,
     /// The specific IP address reported by the agent for this interface.
     pub source_addr: String,
-    /// Confidence score — higher is better. Driven by prefix length,
+    /// Confidence score - higher is better. Driven by prefix length,
     /// RFC-1918 membership, interface name heuristics, and UP flag.
     pub score: u16,
 }
@@ -191,7 +191,7 @@ impl TopologyManager {
         out
     }
 
-    /// Normalise "10.0.1.5/24" → ("10.0.0.0/24", "10.0.1.5").
+    /// Normalise "10.0.1.5/24" -> ("10.0.0.0/24", "10.0.1.5").
     /// Returns `None` for IPv6, unparseable addresses, or prefix > 32.
     fn normalize_ipv4_cidr(addr: &str, _iface: &NetworkInterface) -> Option<(String, String)> {
         let (ip_str, prefix_str) = addr.split_once('/')?;
@@ -242,7 +242,7 @@ impl TopologyManager {
     /// Produce a confidence score for a route candidate.
     ///
     /// Rules (additive):
-    /// - Prefix length contributes 0–32 points (more specific = better).
+    /// - Prefix length contributes 0-32 points (more specific = better).
     /// - RFC-1918 address: +20.
     /// - Physical interface names (eth, en, em): +10. Wireless (wl): +8.
     ///   Container / virtual (docker, veth, br-): −10.
@@ -310,7 +310,7 @@ impl TopologyManager {
     }
 
     /// A conflict is two candidates from *different* sessions where one CIDR is
-    /// a supernet of the other — the operator must choose which route to prefer.
+    /// a supernet of the other - the operator must choose which route to prefer.
     fn find_conflicts(candidates: &[RouteCandidate]) -> Vec<RouteConflict> {
         let mut conflicts = Vec::new();
         for (i, a) in candidates.iter().enumerate() {
@@ -637,7 +637,7 @@ mod tests {
 
     #[test]
     fn supernet_subset_across_sessions_is_conflict() {
-        // /24 is a subset of /16 — they overlap
+        // /24 is a subset of /16 - they overlap
         let sessions = vec![
             snap(1, "a", vec![iface("eth0", &["10.0.0.5/24"], &["UP"])]),
             snap(2, "b", vec![iface("eth0", &["10.0.1.5/16"], &["UP"])]),
@@ -667,7 +667,7 @@ mod tests {
             snap(2, "b", vec![iface("eth0", &["10.0.0.9/24"], &["UP"])]),
         ];
         let s = TopologyManager::build_snapshot(&sessions);
-        // Same CIDR → shared network, not a conflict
+        // Same CIDR -> shared network, not a conflict
         assert!(
             s.shared_networks.iter().any(|n| n.cidr == "10.0.0.0/24"),
             "should be shared"

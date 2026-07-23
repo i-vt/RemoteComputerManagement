@@ -3,21 +3,21 @@
 // Streaming ZIP writer using data descriptors and ZIP64 extensions.
 //
 // Design goals:
-//   • No temp file — output goes directly to any Write impl (channel, socket, file)
-//   • Constant RAM usage — only the current file's 64 KB copy buffer is live
-//   • ZIP64 throughout — handles files and archives of any size (tested to TB scale)
-//   • Files stored uncompressed (method = 0) — compression is optional and would
+//   • No temp file - output goes directly to any Write impl (channel, socket, file)
+//   • Constant RAM usage - only the current file's 64 KB copy buffer is live
+//   • ZIP64 throughout - handles files and archives of any size (tested to TB scale)
+//   • Files stored uncompressed (method = 0) - compression is optional and would
 //     require holding compressed output in RAM before writing the local header
 //
 // Wire format per file entry:
-//   local_file_header  (30 fixed + filename_len + 20 ZIP64 extra)
-//   raw_file_data      (any length)
-//   data_descriptor    (24: sig(4) + crc32(4) + comp_size(8) + uncomp_size(8))
+//   local_file_header (30 fixed + filename_len + 20 ZIP64 extra)
+//   raw_file_data (any length)
+//   data_descriptor (24: sig(4) + crc32(4) + comp_size(8) + uncomp_size(8))
 //
 // Followed by the central directory and end records (ZIP64 + standard EOCD).
 //
 // Data descriptors (GP bit 3) let us write local headers before we know the
-// file's CRC-32 or size, eliminating the need to seek back.  All major unzip
+// file's CRC-32 or size, eliminating the need to seek back. All major unzip
 // tools (7-zip, info-zip, macOS, Windows Explorer, Python zipfile) accept this.
 
 use std::io::{self, Read, Write};
@@ -82,7 +82,7 @@ struct CdEntry {
     is_dir: bool,
 }
 
-/// Approximate Unix-epoch → DOS date/time.
+/// Approximate Unix-epoch -> DOS date/time.
 /// Only used for metadata; transfer correctness does not depend on it.
 fn to_dos(unix_secs: u64) -> (u16, u16) {
     let s   = ((unix_secs        % 60) / 2) as u16;   // 2-second resolution
@@ -125,8 +125,8 @@ where
     w16(out, mt.0)?;            // mod time
     w16(out, mt.1)?;            // mod date
     w32(out, 0)?;               // CRC-32 placeholder
-    w32(out, 0xFFFF_FFFF)?;     // compressed size  (0xFFFFFFFF → see ZIP64 extra)
-    w32(out, 0xFFFF_FFFF)?;     // uncompressed size (0xFFFFFFFF → see ZIP64 extra)
+    w32(out, 0xFFFF_FFFF)?;     // compressed size (0xFFFFFFFF -> see ZIP64 extra)
+    w32(out, 0xFFFF_FFFF)?;     // uncompressed size (0xFFFFFFFF -> see ZIP64 extra)
     w16(out, name_len)?;
     w16(out, EXTRA_LEN)?;
     out.write_all(name)?;
@@ -157,7 +157,7 @@ where
     // Using 8-byte sizes to match the ZIP64 local header.
     w32(out, DD)?;
     w32(out, crc_val)?;
-    w64(out, size)?;   // compressed  = uncompressed for Stored
+    w64(out, size)?;   // compressed = uncompressed for Stored
     w64(out, size)?;
     *pos += 24; // 4+4+8+8
 
@@ -230,7 +230,7 @@ fn write_central_directory<W: Write>(
         w16(out, 0)?;         // internal file attributes
         // External file attributes: Unix mode in high 16 bits
         w32(out, if e.is_dir { 0x41ED_0000 } else { 0x81A4_0000 })?;
-        // Local header offset: 0xFFFFFFFF → see ZIP64 extra
+        // Local header offset: 0xFFFFFFFF -> see ZIP64 extra
         w32(out, if e.is_dir && e.offset <= 0xFFFF_FFFE {
             e.offset as u32
         } else {
@@ -294,17 +294,17 @@ fn write_central_directory<W: Write>(
 /// Write the contents of `root` as a streaming ZIP archive to `out`.
 ///
 /// `base` must be the parent of `root`; it determines how entries appear in
-/// the archive.  For example:
+/// the archive. For example:
 /// ```text
 ///   base = downloads/
 ///   root = downloads/20240101_session/
-///   → archive contains  20240101_session/etc/passwd,  etc.
+///   -> archive contains 20240101_session/etc/passwd, etc.
 /// ```
 ///
 /// The function uses an explicit stack traversal (no recursion), a 64 KB copy
 /// buffer, and ZIP64 data descriptors, so RAM usage is O(1) regardless of the
-/// number or size of files.  The central directory is kept in a `Vec<CdEntry>`
-/// which grows to O(num_files × ~100 bytes) — for a million files that is
+/// number or size of files. The central directory is kept in a `Vec<CdEntry>`
+/// which grows to O(num_files × ~100 bytes) - for a million files that is
 /// roughly 100 MB, which is acceptable.
 pub fn write_zip_directory<W: Write>(
     out:  &mut W,

