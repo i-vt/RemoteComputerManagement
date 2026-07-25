@@ -77,6 +77,7 @@ WORKDIR /app
 # Cargo.toml / Cargo.lock change, not on every source edit.
 COPY Cargo.toml Cargo.lock ./
 COPY build.rs ./
+COPY strcrypt/Cargo.toml ./strcrypt/Cargo.toml
 
 # Create empty stub files for all [[bin]] targets so `cargo fetch`
 # and the dependency build succeed without the real source.
@@ -87,7 +88,9 @@ RUN mkdir -p src/bin src/api/routes src/server src/agent/handlers \
     && for bin in server client builder client_dll client_service stager; do \
            echo 'fn main() {}' > src/bin/${bin}.rs; \
        done \
-    && echo 'pub fn placeholder() {}' > src/lib.rs
+    && echo 'pub fn placeholder() {}' > src/lib.rs \
+    && mkdir -p strcrypt/src \
+    && echo 'pub fn placeholder() {}' > strcrypt/src/lib.rs
 
 # Fetch all dependencies (downloads crates, no compilation yet)
 RUN cargo fetch
@@ -95,6 +98,7 @@ RUN cargo fetch
 # ── Copy full source tree ─────────────────────────────────────────────
 # Now copy the real source. The dependency layer above is already cached.
 COPY src/ ./src/
+COPY strcrypt/ ./strcrypt/
 COPY certs/ ./certs/
 COPY panel/ ./panel/
 COPY modules/ ./modules/

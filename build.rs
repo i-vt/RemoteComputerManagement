@@ -45,6 +45,21 @@ fn main() {
         .collect();
     println!("cargo:rustc-env=LITCRYPT_ENCRYPT_KEY={}", litcrypt_key);
 
+    // The same per-build entropy also feeds the AES string cryptor. The
+    // 64-byte key is split into four 16-byte shards, each emitted as a
+    // separate env var and consumed at a different code site, so no single
+    // contiguous key image appears in the binary. The runtime reassembles
+    // them; the proc-macro derives a fresh per-string key from them at
+    // compile time (see strcrypt).
+    {
+        fn hex_of(bytes: &[u8]) -> String {
+            bytes.iter().map(|b| format!("{:02x}", b)).collect()
+        }
+        for (i, chunk) in litcrypt_key.as_bytes().chunks(16).enumerate() {
+            println!("cargo:rustc-env=RCM_STRCRYPT_S{}={}", i + 1, hex_of(chunk));
+        }
+    }
+
     // ── 2. POLYMORPHISM: Junk-code seed ──────────────────────────────
     //
     // A random 64-bit seed is embedded as a compile-time env var.

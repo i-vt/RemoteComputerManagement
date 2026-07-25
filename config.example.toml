@@ -1,0 +1,94 @@
+# RemoteComputerManagement configuration
+# Every key is optional: anything omitted falls back to the embedded default
+# shown here. Selected via the RCM_CONFIG environment variable, or as
+# config.toml in the working directory.
+
+[server]
+api_port = 8080 # operator REST API port (bound on 127.0.0.1)
+default_listener_port = 4443 # port of the default TLS listener created on first run
+max_queued_commands = 256 # max commands queued per HTTP agent before backpressure drops new work
+http_prune_interval_secs = 300 # how often the HTTP listener sweeps for stale sessions (seconds)
+http_prune_idle_secs = 3600 # idle age after which an HTTP session is pruned (seconds)
+http_body_limit_bytes = 52428800 # HTTP request body cap for C2 and API routers (bytes)
+listener_max_sessions = 1024 # max concurrent sessions accepted by one listener
+session_command_channel = 100 # capacity of the per-session command channel
+audit_operator_password_len = 24 # length of the generated initial operator password (characters)
+registration_hmac_window_secs = 300 # freshness window for registration HMAC timestamps (seconds, both ways)
+seen_hmac_prune_threshold = 1000 # prune the replay-cache once it grows past this many seen HMACs
+max_poison_recoveries = 3 # times a poisoned lock is recovered before the component gives up
+max_virtual_sessions = 64 # max virtual (pivot child) sessions per parent session
+extensions_dir = "./extensions" # directory containing agent extensions (.rhai scripts)
+modules_dir = "./modules" # directory containing server-side modules (.rhai scripts)
+session_fallback_id_start = 50000 # first fallback session id used when the database sequence is unavailable
+
+[transfer]
+max_file_size_bytes = 524288000 # max size of a single transferred file (bytes)
+max_total_file_size_bytes = 524288000 # max size of a fully reassembled (decoded) file (bytes)
+max_chunk_b64_bytes = 12582912 # max base64 payload accepted for one upload chunk (bytes)
+small_file_threshold_bytes = 10485760 # files smaller than this use the single-buffer fast path (bytes)
+download_chunk_size_bytes = 2097152 # read size for single-file downloads (bytes)
+recursive_chunk_size_bytes = 2097152 # read size per file in recursive directory downloads (bytes)
+chunk_sleep_ms = 20 # sleep between chunks to pace the wire (milliseconds)
+files_per_yield = 5 # yield to the async runtime every N files during directory walks
+zip_channel_chunks = 32 # bounded-channel capacity (chunks) for streaming zip responses
+zip_chunk_bytes = 65536 # chunk size batched onto the streaming-zip channel (bytes)
+max_frame_bytes = 10485760 # hard cap for one transport frame after wrapping (bytes)
+frame_warn_bytes = 2097152 # log a warning above this transport frame size (bytes)
+download_chunk_sleep_ms = 50 # pace between chunks on the single-file download path (milliseconds)
+
+[rcm]
+storage_base = "downloads" # base directory for collected-output storage roots
+tool_name = "rcm" # tool name stamped into RCM envelopes and log paths
+spec_version = "2.1" # RCM spec version emitted into generated XML envelopes
+meta_cache_cap = 1024 # capacity of the sidecar metadata cache (FIFO eviction beyond this)
+chunk_slots = 8 # number of concurrent chunk-assembly slots per package
+stale_slot_ttl_secs = 86400 # TTL for a stale chunk slot before it is reclaimed (seconds)
+log_rotate_bytes = 16777216 # rotate an RCM component log once it exceeds this size (bytes)
+screenshot_default_ext = "png" # extension used when a screenshot arrives without one
+fallback_toolspecific = "shot" # toolspecific component used when sanitization leaves it empty
+
+[logging]
+log_dir = "logs" # directory the server writes daily log files into
+max_size_bytes = 2147483648 # start deleting oldest log files once the directory passes this (bytes)
+target_size_bytes = 1572864000 # delete down to this size during cleanup (bytes)
+cleanup_interval_secs = 3600 # how often the background cleanup task runs (seconds)
+
+[agent]
+default_sleep_secs = 60 # default beacon interval baked into fresh agent builds (seconds)
+jitter_min_pct = 10 # lower jitter bound as a percentage of the sleep interval
+jitter_max_pct = 20 # upper jitter bound as a percentage of the sleep interval
+default_task_batch_size = 10 # tasks requested per check-in when the server does not say otherwise
+backoff_cap_secs = 300 # cap for exponential reconnect backoff (seconds)
+connect_timeout_secs = 15 # TCP/TLS connect timeout for the agent HTTP transport (seconds)
+request_timeout_secs = 120 # overall request timeout for the agent HTTP transport (seconds)
+http_read_timeout_secs = 30 # per-read timeout while streaming an HTTP response body (seconds)
+http_reader_grace_secs = 1 # grace period for response reader threads after the child exits (seconds)
+http_max_response_bytes = 10485760 # maximum buffered size of a single HTTP response (bytes)
+keylogger_max_bytes = 10485760 # rotate keylogger archives above this size (bytes)
+keylogger_max_age_secs = 1800 # rotate keylogger archives older than this (seconds)
+
+[evasion]
+heap_block_size = 4096 # allocation block size assumed when walking/encrypting heap blocks
+sleep_obfuscation = "ekko" # sleep obfuscation technique: ekko, spoofed-stack or plain
+
+[ffi_windows]
+image_nt_signature = 17744 # IMAGE_NT_SIGNATURE ("PE\0\0") validating a PE header
+image_directory_entry_import = 1 # IMAGE_DIRECTORY_ENTRY_IMPORT index into the data directory
+mem_commit = 4096 # MEM_COMMIT allocation type
+mem_reserve = 8192 # MEM_RESERVE allocation type
+mem_release = 32768 # MEM_RELEASE free type
+page_execute_readwrite = 64 # PAGE_EXECUTE_READWRITE memory protection
+page_readwrite = 4 # PAGE_READWRITE memory protection
+page_execute_read = 32 # PAGE_EXECUTE_READ memory protection
+page_noaccess = 1 # PAGE_NOACCESS memory protection
+process_all_access = 2035711 # PROCESS_ALL_ACCESS desired access mask
+create_suspended = 4 # CREATE_SUSPENDED process creation flag
+infinite = 4294967295 # INFINITE wait timeout
+wait_timeout = 258 # WAIT_TIMEOUT wait result
+wait_object_0 = 0 # WAIT_OBJECT_0 wait result
+token_query = 8 # TOKEN_QUERY desired access for token inspection
+se_debug_name = "SeDebugPrivilege" # name of the debug privilege (SE_DEBUG_NAME)
+
+[crypto]
+fingerprint_hash = "md5" # hash used for RCM fingerprint values (spec mandates md5 for v1)
+file_hash_algorithms = ["sha256", "sha1", "md5"] # hashes computed for collected-file integrity manifests
