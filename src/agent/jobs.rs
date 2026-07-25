@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+use crate::strcrypt_rt;
 use tokio::task::{JoinHandle, AbortHandle};
 use serde::{Serialize, Deserialize};
 use chrono::Utc;
@@ -113,7 +115,7 @@ impl JobManager {
 
             let resp = CommandResponse {
                 request_id: req_id,
-                output: format!("JOB_FINAL:{}|{}", job_id, output),
+                output: format!("{}:{}|{}", strcrypt::aes_str!("JOB_FINAL"), job_id, output),
                 error,
                 exit_code,
             };
@@ -212,7 +214,7 @@ impl JobOutputSink {
         self.chunk_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let resp = CommandResponse {
             request_id: self.req_id,
-            output: format!("JOB_STREAM:{}|{}", self.job_id, line),
+            output: format!("{}:{}|{}", strcrypt::aes_str!("JOB_STREAM"), self.job_id, line),
             error: String::new(),
             exit_code: 0,
         };

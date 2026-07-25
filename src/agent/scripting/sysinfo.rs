@@ -1,34 +1,36 @@
 // src/agent/scripting/sysinfo.rs
 use rhai::Engine;
 use serde_json::json;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
-    engine.register_fn("internal_hostname", || -> String {
-        sys_info::hostname().unwrap_or_else(|_| "unknown".into())
+    engine.register_fn(&aes_str!("internal_hostname"), || -> String {
+        sys_info::hostname().unwrap_or_else(|_| aes_str!("unknown"))
     });
 
-    engine.register_fn("internal_username", || -> String {
+    engine.register_fn(&aes_str!("internal_username"), || -> String {
         #[cfg(target_os = "windows")]
         {
-            std::env::var("USERNAME").unwrap_or_else(|_| whoami_native())
+            std::env::var(aes_str!("USERNAME")).unwrap_or_else(|_| whoami_native())
         }
         #[cfg(not(target_os = "windows"))]
         {
-            std::env::var("USER")
-                .or_else(|_| std::env::var("LOGNAME"))
+            std::env::var(aes_str!("USER"))
+                .or_else(|_| std::env::var(aes_str!("LOGNAME")))
                 .unwrap_or_else(|_| whoami_native())
         }
     });
 
     // Exposes utils::get_network_interfaces() - already cross-platform.
     // Returns JSON: [{name, mac, ipv4, ipv6, flags}]
-    engine.register_fn("internal_network_interfaces", || -> String {
+    engine.register_fn(&aes_str!("internal_network_interfaces"), || -> String {
         let ifaces = crate::utils::get_network_interfaces();
         serde_json::to_string(&ifaces).unwrap_or("[]".into())
     });
 
-    engine.register_fn("internal_uptime", || -> String {
+    engine.register_fn(&aes_str!("internal_uptime"), || -> String {
         #[cfg(not(target_os = "windows"))]
         {
             sys_info::boottime()
@@ -48,7 +50,7 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
-    engine.register_fn("internal_disk_info", || -> String {
+    engine.register_fn(&aes_str!("internal_disk_info"), || -> String {
         match sys_info::disk_info() {
             Ok(di) => json!({
                 "total_kb": di.total,
@@ -59,7 +61,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Convenience: returns the full sysinfo blob as JSON.
-    engine.register_fn("internal_sysinfo_json", || -> String {
+    engine.register_fn(&aes_str!("internal_sysinfo_json"), || -> String {
         json!({
             "hostname": sys_info::hostname().unwrap_or_default(),
             "os_type":  sys_info::os_type().unwrap_or_default(),
@@ -83,7 +85,7 @@ fn whoami_native() -> String {
                     .iter().map(|&b| b as u8).collect::<Vec<_>>()
             ).to_string();
         }
-        "unknown".into()
+        aes_str!("unknown")
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -95,6 +97,6 @@ fn whoami_native() -> String {
                 return cstr.to_string_lossy().to_string();
             }
         }
-        "unknown".into()
+        aes_str!("unknown")
     }
 }

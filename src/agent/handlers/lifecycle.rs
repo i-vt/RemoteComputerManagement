@@ -2,13 +2,14 @@
 
 use crate::common::CommandResponse;
 use crate::utils;
-use crate::lc;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use super::{HandlerContext, DispatchResult, AgentAction};
 
 pub async fn handle_self_destruct(ctx: &HandlerContext, req_id: u64) -> DispatchResult {
     let resp = CommandResponse {
         request_id: req_id,
-        output: lc!("Self-destruct..."),
+        output: aes_str!("Self-destruct..."),
         error: String::new(),
         exit_code: 0,
     };

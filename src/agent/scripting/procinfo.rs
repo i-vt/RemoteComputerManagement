@@ -1,13 +1,15 @@
 // src/agent/scripting/procinfo.rs
 use rhai::Engine;
 use serde_json::json;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
     // ── Command line ──────────────────────────────────────────────────────────
 
-    engine.register_fn("internal_proc_cmdline", |pid_str: &str| -> String {
-        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return "Error: invalid PID".into() };
+    engine.register_fn(&aes_str!("internal_proc_cmdline"), |pid_str: &str| -> String {
+        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return aes_str!("Error: invalid PID") };
 
         #[cfg(target_os = "linux")]
         {
@@ -32,8 +34,8 @@ pub fn register(engine: &mut Engine) {
 
     // ── Binary path ───────────────────────────────────────────────────────────
 
-    engine.register_fn("internal_proc_path", |pid_str: &str| -> String {
-        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return "Error: invalid PID".into() };
+    engine.register_fn(&aes_str!("internal_proc_path"), |pid_str: &str| -> String {
+        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return aes_str!("Error: invalid PID") };
 
         #[cfg(target_os = "linux")]
         {
@@ -45,7 +47,7 @@ pub fn register(engine: &mut Engine) {
         #[cfg(target_os = "windows")]
         unsafe {
             use super::win_ffi::{win_ext::*, proc_ext::*};
-            let h = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+            let h = OpenProcess(crate::config::config().ffi_windows.process_all_access, 0, pid);
             if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
             let mut buf  = [0u16; 1024];
             let mut size = buf.len() as u32;
@@ -60,8 +62,8 @@ pub fn register(engine: &mut Engine) {
 
     // ── Parent PID ────────────────────────────────────────────────────────────
 
-    engine.register_fn("internal_proc_parent", |pid_str: &str| -> String {
-        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return "Error: invalid PID".into() };
+    engine.register_fn(&aes_str!("internal_proc_parent"), |pid_str: &str| -> String {
+        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return aes_str!("Error: invalid PID") };
 
         #[cfg(target_os = "linux")]
         {
@@ -69,7 +71,7 @@ pub fn register(engine: &mut Engine) {
                 .ok()
                 .and_then(|s| {
                     s.lines()
-                        .find(|l| l.starts_with("PPid:"))
+                        .find(|l| l.starts_with(&aes_str!("PPid:")))
                         .and_then(|l| l.split_whitespace().nth(1))
                         .map(|v| v.to_string())
                 })
@@ -79,14 +81,14 @@ pub fn register(engine: &mut Engine) {
         unsafe {
             use super::win_ffi::proc_ext::*;
             let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-            if snap.is_null() { return "Error: snapshot failed".into(); }
+            if snap.is_null() { return aes_str!("Error: snapshot failed"); }
             let mut entry = ProcessEntry32W {
                 dw_size: std::mem::size_of::<ProcessEntry32W>() as u32,
                 cnt_usage: 0, th32_process_id: 0, th32_default_heap_id: 0,
                 th32_module_id: 0, cnt_threads: 0, th32_parent_process_id: 0,
                 pc_pri_class_base: 0, dw_flags: 0, sz_exe_file: [0u16; 260],
             };
-            let mut found = "Error: PID not found".to_string();
+            let mut found = aes_str!("Error: PID not found");
             if Process32FirstW(snap, &mut entry) != 0 {
                 loop {
                     if entry.th32_process_id == pid {
@@ -105,8 +107,8 @@ pub fn register(engine: &mut Engine) {
 
     // ── Owner username ────────────────────────────────────────────────────────
 
-    engine.register_fn("internal_proc_user", |pid_str: &str| -> String {
-        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return "Error: invalid PID".into() };
+    engine.register_fn(&aes_str!("internal_proc_user"), |pid_str: &str| -> String {
+        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return aes_str!("Error: invalid PID") };
 
         #[cfg(target_os = "linux")]
         {
@@ -115,14 +117,14 @@ pub fn register(engine: &mut Engine) {
                 .ok()
                 .and_then(|s| {
                     s.lines()
-                        .find(|l| l.starts_with("Uid:"))
+                        .find(|l| l.starts_with(&aes_str!("Uid:")))
                         .and_then(|l| l.split_whitespace().nth(1))
                         .and_then(|v| v.parse().ok())
                 })
                 .unwrap_or(u32::MAX);
             if uid == u32::MAX { return format!("Error: could not read UID for pid {}", pid); }
             // Look up username in /etc/passwd.
-            std::fs::read_to_string("/etc/passwd")
+            std::fs::read_to_string(aes_str!("/etc/passwd"))
                 .ok()
                 .and_then(|s| {
                     s.lines()
@@ -140,8 +142,8 @@ pub fn register(engine: &mut Engine) {
     // ── Loaded modules ────────────────────────────────────────────────────────
     // Returns JSON array of {name, base_address, size}.
 
-    engine.register_fn("internal_proc_modules", |pid_str: &str| -> String {
-        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return "Error: invalid PID".into() };
+    engine.register_fn(&aes_str!("internal_proc_modules"), |pid_str: &str| -> String {
+        let pid: u32 = match pid_str.parse() { Ok(p) => p, Err(_) => return aes_str!("Error: invalid PID") };
 
         #[cfg(target_os = "linux")]
         {

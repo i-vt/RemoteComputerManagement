@@ -16,6 +16,10 @@ pub mod win_ext {
     pub type DWORD  = u32;
 
     // ── Constants ─────────────────────────────────────────────────────────────
+    // All values are OS-fixed (winnt.h). The subset mirrored by
+    // config().ffi_windows (PROCESS_ALL_ACCESS, TOKEN_QUERY, MEM_COMMIT,
+    // PAGE_NOACCESS) is read from the typed config at runtime call sites;
+    // these declarations remain as the canonical compile-time reference.
     pub const PROCESS_ALL_ACCESS:           DWORD = 0x001F0FFF;
     pub const TOKEN_ALL_ACCESS:             DWORD = 0x000F01FF;
     pub const TOKEN_DUPLICATE:              DWORD = 0x0002;
@@ -70,6 +74,7 @@ pub mod win_ext {
     #[repr(C)]
     pub struct TokenPrivileges {
         pub count:      DWORD,
+        // ANYSIZE_ARRAY (1) - type-level size fixed by the winnt.h ABI.
         pub privileges: [LuidAndAttribs; 1],
     }
 

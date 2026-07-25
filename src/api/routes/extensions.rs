@@ -23,8 +23,10 @@ use serde::Deserialize;
 
 use crate::api::middleware::OperatorInfo;
 
-const EXT_DIR: &str = "./extensions";
-const MOD_DIR: &str = "./modules";
+// Script directories. The typed config has no fields for these paths yet,
+// so they stay consts (reported as a config gap).
+fn ext_dir() -> &'static str { crate::config::config().server.extensions_dir.as_str() }
+fn mod_dir() -> &'static str { crate::config::config().server.modules_dir.as_str() }
 
 /// Reject names with path-traversal characters.
 fn safe_name(name: &str) -> bool {
@@ -55,13 +57,13 @@ fn list_rhai_in(dir: &str) -> Vec<String> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub async fn list_extensions() -> impl IntoResponse {
-    let names = tokio::task::spawn_blocking(|| list_rhai_in(EXT_DIR))
+    let names = tokio::task::spawn_blocking(|| list_rhai_in(ext_dir()))
         .await.unwrap_or_default();
     Json(serde_json::json!({ "extensions": names }))
 }
 
 pub async fn get_extension(Path(name): Path<String>) -> Response {
-    get_script(EXT_DIR, &name).await
+    get_script(ext_dir(), &name).await
 }
 
 #[derive(Deserialize)]
@@ -72,14 +74,14 @@ pub async fn put_extension(
     Path(name): Path<String>,
     Json(body): Json<ScriptBody>,
 ) -> Response {
-    write_script(op, EXT_DIR, &name, body.content).await
+    write_script(op, ext_dir(), &name, body.content).await
 }
 
 pub async fn delete_extension(
     Extension(op): Extension<OperatorInfo>,
     Path(name): Path<String>,
 ) -> Response {
-    delete_script(op, EXT_DIR, &name).await
+    delete_script(op, ext_dir(), &name).await
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,7 +91,7 @@ pub async fn delete_extension(
 // Note: GET /api/modules (list) lives in modules.rs; we only add per-file CRUD.
 
 pub async fn get_module(Path(name): Path<String>) -> Response {
-    get_script(MOD_DIR, &name).await
+    get_script(mod_dir(), &name).await
 }
 
 pub async fn put_module(
@@ -97,14 +99,14 @@ pub async fn put_module(
     Path(name): Path<String>,
     Json(body): Json<ScriptBody>,
 ) -> Response {
-    write_script(op, MOD_DIR, &name, body.content).await
+    write_script(op, mod_dir(), &name, body.content).await
 }
 
 pub async fn delete_module(
     Extension(op): Extension<OperatorInfo>,
     Path(name): Path<String>,
 ) -> Response {
-    delete_script(op, MOD_DIR, &name).await
+    delete_script(op, mod_dir(), &name).await
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

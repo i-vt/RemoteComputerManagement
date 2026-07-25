@@ -2,6 +2,8 @@
 use rhai::Engine;
 use std::{fs, path::Path};
 use serde_json::json;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
@@ -9,7 +11,7 @@ pub fn register(engine: &mut Engine) {
 
     // Read a file as hex-encoded bytes (works for any file, including binary).
     // internal_read is text-only; internal_read_bytes handles arbitrary content.
-    engine.register_fn("internal_read_bytes", |path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_read_bytes"), |path: &str| -> String {
         match fs::read(path) {
             Ok(bytes) => hex::encode(bytes),
             Err(e)    => format!("Error: {}", e),
@@ -17,7 +19,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Write hex-encoded bytes to a file (creates or overwrites).
-    engine.register_fn("internal_write_bytes", |path: &str, data_hex: &str| -> String {
+    engine.register_fn(&aes_str!("internal_write_bytes"), |path: &str, data_hex: &str| -> String {
         let data = match hex::decode(data_hex) {
             Ok(d)  => d,
             Err(_) => data_hex.as_bytes().to_vec(), // fall back to raw UTF-8
@@ -30,28 +32,28 @@ pub fn register(engine: &mut Engine) {
 
     // ── Extended file operations ──────────────────────────────────────────────
 
-    engine.register_fn("internal_copy", |src: &str, dst: &str| -> String {
+    engine.register_fn(&aes_str!("internal_copy"), |src: &str, dst: &str| -> String {
         match fs::copy(src, dst) {
             Ok(n)  => format!("Copied {} bytes", n),
             Err(e) => format!("Error: {}", e),
         }
     });
 
-    engine.register_fn("internal_move", |src: &str, dst: &str| -> String {
+    engine.register_fn(&aes_str!("internal_move"), |src: &str, dst: &str| -> String {
         // fs::rename fails across filesystems; fall back to copy+delete.
         if fs::rename(src, dst).is_ok() {
-            return "Moved".to_string();
+            return aes_str!("Moved");
         }
         match fs::copy(src, dst) {
             Ok(_) => match fs::remove_file(src) {
-                Ok(_)  => "Moved (copy+delete)".to_string(),
+                Ok(_)  => aes_str!("Moved (copy+delete)"),
                 Err(e) => format!("Copied but could not delete source: {}", e),
             },
             Err(e) => format!("Error: {}", e),
         }
     });
 
-    engine.register_fn("internal_delete", |path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_delete"), |path: &str| -> String {
         let p = Path::new(path);
         let result = if p.is_dir() {
             fs::remove_dir_all(path)
@@ -59,24 +61,24 @@ pub fn register(engine: &mut Engine) {
             fs::remove_file(path)
         };
         match result {
-            Ok(_)  => "Deleted".to_string(),
+            Ok(_)  => aes_str!("Deleted"),
             Err(e) => format!("Error: {}", e),
         }
     });
 
-    engine.register_fn("internal_mkdir", |path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_mkdir"), |path: &str| -> String {
         match fs::create_dir_all(path) {
-            Ok(_)  => "Created".to_string(),
+            Ok(_)  => aes_str!("Created"),
             Err(e) => format!("Error: {}", e),
         }
     });
 
-    engine.register_fn("internal_exists", |path: &str| -> String {
-        if Path::new(path).exists() { "true".into() } else { "false".into() }
+    engine.register_fn(&aes_str!("internal_exists"), |path: &str| -> String {
+        if Path::new(path).exists() { aes_str!("true") } else { aes_str!("false") }
     });
 
     // Returns JSON: {size, is_dir, is_file, readonly, modified, created}
-    engine.register_fn("internal_stat", |path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_stat"), |path: &str| -> String {
         match fs::metadata(path) {
             Ok(m) => {
                 let modified = m.modified().ok()
@@ -100,7 +102,7 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
-    engine.register_fn("internal_file_size", |path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_file_size"), |path: &str| -> String {
         fs::metadata(path).map(|m| m.len() as i64).unwrap_or(-1).to_string()
     });
 }

@@ -12,6 +12,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::path::{Path, PathBuf, Component};
 use serde::{Serialize, Deserialize};
 
+use crate::config::config;
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RecursiveReport {
     pub root_path: String,
@@ -21,10 +23,8 @@ pub struct RecursiveReport {
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
-
-const MAX_FILE_SIZE: u64 = 500 * 1024 * 1024;          // 500 MB
-const MAX_TOTAL_FILE_SIZE: u64 = 500 * 1024 * 1024;    // 500 MB
-const SMALL_FILE_THRESHOLD: u64 = 10 * 1024 * 1024;    // 10 MB
+// Size limits now live in the typed config (crate::config::TransferConfig):
+// max_file_size_bytes, max_total_file_size_bytes, small_file_threshold_bytes.
 
 /// Create a directory and all its parents, but refuse to follow or create
 /// through symlinks. Pre- and post-creation checks catch races.
@@ -241,12 +241,14 @@ pub fn read_file_to_b64(path: &str) -> Result<(String, String), String> {
     let mut file = File::open(path_obj).map_err(|e| e.to_string())?;
     let file_size_u64 = meta.len();
 
-    if file_size_u64 > MAX_FILE_SIZE {
+    // Fetch the limits once: this function is a single-shot read, not a loop.
+    let max_file_size = config().transfer.max_file_size_bytes;
+    if file_size_u64 > max_file_size {
         return Err(format!("File too large ({} MB). Max is {} MB.",
-            file_size_u64 / (1024 * 1024), MAX_FILE_SIZE / (1024 * 1024)));
+            file_size_u64 / (1024 * 1024), max_file_size / (1024 * 1024)));
     }
 
-    if file_size_u64 < SMALL_FILE_THRESHOLD {
+    if file_size_u64 < config().transfer.small_file_threshold_bytes {
         let cap = (file_size_u64 as usize).max(4096);
         let mut buffer = Vec::with_capacity(cap);
         let bytes_read = if file_size_u64 == 0 {
@@ -279,9 +281,9 @@ pub fn read_file_to_b64(path: &str) -> Result<(String, String), String> {
         }
 
         total_read += n as u64;
-        if total_read > MAX_FILE_SIZE {
+        if total_read > max_file_size {
             return Err(format!("File exceeded {} MB during read (possible infinite stream)",
-                MAX_FILE_SIZE / (1024 * 1024)));
+                max_file_size / (1024 * 1024)));
         }
 
         let mut combined = std::mem::take(&mut carry);
@@ -351,8 +353,9 @@ pub fn write_file_simple(base_dir: &str, rel_path: &str, b64_data: &str) -> Resu
 
     let bytes = BASE64.decode(b64_data).map_err(|e| format!("B64 Error: {}", e))?;
     // Enforce decoded size limit
-    if bytes.len() as u64 > MAX_TOTAL_FILE_SIZE {
-        return Err(format!("Decoded file exceeds {} MB limit", MAX_TOTAL_FILE_SIZE / (1024 * 1024)));
+    let max_total = config().transfer.max_total_file_size_bytes;
+    if bytes.len() as u64 > max_total {
+        return Err(format!("Decoded file exceeds {} MB limit", max_total / (1024 * 1024)));
     }
     let mut file = File::create(&full_path).map_err(|e| e.to_string())?;
     file.write_all(&bytes).map_err(|e| e.to_string())?;

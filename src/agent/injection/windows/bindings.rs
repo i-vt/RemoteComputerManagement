@@ -17,6 +17,10 @@ use std::ffi::c_void;
 #[allow(non_camel_case_types)] pub type DWORD64 = u64;
 
 // --- CONSTANTS ---
+// All values are OS-fixed (winnt.h / WinBase.h). The common subset
+// (PROCESS_ALL_ACCESS, MEM_*, PAGE_*, CREATE_SUSPENDED) is mirrored by
+// config().ffi_windows; call sites read the typed config at runtime and
+// these declarations remain as the canonical compile-time reference.
 pub const PROCESS_ALL_ACCESS: u32 = 0x001F0FFF;
 pub const MEM_COMMIT: u32 = 0x00001000;
 pub const MEM_RESERVE: u32 = 0x00002000;

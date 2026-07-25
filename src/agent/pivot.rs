@@ -16,6 +16,8 @@ use std::ffi::CString;
 use std::ptr;
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub type StreamMap = Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<Vec<u8>>>>>;
 
@@ -192,7 +194,7 @@ impl PivotManager {
 
     #[cfg(not(target_os = "windows"))]
     pub async fn start_named_pipe_listener(&self, _pipe_name: String) -> String {
-        "Error: Named Pipes are Windows-only.".to_string()
+        aes_str!("Error: Named Pipes are Windows-only.")
     }
 
     pub fn handle_downstream_frame(&self, frame: PivotFrame) {
@@ -223,7 +225,7 @@ fn create_security_pipe(path: &str) -> std::io::Result<NamedPipeServer> {
         use std::os::windows::io::AsRawHandle;
         let handle = pipe.as_raw_handle();
 
-        let sddl = CString::new("D:(A;;GA;;;AU)").unwrap();
+        let sddl = CString::new(aes_str!("D:(A;;GA;;;AU)")).unwrap();
         let mut sd: *mut c_void = ptr::null_mut();
 
         if ConvertStringSecurityDescriptorToSecurityDescriptorA(

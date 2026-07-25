@@ -30,6 +30,8 @@ use std::{
     time::Duration,
 };
 use uuid::Uuid;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Persistent session store
@@ -56,21 +58,21 @@ fn sessions() -> &'static Mutex<HashMap<String, Session>> {
 
 fn venv_python(venv: &str) -> PathBuf {
     #[cfg(target_os = "windows")]
-    return PathBuf::from(venv).join("Scripts").join("python.exe");
+    return PathBuf::from(venv).join(aes_str!("Scripts")).join(aes_str!("python.exe"));
     #[cfg(not(target_os = "windows"))]
-    return PathBuf::from(venv).join("bin").join("python3");
+    return PathBuf::from(venv).join(aes_str!("bin")).join(aes_str!("python3"));
 }
 
 fn venv_pip(venv: &str) -> PathBuf {
     #[cfg(target_os = "windows")]
-    return PathBuf::from(venv).join("Scripts").join("pip.exe");
+    return PathBuf::from(venv).join(aes_str!("Scripts")).join(aes_str!("pip.exe"));
     #[cfg(not(target_os = "windows"))]
-    return PathBuf::from(venv).join("bin").join("pip");
+    return PathBuf::from(venv).join(aes_str!("bin")).join(aes_str!("pip"));
 }
 
 /// Find the system Python interpreter. Tries python3 then python.
 fn find_python() -> Option<String> {
-    for candidate in &["python3", "python", "python3.12", "python3.11", "python3.10"] {
+    for candidate in &[aes_str!("python3"), aes_str!("python"), aes_str!("python3.12"), aes_str!("python3.11"), aes_str!("python3.10")] {
         if Command::new(candidate)
             .arg("--version")
             .stdout(Stdio::null())
@@ -93,6 +95,9 @@ fn write_temp_script(code: &str) -> Result<PathBuf, String> {
 }
 
 /// Run an interpreter with a list of args; returns (stdout, stderr, exit_code).
+// Per-call timeouts (10 s - 600 s) are passed by each caller. The typed
+// config tree has no scripting section, so the literals at the call sites
+// stay as-is (gap reported for config-core).
 fn run_cmd(interpreter: &Path, args: &[&str], timeout: Duration) -> (String, String, i32) {
     let mut cmd = Command::new(interpreter);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -151,14 +156,14 @@ pub fn register(engine: &mut Engine) {
     // ── Discovery ─────────────────────────────────────────────────────────────
 
     /// Find the system Python interpreter path.
-    engine.register_fn("internal_python_find", || -> String {
-        find_python().unwrap_or_else(|| "Error: Python not found".into())
+    engine.register_fn(&aes_str!("internal_python_find"), || -> String {
+        find_python().unwrap_or_else(|| aes_str!("Error: Python not found"))
     });
 
     /// Return the Python version string for an interpreter path (or "python3").
-    engine.register_fn("internal_python_version", |interpreter: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_version"), |interpreter: &str| -> String {
         let interp = if interpreter.is_empty() {
-            match find_python() { Some(p) => p, None => return "Error: Python not found".into() }
+            match find_python() { Some(p) => p, None => return aes_str!("Error: Python not found") }
         } else {
             interpreter.to_string()
         };
@@ -172,10 +177,10 @@ pub fn register(engine: &mut Engine) {
 
     /// Execute Python code using the system interpreter.
     /// Returns combined stdout+stderr.
-    engine.register_fn("internal_python_exec", |code: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_exec"), |code: &str| -> String {
         let interp = match find_python() {
             Some(p) => p,
-            None    => return "Error: Python not found on PATH".into(),
+            None    => return aes_str!("Error: Python not found on PATH"),
         };
         let tmp = match write_temp_script(code) {
             Ok(p)  => p,
@@ -189,10 +194,10 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// Execute a Python script file with the system interpreter.
-    engine.register_fn("internal_python_exec_file", |script_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_exec_file"), |script_path: &str| -> String {
         let interp = match find_python() {
             Some(p) => p,
-            None    => return "Error: Python not found".into(),
+            None    => return aes_str!("Error: Python not found"),
         };
         let (out, err, _) = run_cmd(
             Path::new(&interp), &[script_path], Duration::from_secs(300)
@@ -202,10 +207,10 @@ pub fn register(engine: &mut Engine) {
 
     /// Execute Python code and return its stdout as a JSON string.
     /// Python should print a single JSON value to stdout.
-    engine.register_fn("internal_python_exec_json", |code: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_exec_json"), |code: &str| -> String {
         let interp = match find_python() {
             Some(p) => p,
-            None    => return "Error: Python not found".into(),
+            None    => return aes_str!("Error: Python not found"),
         };
         let tmp = match write_temp_script(code) {
             Ok(p)  => p,
@@ -221,10 +226,10 @@ pub fn register(engine: &mut Engine) {
     // ── VENV management ───────────────────────────────────────────────────────
 
     /// Create a Python virtual environment at venv_path using the system python3.
-    engine.register_fn("internal_venv_create", |venv_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_venv_create"), |venv_path: &str| -> String {
         let interp = match find_python() {
             Some(p) => p,
-            None    => return "Error: Python not found".into(),
+            None    => return aes_str!("Error: Python not found"),
         };
         let (out, err, code) = run_cmd(
             Path::new(&interp),
@@ -239,7 +244,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// Create a venv using a specific interpreter (full path or name on PATH).
-    engine.register_fn("internal_venv_create_with", |interpreter: &str, venv_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_venv_create_with"), |interpreter: &str, venv_path: &str| -> String {
         let (out, err, code) = run_cmd(
             Path::new(interpreter),
             &["-m", "venv", venv_path],
@@ -253,12 +258,12 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// Check whether a venv directory looks like a valid venv.
-    engine.register_fn("internal_venv_exists", |venv_path: &str| -> String {
-        if venv_python(venv_path).exists() { "true".into() } else { "false".into() }
+    engine.register_fn(&aes_str!("internal_venv_exists"), |venv_path: &str| -> String {
+        if venv_python(venv_path).exists() { aes_str!("true") } else { aes_str!("false") }
     });
 
     /// Remove a virtual environment directory entirely.
-    engine.register_fn("internal_venv_delete", |venv_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_venv_delete"), |venv_path: &str| -> String {
         if !venv_python(venv_path).exists() {
             return format!("Error: no venv found at {}", venv_path);
         }
@@ -269,7 +274,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// Return the path to the Python interpreter inside a venv.
-    engine.register_fn("internal_venv_python_path", |venv_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_venv_python_path"), |venv_path: &str| -> String {
         venv_python(venv_path).to_string_lossy().to_string()
     });
 
@@ -277,12 +282,12 @@ pub fn register(engine: &mut Engine) {
 
     /// Install packages into a venv.
     /// packages_json: JSON array of package specifiers, e.g. ["requests", "impacket>=0.11"]
-    engine.register_fn("internal_pip_install", |venv_path: &str, packages_json: &str| -> String {
+    engine.register_fn(&aes_str!("internal_pip_install"), |venv_path: &str, packages_json: &str| -> String {
         let packages: Vec<String> = match serde_json::from_str(packages_json) {
             Ok(p)  => p,
             Err(_) => vec![packages_json.to_string()], // treat as single package name
         };
-        if packages.is_empty() { return "Error: no packages specified".into(); }
+        if packages.is_empty() { return aes_str!("Error: no packages specified"); }
         let pip = venv_pip(venv_path);
         if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
         let mut args = vec!["install", "--quiet"];
@@ -297,24 +302,24 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// Install packages from a requirements.txt string (not a file path - the content itself).
-    engine.register_fn("internal_pip_install_requirements", |venv_path: &str, req_content: &str| -> String {
+    engine.register_fn(&aes_str!("internal_pip_install_requirements"), |venv_path: &str, req_content: &str| -> String {
         let pip = venv_pip(venv_path);
         if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
         let tmp = std::env::temp_dir().join(format!("rcm_req_{}.txt", Uuid::new_v4()));
         if fs::write(&tmp, req_content).is_err() {
-            return "Error: could not write requirements file".into();
+            return aes_str!("Error: could not write requirements file");
         }
         let tmp_str = tmp.to_string_lossy().to_string();
         let (out, err, code) = run_cmd(
             &pip, &["install", "-r", &tmp_str, "--quiet"], Duration::from_secs(300)
         );
         let _ = fs::remove_file(&tmp);
-        if code == 0 { "Installed requirements".into() }
+        if code == 0 { aes_str!("Installed requirements") }
         else { format!("Error (exit {}):\n{}\n{}", code, out, err) }
     });
 
     /// Uninstall packages from a venv.
-    engine.register_fn("internal_pip_uninstall", |venv_path: &str, packages_json: &str| -> String {
+    engine.register_fn(&aes_str!("internal_pip_uninstall"), |venv_path: &str, packages_json: &str| -> String {
         let packages: Vec<String> = match serde_json::from_str(packages_json) {
             Ok(p)  => p,
             Err(_) => vec![packages_json.to_string()],
@@ -330,7 +335,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// List installed packages in a venv - returns JSON array of {name, version}.
-    engine.register_fn("internal_pip_list", |venv_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_pip_list"), |venv_path: &str| -> String {
         let pip = venv_pip(venv_path);
         if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
         let (out, err, code) = run_cmd(&pip, &["list", "--format=json"], Duration::from_secs(30));
@@ -339,7 +344,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// Return the output of pip freeze (requirements.txt format) for a venv.
-    engine.register_fn("internal_pip_freeze", |venv_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_pip_freeze"), |venv_path: &str| -> String {
         let pip = venv_pip(venv_path);
         if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
         let (out, err, code) = run_cmd(&pip, &["freeze"], Duration::from_secs(30));
@@ -347,20 +352,20 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// Check whether a package is installed in a venv.
-    engine.register_fn("internal_pip_has_package", |venv_path: &str, package: &str| -> String {
+    engine.register_fn(&aes_str!("internal_pip_has_package"), |venv_path: &str, package: &str| -> String {
         let python = venv_python(venv_path);
-        if !python.exists() { return "false".into(); }
+        if !python.exists() { return aes_str!("false"); }
         let code = format!("import importlib.util; exit(0 if importlib.util.find_spec('{}') else 1)", package);
-        let tmp = match write_temp_script(&code) { Ok(p) => p, Err(_) => return "false".into() };
+        let tmp = match write_temp_script(&code) { Ok(p) => p, Err(_) => return aes_str!("false") };
         let (_, _, exit) = run_cmd(&python, &[tmp.to_str().unwrap_or("")], Duration::from_secs(10));
         let _ = fs::remove_file(&tmp);
-        if exit == 0 { "true".into() } else { "false".into() }
+        if exit == 0 { aes_str!("true") } else { aes_str!("false") }
     });
 
     // ── Execute in venv ───────────────────────────────────────────────────────
 
     /// Execute Python code inside a venv. Returns combined output.
-    engine.register_fn("internal_python_in_venv", |venv_path: &str, code: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_in_venv"), |venv_path: &str, code: &str| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
             return format!("Error: venv Python not found at {}", python.display());
@@ -375,7 +380,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// Execute Python code in venv with a custom timeout (seconds).
-    engine.register_fn("internal_python_in_venv_timeout", |venv_path: &str, code: &str, timeout_secs: i64| -> String {
+    engine.register_fn(&aes_str!("internal_python_in_venv_timeout"), |venv_path: &str, code: &str, timeout_secs: i64| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
             return format!("Error: venv Python not found at {}", python.display());
@@ -391,7 +396,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     /// Execute a .py file inside a venv.
-    engine.register_fn("internal_python_file_in_venv", |venv_path: &str, script_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_file_in_venv"), |venv_path: &str, script_path: &str| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
             return format!("Error: venv Python not found at {}", python.display());
@@ -402,7 +407,7 @@ pub fn register(engine: &mut Engine) {
 
     /// Execute Python code in a venv and return only the JSON stdout.
     /// Python script should print one JSON value to stdout; other output is discarded.
-    engine.register_fn("internal_python_in_venv_json", |venv_path: &str, code: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_in_venv_json"), |venv_path: &str, code: &str| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
             return format!("Error: venv Python not found at {}", python.display());
@@ -422,7 +427,7 @@ pub fn register(engine: &mut Engine) {
 
     /// Pass a RHAI value as JSON to a Python script, get JSON back.
     /// Injects `rcm_input` as a parsed Python object at the top of the script.
-    engine.register_fn("internal_python_call", |venv_path: &str, input_json: &str, code: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_call"), |venv_path: &str, input_json: &str, code: &str| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
             return format!("Error: venv Python not found at {}", python.display());
@@ -447,11 +452,11 @@ pub fn register(engine: &mut Engine) {
 
     /// Start a persistent Python session. Returns a session ID string.
     /// venv_path: path to venv, or "" to use system Python.
-    engine.register_fn("internal_python_session_start", |venv_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_session_start"), |venv_path: &str| -> String {
         let python: PathBuf = if venv_path.is_empty() {
             match find_python() {
                 Some(p) => PathBuf::from(p),
-                None    => return "Error: Python not found".into(),
+                None    => return aes_str!("Error: Python not found"),
             }
         } else {
             venv_python(venv_path)
@@ -502,8 +507,8 @@ while True:
 
         match child {
             Ok(mut c) => {
-                let stdin  = match c.stdin.take()  { Some(s) => s, None => return "Error: no stdin".into() };
-                let stdout = match c.stdout.take() { Some(s) => s, None => return "Error: no stdout".into() };
+                let stdin  = match c.stdin.take()  { Some(s) => s, None => return aes_str!("Error: no stdin") };
+                let stdout = match c.stdout.take() { Some(s) => s, None => return aes_str!("Error: no stdout") };
                 let id = Uuid::new_v4().to_string();
                 let session = Session {
                     stdin,
@@ -515,7 +520,7 @@ while True:
                     // The temp file will be cleaned up when session is stopped.
                     id
                 } else {
-                    "Error: session store poisoned".into()
+                    aes_str!("Error: session store poisoned")
                 }
             }
             Err(e) => format!("Error starting session: {}", e),
@@ -523,9 +528,9 @@ while True:
     });
 
     /// Execute code in a persistent session. Returns the script's stdout.
-    engine.register_fn("internal_python_session_exec", |session_id: &str, code: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_session_exec"), |session_id: &str, code: &str| -> String {
         let Ok(mut store) = sessions().lock() else {
-            return "Error: session store poisoned".into();
+            return aes_str!("Error: session store poisoned");
         };
         let Some(session) = store.get_mut(session_id) else {
             return format!("Error: session '{}' not found", session_id);
@@ -535,15 +540,15 @@ while True:
             Err(e) => return format!("Error serialising code: {}", e),
         };
         if session.stdin.write_all(msg.as_bytes()).is_err() {
-            return "Error: session stdin closed".into();
+            return aes_str!("Error: session stdin closed");
         }
         if session.stdin.flush().is_err() {
-            return "Error: session stdin flush failed".into();
+            return aes_str!("Error: session stdin flush failed");
         }
         let mut line = String::new();
         use std::io::BufRead;
         if session.stdout.read_line(&mut line).is_err() {
-            return "Error: session stdout closed".into();
+            return aes_str!("Error: session stdout closed");
         }
         let resp: serde_json::Value = match serde_json::from_str(line.trim()) {
             Ok(v)  => v,
@@ -556,9 +561,9 @@ while True:
     });
 
     /// Stop a persistent Python session and clean up.
-    engine.register_fn("internal_python_session_stop", |session_id: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_session_stop"), |session_id: &str| -> String {
         let Ok(mut store) = sessions().lock() else {
-            return "Error: session store poisoned".into();
+            return aes_str!("Error: session store poisoned");
         };
         if let Some(mut session) = store.remove(session_id) {
             let _ = session.child.kill();
@@ -570,13 +575,13 @@ while True:
     });
 
     /// List active persistent session IDs.
-    engine.register_fn("internal_python_session_list", || -> String {
+    engine.register_fn(&aes_str!("internal_python_session_list"), || -> String {
         match sessions().lock() {
             Ok(store) => {
                 let ids: Vec<&String> = store.keys().collect();
                 serde_json::to_string(&ids).unwrap_or("[]".into())
             }
-            Err(_) => "Error: session store poisoned".into(),
+            Err(_) => aes_str!("Error: session store poisoned"),
         }
     });
 
@@ -584,9 +589,9 @@ while True:
 
     /// Check which offensive Python libraries are available in a venv.
     /// Returns JSON object: {impacket, bloodhound, pwntools, scapy, paramiko, ...}
-    engine.register_fn("internal_python_offensive_check", |venv_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_offensive_check"), |venv_path: &str| -> String {
         let python = if venv_path.is_empty() {
-            match find_python() { Some(p) => PathBuf::from(p), None => return "Error: Python not found".into() }
+            match find_python() { Some(p) => PathBuf::from(p), None => return aes_str!("Error: Python not found") }
         } else {
             venv_python(venv_path)
         };
@@ -614,7 +619,7 @@ print(json.dumps(result))
     ///   minimal: requests, cryptography, dnspython
     ///   standard: + impacket, ldap3, paramiko, scapy
     ///   full: + bloodhound, pypykatz, certipy-ad, pwntools
-    engine.register_fn("internal_python_install_offensive", |venv_path: &str, tier: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_install_offensive"), |venv_path: &str, tier: &str| -> String {
         let pip = venv_pip(venv_path);
         if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
         let packages: &[&str] = match tier {
@@ -637,7 +642,7 @@ print(json.dumps(result))
     });
 
     // logging
-    engine.register_fn("print_python_log", |msg: &str| {
+    engine.register_fn(&aes_str!("print_python_log"), |msg: &str| {
         eprintln!("[Python] {}", msg);
     });
 
@@ -696,7 +701,7 @@ fn fetch_pbs_url() -> Result<String, String> {
         .map_err(|e| format!("JSON parse error: {}", e))?;
     let suffix = pbs_asset_suffix();
     json["assets"].as_array()
-        .ok_or_else(|| "No assets in release".to_string())?
+        .ok_or_else(|| aes_str!("No assets in release"))?
         .iter()
         .find(|a| a["name"].as_str().map(|n| n.ends_with(suffix)).unwrap_or(false))
         .and_then(|a| a["browser_download_url"].as_str())
@@ -818,7 +823,7 @@ fn try_package_managers() -> Result<String, String> {
             }
         }
     }
-    Err("No package manager succeeded".to_string())
+    Err(aes_str!("No package manager succeeded"))
 }
 
 /// Ensure python3-venv is available; install it if not (Linux only).
@@ -844,7 +849,7 @@ fn ensure_venv_module(interpreter: &str) -> Result<(), String> {
         &["-m", "venv", "--help"],
         Duration::from_secs(10),
     );
-    if code == 0 { Ok(()) } else { Err("python3-venv not available and could not install it".to_string()) }
+    if code == 0 { Ok(()) } else { Err(aes_str!("python3-venv not available and could not install it")) }
 }
 
 // ── Public registration ───────────────────────────────────────────────────────
@@ -858,7 +863,7 @@ pub fn register_python_install(engine: &mut Engine) {
     /// install_dir: directory where a portable Python will be placed if nothing
     ///              else works, e.g. "/tmp/.rcm_py_runtime" or "%TEMP%\rcm_py".
     ///              If Python is already on PATH, this directory is never used.
-    engine.register_fn("internal_python_ensure", |install_dir: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_ensure"), |install_dir: &str| -> String {
         // 1. Already on PATH?
         if let Some(p) = find_python() { return p; }
 
@@ -878,7 +883,7 @@ pub fn register_python_install(engine: &mut Engine) {
 
     /// Force-download python-build-standalone into install_dir regardless of
     /// whether Python is already present. Returns interpreter path or error.
-    engine.register_fn("internal_python_install_portable", |install_dir: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_install_portable"), |install_dir: &str| -> String {
         match install_portable_python(install_dir) {
             Ok(p)  => p,
             Err(e) => format!("Error: {}", e),
@@ -887,7 +892,7 @@ pub fn register_python_install(engine: &mut Engine) {
 
     /// Try only the OS package manager (apt/yum/winget/brew …).
     /// Returns interpreter path or error. May require elevated privileges.
-    engine.register_fn("internal_python_install_system", || -> String {
+    engine.register_fn(&aes_str!("internal_python_install_system"), || -> String {
         match try_package_managers() {
             Ok(p)  => p,
             Err(e) => format!("Error: {}", e),
@@ -902,7 +907,7 @@ pub fn register_python_install(engine: &mut Engine) {
     /// install_dir: where to put portable Python if needed
     /// venv_path: where to create the venv
     /// packages_json: JSON array of pip packages to install, or "" to skip
-    engine.register_fn("internal_python_bootstrap",
+    engine.register_fn(&aes_str!("internal_python_bootstrap"),
         |install_dir: &str, venv_path: &str, packages_json: &str| -> String {
 
         // 1. Ensure interpreter exists.
@@ -967,9 +972,9 @@ pub fn register_python_install(engine: &mut Engine) {
 
     /// Check whether the venv module is functional for a given interpreter.
     /// If not, attempt to install python3-venv via apt-get.
-    engine.register_fn("internal_python_ensure_venv", |interpreter: &str| -> String {
+    engine.register_fn(&aes_str!("internal_python_ensure_venv"), |interpreter: &str| -> String {
         match ensure_venv_module(interpreter) {
-            Ok(_)  => "venv module available".into(),
+            Ok(_)  => aes_str!("venv module available"),
             Err(e) => format!("Error: {}", e),
         }
     });
@@ -978,7 +983,7 @@ pub fn register_python_install(engine: &mut Engine) {
 
     /// Return the download URL for the latest python-build-standalone release
     /// matching the current agent platform. Useful for verifying or pre-staging.
-    engine.register_fn("internal_python_pbs_url", || -> String {
+    engine.register_fn(&aes_str!("internal_python_pbs_url"), || -> String {
         match fetch_pbs_url() {
             Ok(url) => url,
             Err(e)  => format!("Error: {}", e),

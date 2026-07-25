@@ -9,6 +9,8 @@ use_litcrypt!();
 pub use litcrypt::lc;
 
 pub mod common;
+pub mod config;
+pub mod config_consts;
 pub mod utils;
 pub mod database;
 pub mod pki;
@@ -25,3 +27,4 @@ pub mod topology;
 pub mod rdi_stub;
 pub mod shellcode;
 pub mod rcm;
+pub mod strcrypt_rt;

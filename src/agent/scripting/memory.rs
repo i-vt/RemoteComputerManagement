@@ -3,26 +3,28 @@ use rhai::Engine;
 use std::fs;
 use std::io::{Read, Seek};
 use serde_json::json;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
     // Read N bytes from a process's virtual address space.
     // Windows: ReadProcessMemory |  Linux: /proc/{pid}/mem |  Others: error.
-    engine.register_fn("internal_mem_read", |pid_str: &str, addr_hex: &str, size: i64| -> String {
+    engine.register_fn(&aes_str!("internal_mem_read"), |pid_str: &str, addr_hex: &str, size: i64| -> String {
         let pid  = match pid_str.parse::<u32>() {
             Ok(p)  => p,
-            Err(_) => return "Error: invalid PID".into(),
+            Err(_) => return aes_str!("Error: invalid PID"),
         };
-        let addr = match u64::from_str_radix(addr_hex.trim_start_matches("0x"), 16) {
+        let addr = match u64::from_str_radix(addr_hex.trim_start_matches(&aes_str!("0x")), 16) {
             Ok(a)  => a,
-            Err(_) => return "Error: invalid address".into(),
+            Err(_) => return aes_str!("Error: invalid address"),
         };
         let n = size.max(1).min(64 * 1024 * 1024) as usize;
 
         #[cfg(target_os = "windows")]
         unsafe {
             use super::win_ffi::win_ext::*;
-            let h = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+            let h = OpenProcess(crate::config::config().ffi_windows.process_all_access, 0, pid);
             if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
             let mut buf  = vec![0u8; n];
             let mut read = 0usize;
@@ -37,7 +39,7 @@ pub fn register(engine: &mut Engine) {
             match fs::OpenOptions::new().read(true).open(&mem_path) {
                 Ok(mut f) => {
                     if f.seek(std::io::SeekFrom::Start(addr)).is_err() {
-                        return "Error: seek failed".into();
+                        return aes_str!("Error: seek failed");
                     }
                     let mut buf = vec![0u8; n];
                     match f.read(&mut buf) {
@@ -54,14 +56,14 @@ pub fn register(engine: &mut Engine) {
 
     // Write hex-encoded bytes into a process's address space.
     // Windows: WriteProcessMemory |  Others: error.
-    engine.register_fn("internal_mem_write", |pid_str: &str, addr_hex: &str, data_hex: &str| -> String {
+    engine.register_fn(&aes_str!("internal_mem_write"), |pid_str: &str, addr_hex: &str, data_hex: &str| -> String {
         let pid  = match pid_str.parse::<u32>() {
             Ok(p)  => p,
-            Err(_) => return "Error: invalid PID".into(),
+            Err(_) => return aes_str!("Error: invalid PID"),
         };
-        let addr = match u64::from_str_radix(addr_hex.trim_start_matches("0x"), 16) {
+        let addr = match u64::from_str_radix(addr_hex.trim_start_matches(&aes_str!("0x")), 16) {
             Ok(a)  => a,
-            Err(_) => return "Error: invalid address".into(),
+            Err(_) => return aes_str!("Error: invalid address"),
         };
         let data = match hex::decode(data_hex) {
             Ok(d)  => d,
@@ -71,7 +73,7 @@ pub fn register(engine: &mut Engine) {
         #[cfg(target_os = "windows")]
         unsafe {
             use super::win_ffi::win_ext::*;
-            let h = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+            let h = OpenProcess(crate::config::config().ffi_windows.process_all_access, 0, pid);
             if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
             let mut written = 0usize;
             let ok = WriteProcessMemory(
@@ -87,16 +89,19 @@ pub fn register(engine: &mut Engine) {
 
     // List committed virtual memory regions.
     // Windows: VirtualQueryEx loop |  Linux: /proc/maps |  Others: error.
-    engine.register_fn("internal_mem_regions", |pid_str: &str| -> String {
+    engine.register_fn(&aes_str!("internal_mem_regions"), |pid_str: &str| -> String {
         let pid = match pid_str.parse::<u32>() {
             Ok(p)  => p,
-            Err(_) => return "Error: invalid PID".into(),
+            Err(_) => return aes_str!("Error: invalid PID"),
         };
 
         #[cfg(target_os = "windows")]
         unsafe {
             use super::win_ffi::win_ext::*;
-            let h = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+            // Mirrored Win32 values from the typed FFI config (winnt.h
+            // defaults) - fetched once, used across the region walk.
+            let ffi = &crate::config::config().ffi_windows;
+            let h = OpenProcess(ffi.process_all_access, 0, pid);
             if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
             let mut regions = Vec::new();
             let mut addr: u64 = 0;
@@ -108,7 +113,7 @@ pub fn register(engine: &mut Engine) {
                 let ret = VirtualQueryEx(h, addr as *const std::ffi::c_void, &mut mbi,
                     std::mem::size_of::<MemoryBasicInformation>());
                 if ret == 0 { break; }
-                if mbi.state == MEM_COMMIT {
+                if mbi.state == ffi.mem_commit {
                     regions.push(json!({
                         "base":    format!("0x{:x}", mbi.base_address as u64),
                         "size":    mbi.region_size,
@@ -140,16 +145,16 @@ pub fn register(engine: &mut Engine) {
 
     // Scan all readable committed regions for a byte pattern.
     // Returns a JSON array of hex addresses (capped at 10k hits).
-    engine.register_fn("internal_mem_scan", |pid_str: &str, pattern_hex: &str| -> String {
+    engine.register_fn(&aes_str!("internal_mem_scan"), |pid_str: &str, pattern_hex: &str| -> String {
         let pid     = match pid_str.parse::<u32>() {
             Ok(p)  => p,
-            Err(_) => return "Error: invalid PID".into(),
+            Err(_) => return aes_str!("Error: invalid PID"),
         };
         let pattern = match hex::decode(pattern_hex) {
             Ok(p)  => p,
             Err(e) => return format!("Error: {}", e),
         };
-        if pattern.is_empty() { return "Error: empty pattern".into(); }
+        if pattern.is_empty() { return aes_str!("Error: empty pattern"); }
 
         let mut hits = Vec::<String>::new();
 
@@ -186,7 +191,10 @@ pub fn register(engine: &mut Engine) {
         #[cfg(target_os = "windows")]
         unsafe {
             use super::win_ffi::win_ext::*;
-            let h = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+            // Mirrored Win32 values from the typed FFI config (winnt.h
+            // defaults) - fetched once, used across the region walk.
+            let ffi = &crate::config::config().ffi_windows;
+            let h = OpenProcess(ffi.process_all_access, 0, pid);
             if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
             let mut addr: u64 = 0;
             loop {
@@ -198,8 +206,8 @@ pub fn register(engine: &mut Engine) {
                     std::mem::size_of::<MemoryBasicInformation>());
                 if ret == 0 { break; }
                 let next = mbi.base_address as u64 + mbi.region_size as u64;
-                if mbi.state == MEM_COMMIT
-                    && (mbi.protect & 0xFF) != PAGE_NOACCESS
+                if mbi.state == ffi.mem_commit
+                    && (mbi.protect & 0xFF) != ffi.page_noaccess
                     && mbi.region_size <= 128 * 1024 * 1024
                 {
                     let mut buf  = vec![0u8; mbi.region_size];
@@ -221,7 +229,7 @@ pub fn register(engine: &mut Engine) {
             CloseHandle(h);
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        { return "Error: mem_scan only supported on Linux and Windows".into(); }
+        { return aes_str!("Error: mem_scan only supported on Linux and Windows"); }
 
         serde_json::to_string(&hits).unwrap_or("[]".into())
     });

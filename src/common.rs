@@ -113,6 +113,8 @@ pub struct MalleableProfile {
 
 impl Default for MalleableProfile {
     fn default() -> Self {
+        // The typed config tree has no malleable-profile section; these
+        // default strings stay here (gap reported for config-core).
         MalleableProfile {
             name: "default".into(),
             user_agent: "Mozilla/5.0".into(),
@@ -480,10 +482,12 @@ pub struct PivotFrame {
 
 /// Hard maximum frame size for length-prefixed transport (10 MB).
 /// A malformed length prefix above this causes immediate rejection.
-pub const MAX_FRAME_SIZE: usize = 10 * 1024 * 1024;
+/// No typed-config field covers the wire frame cap - intentionally fixed.
+pub fn max_frame_size() -> usize { crate::config::config().transfer.max_frame_bytes as usize }
 
 /// Soft warning threshold. Frames above this are logged but accepted.
-pub const FRAME_WARN_SIZE: usize = 2 * 1024 * 1024;
+/// No typed-config field covers the warn threshold - intentionally fixed.
+pub fn frame_warn_size() -> usize { crate::config::config().transfer.frame_warn_bytes as usize }
 
 pub struct Session {
     pub id: u32,

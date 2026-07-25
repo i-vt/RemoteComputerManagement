@@ -1,34 +1,35 @@
 // src/agent/handlers/config.rs - Sleep, beacon mode, fallback configuration
 
-use crate::lc;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use super::{DispatchResult, AgentAction};
 
 pub fn handle_sleep(args: &str) -> DispatchResult {
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.len() < 3 {
-        return DispatchResult::Reply(String::new(), lc!("Usage: sleep <seconds> <jitter_min> <jitter_max>"), 1, AgentAction::None);
+        return DispatchResult::Reply(String::new(), aes_str!("Usage: sleep <seconds> <jitter_min> <jitter_max>"), 1, AgentAction::None);
     }
     match (parts[0].parse::<u64>(), parts[1].parse::<u32>(), parts[2].parse::<u32>()) {
         (Ok(s), Ok(min), Ok(max)) => {
-            let msg = format!("{} {}s, {}-{}-{}%", lc!("Configuration Updated: Sleep"), s, lc!("Jitter"), min, max);
+            let msg = format!("{} {}s, {}-{}-{}%", aes_str!("Configuration Updated: Sleep"), s, aes_str!("Jitter"), min, max);
             DispatchResult::Reply(msg, String::new(), 0, AgentAction::UpdateConfig(s, min, max))
         }
-        _ => DispatchResult::Reply(String::new(), lc!("Parse Error"), 1, AgentAction::None),
+        _ => DispatchResult::Reply(String::new(), aes_str!("Parse Error"), 1, AgentAction::None),
     }
 }
 
 pub fn handle_beacon_mode(active: bool) -> DispatchResult {
     if active {
-        DispatchResult::Reply(lc!("Beacon Activated (Fast Mode)"), String::new(), 0, AgentAction::SetMode(true))
+        DispatchResult::Reply(aes_str!("Beacon Activated (Fast Mode)"), String::new(), 0, AgentAction::SetMode(true))
     } else {
-        DispatchResult::Reply(lc!("Beacon Deactivated (Passive Mode)"), String::new(), 0, AgentAction::SetMode(false))
+        DispatchResult::Reply(aes_str!("Beacon Deactivated (Passive Mode)"), String::new(), 0, AgentAction::SetMode(false))
     }
 }
 
 pub fn handle_fallback_config() -> DispatchResult {
     let fb = &crate::agent::config::load().fallback;
     let info = if fb.endpoints.is_empty() {
-        "No fallback endpoints configured (single host mode)".to_string()
+        aes_str!("No fallback endpoints configured (single host mode)")
     } else {
         let mut lines = vec![format!("Strategy: {:?}", fb.strategy)];
         lines.push(format!("Dead time: {}s", fb.dead_time_secs));

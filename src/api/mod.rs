@@ -20,6 +20,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use crate::common::SharedSessions;
+use crate::config::config;
 use crate::database::DbPool;
 
 pub use state::{ApiContext, SharedResults, SharedProxies, SharedScripts, SharedListenerManager, SharedBuildJobs};
@@ -109,13 +110,15 @@ pub async fn start_api_server(
         build_jobs:    Arc::new(Mutex::new(HashMap::new())),
     });
 
+    // The panel is served from this same API port, so the loopback origins
+    // track the bound port (config.server.api_port by default).
     let allowed_origins = [
-        "http://127.0.0.1:8080",
-        "http://localhost:8080",
-        "http://127.0.0.1:8081",
-        "http://localhost:8081",
-        "http://127.0.0.1",
-        "http://localhost",
+        format!("http://127.0.0.1:{}", port),
+        format!("http://localhost:{}", port),
+        "http://127.0.0.1:8081".to_string(),
+        "http://localhost:8081".to_string(),
+        "http://127.0.0.1".to_string(),
+        "http://localhost".to_string(),
     ].map(|s| s.parse::<HeaderValue>().unwrap());
 
     let cors = CorsLayer::new()
@@ -203,7 +206,7 @@ pub async fn start_api_server(
 
     let app = public_routes
         .merge(protected_routes)
-        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(config().server.http_body_limit_bytes))
         .layer(cors)
         .with_state(shared_state);
 

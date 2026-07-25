@@ -13,6 +13,8 @@ use aes_gcm::{
 };
 use rand::RngCore;
 use serde_json::json;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hash helpers
@@ -89,7 +91,7 @@ pub(super) fn do_encrypt(cipher: &Aes256Gcm, plaintext: &[u8]) -> Result<Vec<u8>
 
 pub(super) fn do_decrypt(cipher: &Aes256Gcm, encrypted_data: &[u8]) -> Result<Vec<u8>, String> {
     if encrypted_data.len() < 12 {
-        return Err("Data too short".to_string());
+        return Err(aes_str!("Data too short"));
     }
     let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
     let nonce = Nonce::from_slice(nonce_bytes);
@@ -100,9 +102,9 @@ pub(super) fn do_decrypt(cipher: &Aes256Gcm, encrypted_data: &[u8]) -> Result<Ve
 }
 
 pub(super) fn aes_cipher_from_hex(key_hex: &str) -> Result<Aes256Gcm, String> {
-    let key_bytes = hex::decode(key_hex).map_err(|_| "Invalid key hex".to_string())?;
+    let key_bytes = hex::decode(key_hex).map_err(|_| aes_str!("Invalid key hex"))?;
     if key_bytes.len() != 32 {
-        return Err("Key must be 32 bytes".to_string());
+        return Err(aes_str!("Key must be 32 bytes"));
     }
     Ok(Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes)))
 }
@@ -134,24 +136,24 @@ pub(super) fn glob_to_regex(pattern: &str) -> String {
 
 pub(super) fn json_get_path(json_str: &str, dotted_path: &str) -> String {
     let Ok(mut val) = serde_json::from_str::<serde_json::Value>(json_str) else {
-        return "Error: invalid JSON".to_string();
+        return aes_str!("Error: invalid JSON");
     };
     for part in dotted_path.split('.') {
         val = if let Ok(i) = part.parse::<usize>() {
             match val.get(i) {
                 Some(v) => v.clone(),
-                None    => return "null".to_string(),
+                None    => return aes_str!("null"),
             }
         } else {
             match val.get(part) {
                 Some(v) => v.clone(),
-                None    => return "null".to_string(),
+                None    => return aes_str!("null"),
             }
         };
     }
     match val {
         serde_json::Value::String(s) => s,
-        serde_json::Value::Null      => "null".to_string(),
+        serde_json::Value::Null      => aes_str!("null"),
         other                        => other.to_string(),
     }
 }
@@ -162,24 +164,24 @@ pub(super) fn json_get_path(json_str: &str, dotted_path: &str) -> String {
 
 pub(super) fn kill_pid(pid: u32) -> String {
     if pid == 0 {
-        return "Error: PID 0 is not a valid kill target".to_string();
+        return aes_str!("Error: PID 0 is not a valid kill target");
     }
     #[cfg(target_os = "windows")]
     unsafe {
         use super::win_ffi::win_ext::*;
-        let h = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+        let h = OpenProcess(crate::config::config().ffi_windows.process_all_access, 0, pid);
         if h.is_null() {
             return format!("Error: OpenProcess failed ({})", GetLastError());
         }
         let ok = TerminateProcess(h, 1);
         CloseHandle(h);
-        if ok != 0 { "Killed".into() }
+        if ok != 0 { aes_str!("Killed") }
         else { format!("Error: TerminateProcess failed ({})", GetLastError()) }
     }
     #[cfg(not(target_os = "windows"))]
     unsafe {
         let r = libc::kill(pid as libc::pid_t, libc::SIGKILL);
-        if r == 0 { "Killed".into() }
+        if r == 0 { aes_str!("Killed") }
         else { format!("Error: kill() returned {}", r) }
     }
 }
@@ -248,18 +250,18 @@ fn enumerate_drives() -> String {
 
 #[cfg(target_os = "macos")]
 fn enumerate_drives() -> String {
-    collect_mount_dirs(&["/Volumes"])
+    collect_mount_dirs(&[aes_str!("/Volumes")])
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn enumerate_drives() -> String {
-    collect_mount_dirs(&["/media", "/mnt", "/run/media"])
+    collect_mount_dirs(&[aes_str!("/media"), aes_str!("/mnt"), aes_str!("/run/media")])
 }
 
 #[cfg(not(target_os = "windows"))]
-fn collect_mount_dirs(bases: &[&str]) -> String {
+fn collect_mount_dirs(bases: &[String]) -> String {
     let mut entries = Vec::new();
-    for &base in bases {
+    for base in bases {
         if let Ok(rd) = fs::read_dir(base) {
             for entry in rd.flatten() {
                 let meta = entry.metadata().ok();
@@ -281,7 +283,7 @@ fn collect_mount_dirs(bases: &[&str]) -> String {
 }
 
 pub fn get_directory_json(path: &str) -> String {
-    if path == "__drives__" {
+    if path == aes_str!("__drives__") {
         return enumerate_drives();
     }
     let mut entries = Vec::new();

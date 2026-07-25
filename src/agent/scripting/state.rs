@@ -7,19 +7,21 @@
 use rhai::Engine;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine, state: Arc<Mutex<HashMap<String, String>>>) {
 
     let s = state.clone();
-    engine.register_fn("internal_state_set", move |key: &str, value: &str| -> String {
+    engine.register_fn(&aes_str!("internal_state_set"), move |key: &str, value: &str| -> String {
         match s.lock() {
-            Ok(mut g) => { g.insert(key.to_string(), value.to_string()); "OK".into() }
+            Ok(mut g) => { g.insert(key.to_string(), value.to_string()); aes_str!("OK") }
             Err(e)    => format!("Error: lock poisoned: {}", e),
         }
     });
 
     let s = state.clone();
-    engine.register_fn("internal_state_get", move |key: &str| -> String {
+    engine.register_fn(&aes_str!("internal_state_get"), move |key: &str| -> String {
         match s.lock() {
             Ok(g)  => g.get(key).cloned().unwrap_or_else(|| "".into()),
             Err(e) => format!("Error: lock poisoned: {}", e),
@@ -27,15 +29,15 @@ pub fn register(engine: &mut Engine, state: Arc<Mutex<HashMap<String, String>>>)
     });
 
     let s = state.clone();
-    engine.register_fn("internal_state_delete", move |key: &str| -> String {
+    engine.register_fn(&aes_str!("internal_state_delete"), move |key: &str| -> String {
         match s.lock() {
-            Ok(mut g) => if g.remove(key).is_some() { "Deleted".into() } else { "Not found".into() },
+            Ok(mut g) => if g.remove(key).is_some() { aes_str!("Deleted") } else { aes_str!("Not found") },
             Err(e)    => format!("Error: lock poisoned: {}", e),
         }
     });
 
     let s = state.clone();
-    engine.register_fn("internal_state_keys", move || -> String {
+    engine.register_fn(&aes_str!("internal_state_keys"), move || -> String {
         match s.lock() {
             Ok(g) => {
                 let keys: Vec<&String> = g.keys().collect();
@@ -46,9 +48,9 @@ pub fn register(engine: &mut Engine, state: Arc<Mutex<HashMap<String, String>>>)
     });
 
     let s = state.clone();
-    engine.register_fn("internal_state_clear", move || -> String {
+    engine.register_fn(&aes_str!("internal_state_clear"), move || -> String {
         match s.lock() {
-            Ok(mut g) => { g.clear(); "Cleared".into() }
+            Ok(mut g) => { g.clear(); aes_str!("Cleared") }
             Err(e)    => format!("Error: lock poisoned: {}", e),
         }
     });

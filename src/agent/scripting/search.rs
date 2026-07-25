@@ -5,6 +5,8 @@ use walkdir::WalkDir;
 use regex::Regex;
 use serde_json::json;
 use super::helpers::{glob_to_regex, json_get_path};
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
@@ -12,7 +14,7 @@ pub fn register(engine: &mut Engine) {
 
     // Grep for a regex pattern across a file or directory tree.
     // Returns JSON array of {file, line, content} objects (max 10k matches).
-    engine.register_fn("internal_grep", |pattern: &str, path: &str, recursive: bool| -> String {
+    engine.register_fn(&aes_str!("internal_grep"), |pattern: &str, path: &str, recursive: bool| -> String {
         let re = match Regex::new(pattern) {
             Ok(r)  => r,
             Err(e) => return format!("Error: invalid regex: {}", e),
@@ -44,7 +46,7 @@ pub fn register(engine: &mut Engine) {
     // Find files matching a glob pattern (*, ?) under root.
     // max_depth <= 0 means unlimited depth.
     // Returns JSON array of paths (max 50k entries).
-    engine.register_fn("internal_find_files", |root: &str, pattern: &str, max_depth: i64| -> String {
+    engine.register_fn(&aes_str!("internal_find_files"), |root: &str, pattern: &str, max_depth: i64| -> String {
         let re_str = glob_to_regex(pattern);
         let re = match Regex::new(&re_str) {
             Ok(r)  => r,
@@ -64,16 +66,16 @@ pub fn register(engine: &mut Engine) {
 
     // ── Regex ─────────────────────────────────────────────────────────────────
 
-    engine.register_fn("internal_regex_match", |pattern: &str, text: &str| -> String {
+    engine.register_fn(&aes_str!("internal_regex_match"), |pattern: &str, text: &str| -> String {
         if Regex::new(pattern).map(|re| re.is_match(text)).unwrap_or(false) {
-            "true".into()
+            aes_str!("true")
         } else {
-            "false".into()
+            aes_str!("false")
         }
     });
 
     // Returns JSON array of all non-overlapping match strings.
-    engine.register_fn("internal_regex_findall", |pattern: &str, text: &str| -> String {
+    engine.register_fn(&aes_str!("internal_regex_findall"), |pattern: &str, text: &str| -> String {
         let re = match Regex::new(pattern) {
             Ok(r)  => r,
             Err(e) => return format!("Error: {}", e),
@@ -86,7 +88,7 @@ pub fn register(engine: &mut Engine) {
     // Traverses nested objects and arrays by a dot-separated path.
     // Array indices are accepted as numeric path segments ("results.0.name").
 
-    engine.register_fn("internal_json_get", |json_str: &str, path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_json_get"), |json_str: &str, path: &str| -> String {
         json_get_path(json_str, path)
     });
 }

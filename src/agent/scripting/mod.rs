@@ -43,6 +43,8 @@ pub use helpers::get_directory_json;
 use rhai::{Engine, Scope, Dynamic};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub struct ExtensionManager {
     engine: Engine,
@@ -98,7 +100,7 @@ impl ExtensionManager {
 
     pub fn run_script(&mut self, script_content: &str, args: Vec<String>) -> String {
         let rhai_args: Vec<Dynamic> = args.into_iter().map(|s| s.into()).collect();
-        self.scope.set_or_push("args", rhai_args);
+        self.scope.set_or_push(&*aes_str!("args"), rhai_args);
         match self.engine.eval_with_scope::<String>(&mut self.scope, script_content) {
             Ok(result) => result,
             Err(e)     => format!("[Script Exception]: {}", e),

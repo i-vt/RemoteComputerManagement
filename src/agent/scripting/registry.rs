@@ -5,23 +5,25 @@
 // All functions are no-ops that return descriptive errors on non-Windows.
 
 use rhai::Engine;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
     // Read a registry value. hive: "HKCU"|"HKLM"|"HKCR"|"HKU"
     // Returns the value as a string; DWORD/QWORD values are formatted as decimal.
-    engine.register_fn("internal_reg_read", |hive: &str, key: &str, value_name: &str| -> String {
+    engine.register_fn(&aes_str!("internal_reg_read"), |hive: &str, key: &str, value_name: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
             let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
-            let ckey  = match CString::new(key)        { Ok(s) => s, Err(_) => return "Error: invalid key".into() };
-            let cval  = match CString::new(value_name) { Ok(s) => s, Err(_) => return "Error: invalid name".into() };
+            let ckey  = match CString::new(key)        { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
+            let cval  = match CString::new(value_name) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
             unsafe {
                 let mut hkey: HKEY = std::ptr::null_mut();
                 if RegOpenKeyExA(hroot, ckey.as_ptr(), 0, KEY_READ, &mut hkey) != ERROR_SUCCESS {
-                    return "Error: key not found".into();
+                    return aes_str!("Error: key not found");
                 }
                 let mut data_type: DWORD = 0;
                 let mut data_size: DWORD = 0;
@@ -39,20 +41,20 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Write a string (REG_SZ) registry value.
-    engine.register_fn("internal_reg_write", |hive: &str, key: &str, value_name: &str, data: &str| -> String {
+    engine.register_fn(&aes_str!("internal_reg_write"), |hive: &str, key: &str, value_name: &str, data: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
             let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
-            let ckey  = match CString::new(key)        { Ok(s) => s, Err(_) => return "Error: invalid key".into() };
-            let cval  = match CString::new(value_name) { Ok(s) => s, Err(_) => return "Error: invalid name".into() };
+            let ckey  = match CString::new(key)        { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
+            let cval  = match CString::new(value_name) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
             let mut bytes: Vec<u8> = data.as_bytes().to_vec(); bytes.push(0); // null-terminate
             unsafe {
                 let mut hkey: HKEY = std::ptr::null_mut();
                 let mut disp: DWORD = 0;
                 if RegCreateKeyExA(hroot, ckey.as_ptr(), 0, std::ptr::null_mut(), REG_OPTION_NON_VOLATILE, KEY_WRITE, std::ptr::null_mut(), &mut hkey, &mut disp) != ERROR_SUCCESS {
-                    return "Error: could not open/create key".into();
+                    return aes_str!("Error: could not open/create key");
                 }
                 let ret = RegSetValueExA(hkey, cval.as_ptr(), 0, REG_SZ, bytes.as_ptr(), bytes.len() as DWORD);
                 RegCloseKey(hkey);
@@ -64,63 +66,63 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Delete a registry value.
-    engine.register_fn("internal_reg_delete_value", |hive: &str, key: &str, value_name: &str| -> String {
+    engine.register_fn(&aes_str!("internal_reg_delete_value"), |hive: &str, key: &str, value_name: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
             let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
-            let ckey  = match CString::new(key)        { Ok(s) => s, Err(_) => return "Error: invalid key".into() };
-            let cval  = match CString::new(value_name) { Ok(s) => s, Err(_) => return "Error: invalid name".into() };
+            let ckey  = match CString::new(key)        { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
+            let cval  = match CString::new(value_name) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
             unsafe {
                 let mut hkey: HKEY = std::ptr::null_mut();
                 if RegOpenKeyExA(hroot, ckey.as_ptr(), 0, KEY_WRITE, &mut hkey) != ERROR_SUCCESS {
-                    return "Error: key not found".into();
+                    return aes_str!("Error: key not found");
                 }
                 let ret = RegDeleteValueA(hkey, cval.as_ptr());
                 RegCloseKey(hkey);
-                if ret == ERROR_SUCCESS { "Deleted".into() } else { format!("Error: {}", ret) }
+                if ret == ERROR_SUCCESS { aes_str!("Deleted") } else { format!("Error: {}", ret) }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        "Error: Registry is Windows only".into()
+        aes_str!("Error: Registry is Windows only")
     });
 
     // Delete a registry key (and all its values).
-    engine.register_fn("internal_reg_delete_key", |hive: &str, parent_key: &str, subkey: &str| -> String {
+    engine.register_fn(&aes_str!("internal_reg_delete_key"), |hive: &str, parent_key: &str, subkey: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
             let hroot  = match resolve_hive(hive)    { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
-            let cparent = match CString::new(parent_key) { Ok(s) => s, Err(_) => return "Error: invalid key".into() };
-            let csub   = match CString::new(subkey)  { Ok(s) => s, Err(_) => return "Error: invalid subkey".into() };
+            let cparent = match CString::new(parent_key) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
+            let csub   = match CString::new(subkey)  { Ok(s) => s, Err(_) => return aes_str!("Error: invalid subkey") };
             unsafe {
                 let mut hkey: HKEY = std::ptr::null_mut();
                 if RegOpenKeyExA(hroot, cparent.as_ptr(), 0, KEY_WRITE, &mut hkey) != ERROR_SUCCESS {
-                    return "Error: parent key not found".into();
+                    return aes_str!("Error: parent key not found");
                 }
                 let ret = RegDeleteKeyA(hkey, csub.as_ptr());
                 RegCloseKey(hkey);
-                if ret == ERROR_SUCCESS { "Deleted".into() } else { format!("Error: {}", ret) }
+                if ret == ERROR_SUCCESS { aes_str!("Deleted") } else { format!("Error: {}", ret) }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        "Error: Registry is Windows only".into()
+        aes_str!("Error: Registry is Windows only")
     });
 
     // Enumerate subkeys of a registry key - returns JSON array of names.
-    engine.register_fn("internal_reg_enum_keys", |hive: &str, key: &str| -> String {
+    engine.register_fn(&aes_str!("internal_reg_enum_keys"), |hive: &str, key: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
             let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
-            let ckey  = match CString::new(key)  { Ok(s) => s, Err(_) => return "Error: invalid key".into() };
+            let ckey  = match CString::new(key)  { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
             unsafe {
                 let mut hkey: HKEY = std::ptr::null_mut();
                 if RegOpenKeyExA(hroot, ckey.as_ptr(), 0, KEY_READ, &mut hkey) != ERROR_SUCCESS {
-                    return "Error: key not found".into();
+                    return aes_str!("Error: key not found");
                 }
                 let mut names = Vec::new();
                 let mut idx = 0u32;
@@ -142,21 +144,21 @@ pub fn register(engine: &mut Engine) {
             }
         }
         #[cfg(not(target_os = "windows"))]
-        "Error: Registry is Windows only".into()
+        aes_str!("Error: Registry is Windows only")
     });
 
     // Enumerate values in a registry key - returns JSON array of {name, type, data}.
-    engine.register_fn("internal_reg_enum_values", |hive: &str, key: &str| -> String {
+    engine.register_fn(&aes_str!("internal_reg_enum_values"), |hive: &str, key: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
             let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
-            let ckey  = match CString::new(key)  { Ok(s) => s, Err(_) => return "Error: invalid key".into() };
+            let ckey  = match CString::new(key)  { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
             unsafe {
                 let mut hkey: HKEY = std::ptr::null_mut();
                 if RegOpenKeyExA(hroot, ckey.as_ptr(), 0, KEY_READ, &mut hkey) != ERROR_SUCCESS {
-                    return "Error: key not found".into();
+                    return aes_str!("Error: key not found");
                 }
                 let mut values = Vec::new();
                 let mut idx = 0u32;
@@ -184,7 +186,7 @@ pub fn register(engine: &mut Engine) {
             }
         }
         #[cfg(not(target_os = "windows"))]
-        "Error: Registry is Windows only".into()
+        aes_str!("Error: Registry is Windows only")
     });
 }
 
@@ -220,12 +222,12 @@ fn format_reg_value(data_type: u32, data: &[u8]) -> String {
         }
         REG_DWORD => {
             if data.len() >= 4 { u32::from_le_bytes([data[0], data[1], data[2], data[3]]).to_string() }
-            else { "Error: short DWORD".into() }
+            else { aes_str!("Error: short DWORD") }
         }
         REG_QWORD => {
             if data.len() >= 8 {
                 u64::from_le_bytes(data[..8].try_into().unwrap_or([0u8; 8])).to_string()
-            } else { "Error: short QWORD".into() }
+            } else { aes_str!("Error: short QWORD") }
         }
         REG_BINARY => hex::encode(data),
         _ => hex::encode(data),

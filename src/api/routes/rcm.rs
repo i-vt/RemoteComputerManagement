@@ -97,7 +97,9 @@ pub struct PackageRequest {
 /// on-disk package so seal/verify take the same write lock as in-flight
 /// stores from the session path - a private manager here would race them.
 fn open_package(name: &str) -> Result<Arc<PackageManager>, Response> {
-    let base = Path::new("downloads");
+    // Base matches rcm::registry()'s base; see the note there on why it is
+    // not yet read from config.rcm.storage_base.
+    let base = Path::new(crate::config::config().rcm.storage_base.as_str());
     let root = base.join(name);
     let exists = root
         .symlink_metadata()
@@ -119,7 +121,7 @@ fn open_package(name: &str) -> Result<Arc<PackageManager>, Response> {
 pub async fn list_packages(State(_state): State<Arc<ApiContext>>) -> impl IntoResponse {
     let packages = tokio::task::spawn_blocking(|| {
         let mut out: Vec<serde_json::Value> = Vec::new();
-        let base = Path::new("downloads");
+        let base = Path::new(crate::config::config().rcm.storage_base.as_str());
         if let Ok(entries) = std::fs::read_dir(base) {
             for e in entries.flatten() {
                 let Ok(ft) = e.file_type() else { continue };

