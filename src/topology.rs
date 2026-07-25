@@ -241,6 +241,9 @@ impl TopologyManager {
 
     /// Produce a confidence score for a route candidate.
     ///
+    /// Weights are fixed scoring heuristics - the typed config tree has no
+    /// topology section, so they intentionally stay inline.
+    ///
     /// Rules (additive):
     /// - Prefix length contributes 0-32 points (more specific = better).
     /// - RFC-1918 address: +20.

@@ -12,6 +12,8 @@ use super::package::RcmError;
 /// REQ-3.1.5: replace `\ / : * ? " < > |` and control chars with '_'.
 /// Case is preserved.
 pub fn sanitize_component(s: &str) -> String {
+    // Protocol constant fixed by REQ-3.1.5 - not a runtime tunable, so it
+    // stays a const and is not part of the typed config tree.
     const INVALID: [char; 9] = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
     s.chars()
         .map(|c| if INVALID.contains(&c) || c.is_control() { '_' } else { c })

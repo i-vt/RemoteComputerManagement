@@ -11,8 +11,11 @@ use chrono::{DateTime, Utc};
 use super::package::RcmError;
 
 /// Specification version this module produces (REQ-5.1.6).
+/// Protocol constant, not a tunable: it stays a pub const. The
+/// config.rcm.spec_version key exists only as documentation and MUST mirror
+/// this value; it is intentionally not read here.
 pub const SPEC_VERSION: &str = "2.1";
-/// RCM envelope major version (REQ-5.1.1).
+/// RCM envelope major version (REQ-5.1.1). Protocol constant - see above.
 pub const ENVELOPE_VERSION: &str = "1";
 
 /// Escape the five predefined XML entities in element text and attribute

@@ -13,6 +13,7 @@ use tracing::{info, warn, error};
 
 use rhai;
 use crate::common::{ClientHello, Session, SecuredCommand, CommandResponse, SharedSessions, PivotFrame, MalleableProfile};
+use crate::config::config;
 use crate::database::{self, DbPool};
 use crate::api::SharedResults;
 use crate::rcm::{self, PackageManager, CollectedMeta, ScreenshotMeta, KeyCapture, KeyEvent};
@@ -268,11 +269,20 @@ use crate::traffic::DataMolder;
 
 /// Allocate session IDs from the database to survive server restarts.
 fn next_session_id(db: &DbPool) -> u32 {
-    static FALLBACK_ID: AtomicU32 = AtomicU32::new(50000);
+    // Fallback IDs start high so they never collide with DB-allocated ids.
+    // The seed comes from typed config (0 = not yet seeded; the DB path is
+    // the norm and the fallback only fires when the DB is unreachable).
+    static FALLBACK_ID: AtomicU32 = AtomicU32::new(0);
     if let Ok(conn) = db.get() {
         if let Ok(id) = database::allocate_session_id(&conn) {
             return id;
         }
+    }
+    if FALLBACK_ID.load(Ordering::Relaxed) == 0 {
+        FALLBACK_ID.store(
+            crate::config::config().server.session_fallback_id_start,
+            Ordering::Relaxed,
+        );
     }
     FALLBACK_ID.fetch_add(1, Ordering::Relaxed)
 }
@@ -665,9 +675,9 @@ pub fn handle_connection(
                                 } else {
                                     // New Pivot Logic - cap to prevent resource exhaustion
                                     // from a compromised agent flooding with fake child_ids.
-                                    const MAX_VIRTUAL_SESSIONS: usize = 64;
-                                    if virtual_sessions.len() >= MAX_VIRTUAL_SESSIONS {
-                                        warn!(parent = sess_id, "Pivot limit reached ({}), ignoring child {}", MAX_VIRTUAL_SESSIONS, child_id);
+                                    let max_virtual = config().server.max_virtual_sessions;
+                                    if virtual_sessions.len() >= max_virtual {
+                                        warn!(parent = sess_id, "Pivot limit reached ({}), ignoring child {}", max_virtual, child_id);
                                         continue;
                                     }
 

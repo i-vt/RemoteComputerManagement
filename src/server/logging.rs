@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 use std::io;
 use chrono::Local;
 
-const LOG_DIR: &str = "logs";
-const MAX_SIZE_BYTES: u64 = 2048 * 1024 * 1024; // 2048 MB
-const TARGET_SIZE_BYTES: u64 = 1500 * 1024 * 1024; // 1500 MB
+use crate::config::config;
 
 /// Initializes the tracing subscriber with a rolling daily file and stdout.
 /// Returns a WorkerGuard that must be held by main() to flush logs on exit.
@@ -16,8 +14,9 @@ const TARGET_SIZE_BYTES: u64 = 1500 * 1024 * 1024; // 1500 MB
 /// always targets the current day's file, not an orphaned fd.
 pub fn init() -> Result<tracing_appender::non_blocking::WorkerGuard, Box<dyn std::error::Error>> {
     // 1. Ensure logs directory exists
-    if !Path::new(LOG_DIR).exists() {
-        fs::create_dir(LOG_DIR)?;
+    let log_dir = &config().logging.log_dir;
+    if !Path::new(log_dir).exists() {
+        fs::create_dir(log_dir)?;
     }
 
     // 2. Run cleanup before starting new log
@@ -27,10 +26,10 @@ pub fn init() -> Result<tracing_appender::non_blocking::WorkerGuard, Box<dyn std
 
     // 3. Rolling daily appender - creates a new file each day automatically.
     // File naming: logs/server.log.YYYY-MM-DD
-    let file_appender = tracing_appender::rolling::daily(LOG_DIR, "server.log");
+    let file_appender = tracing_appender::rolling::daily(log_dir, "server.log");
     let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
 
-    eprintln!("[*] Logging to: {}/server.log.<date>", LOG_DIR);
+    eprintln!("[*] Logging to: {}/server.log.<date>", log_dir);
 
     // 4. Configure Subscriber
     tracing_subscriber::fmt()
@@ -49,7 +48,8 @@ pub fn init() -> Result<tracing_appender::non_blocking::WorkerGuard, Box<dyn std
 /// Enforces the storage limit. Skips the current day's log file (which the
 /// rolling appender is actively writing to). Public for periodic calls.
 pub fn cleanup_logs() -> io::Result<()> {
-    let log_path = Path::new(LOG_DIR);
+    let cfg = &config().logging;
+    let log_path = Path::new(&cfg.log_dir);
     if !log_path.exists() { return Ok(()); }
 
     // Current day's filename suffix - don't delete the active file
@@ -72,13 +72,13 @@ pub fn cleanup_logs() -> io::Result<()> {
         }
     }
 
-    if total_size > MAX_SIZE_BYTES {
+    if total_size > cfg.max_size_bytes {
         tracing::warn!("Log directory size ({} MB) exceeds limit, cleaning up...", total_size / 1024 / 1024);
 
         files.sort_by(|a, b| a.2.cmp(&b.2)); // oldest first
 
         for (path, size, _) in files {
-            if total_size <= TARGET_SIZE_BYTES {
+            if total_size <= cfg.target_size_bytes {
                 break;
             }
 
@@ -104,7 +104,9 @@ pub fn cleanup_logs() -> io::Result<()> {
 /// Should be called once during server startup.
 pub fn spawn_periodic_cleanup() {
     tokio::spawn(async {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // every hour
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            config().logging.cleanup_interval_secs,
+        ));
         loop {
             interval.tick().await;
             if let Err(e) = cleanup_logs() {

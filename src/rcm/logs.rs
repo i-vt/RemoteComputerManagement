@@ -14,9 +14,7 @@ use chrono::Utc;
 use super::package::RcmError;
 use super::paths;
 use super::xml;
-
-/// Default rotation threshold (REQ-18.2.2, 16 MiB).
-const ROTATE_LIMIT: u64 = 16 * 1024 * 1024;
+use crate::config::config;
 
 /// REQ-13.6: raw CR/LF in a message would break the one-event-per-line
 /// rule, so they are escaped as the two-character sequences `\r` / `\n`.
@@ -110,7 +108,8 @@ pub fn log(
     level: &str,
     message: &str,
 ) -> Result<(), RcmError> {
-    log_inner(root, tool, component, level, message, ROTATE_LIMIT)
+    // Rotation threshold (REQ-18.2.2) comes from config.rcm.log_rotate_bytes.
+    log_inner(root, tool, component, level, message, config().rcm.log_rotate_bytes)
 }
 
 #[cfg(test)]

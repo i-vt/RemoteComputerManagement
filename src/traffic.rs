@@ -1,6 +1,6 @@
 // src/traffic.rs
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use crate::common::{MalleableProfile, TransformStep, HttpBlock, MAX_FRAME_SIZE};
+use crate::common::{max_frame_size, MalleableProfile, TransformStep, HttpBlock};
 use std::io;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use rand::seq::SliceRandom;
@@ -202,7 +202,7 @@ impl DataMolder {
     where R: AsyncRead + Unpin {
         if !profile.format_http {
             let len = reader.read_u32().await? as usize;
-            if len > MAX_FRAME_SIZE {
+            if len > max_frame_size() {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Frame too large"));
             }
             let mut buf = vec![0u8; len];
@@ -213,7 +213,7 @@ impl DataMolder {
         let (_header_str, content_len) = Self::read_http_headers(reader).await?;
 
         if content_len == 0 { return Ok(vec![]); }
-        if content_len > MAX_FRAME_SIZE {
+        if content_len > max_frame_size() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP frame too large"));
         }
 
@@ -264,7 +264,7 @@ impl DataMolder {
             if content_len == 0 {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP handshake with no body"));
             }
-            if content_len > MAX_FRAME_SIZE {
+            if content_len > max_frame_size() {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP handshake frame too large"));
             }
 
@@ -277,7 +277,7 @@ impl DataMolder {
 
         // Standard raw mode: 4 bytes = big-endian length prefix
         let len = u32::from_be_bytes(prefix) as usize;
-        if len > MAX_FRAME_SIZE {
+        if len > max_frame_size() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Handshake frame too large"));
         }
         let mut buf = vec![0u8; len];

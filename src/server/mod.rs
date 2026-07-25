@@ -12,6 +12,7 @@ use tracing::{info, error};
 
 use crate::{database, menu, api};
 use crate::common::SharedSessions;
+use crate::config::config;
 use crate::server::listeners::ListenerManager;
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,7 +42,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // to be a CSPRNG in all configurations/platforms.
                 let mut rng = rand::rngs::OsRng;
                 const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-                (0..24).map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char).collect()
+                let len = config().server.audit_operator_password_len;
+                (0..len).map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char).collect()
             };
             let api_key = Uuid::new_v4().to_string();
             let hash = crate::api::routes::operators::hash_password(&password)
@@ -76,8 +78,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let conn = db_pool.get()?;
         let existing = database::list_listeners(&conn);
         if existing.is_empty() {
-            database::create_listener(&conn, "default", 4443, "tls", None)?;
-            println!("[*] Created default TLS listener on port 4443");
+            let port = config().server.default_listener_port;
+            database::create_listener(&conn, "default", port, "tls", None)?;
+            println!("[*] Created default TLS listener on port {}", port);
         }
     }
 
@@ -88,7 +91,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ── Start API Server ───────────────────────────────────────────────
-    let api_port = 8080;
+    let api_port = config().server.api_port;
     println!("[*] API Endpoint:   http://127.0.0.1:{}", api_port);
     println!("========================================");
 

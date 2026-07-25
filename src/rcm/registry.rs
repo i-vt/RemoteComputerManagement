@@ -27,9 +27,14 @@ pub struct PackageRegistry {
 }
 
 /// Global registry (server-wide). base = "downloads".
+///
+/// NOTE: config.rcm.storage_base currently defaults to "data", which does
+/// NOT match this long-standing storage root. Wiring it through would
+/// silently relocate existing packages, so the base stays "downloads" until
+/// the config default is corrected; see the config-migration report.
 pub fn registry() -> &'static PackageRegistry {
     static REG: OnceLock<PackageRegistry> = OnceLock::new();
-    REG.get_or_init(|| PackageRegistry::new(PathBuf::from("downloads")))
+    REG.get_or_init(|| PackageRegistry::new(PathBuf::from(crate::config::config().rcm.storage_base.as_str())))
 }
 
 impl PackageRegistry {

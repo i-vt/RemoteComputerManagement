@@ -16,6 +16,7 @@ use md5::{Digest, Md5};
 use sha2::Sha256;
 
 use super::{counters, custody, fingerprint, logs, manifest, paths, sidecar, xml};
+use crate::config::config;
 
 /// Error type for all RCM operations.
 #[derive(Debug)]
@@ -99,17 +100,21 @@ pub struct PackageManager {
     write_lock: Mutex<()>, // serializes ALL package writes
     // (batch_ts, rel_path) -> (abs_path, CollectedMeta); see SPEC §4 wire protocol
     meta_cache: Mutex<MetaCache>,
-    // Chunk-slot staleness TTL in seconds (STALE_SLOT_TTL_SECS); atomic so
-    // tests can shrink it hermetically without backdating file mtimes.
+    // Chunk-slot staleness TTL in seconds (seeded from
+    // config.rcm.stale_slot_ttl_secs); atomic so tests can shrink it
+    // hermetically without backdating file mtimes.
     stale_ttl_secs: std::sync::atomic::AtomicU64,
 }
 
-/// Hard cap on wire-protocol metadata cache entries: a hostile agent that
-/// announces metadata but never sends data must not grow server memory
-/// without bound. Eviction is FIFO (oldest announced first) and is a
-/// silent-degradation path: the evicted file's sidecar simply gets NONE
-/// times. One WARN is logged per eviction burst (component "agent").
-const META_CACHE_CAP: usize = 1024;
+/// Hard cap on wire-protocol metadata cache entries
+/// (config.rcm.meta_cache_cap): a hostile agent that announces metadata but
+/// never sends data must not grow server memory without bound. Eviction is
+/// FIFO (oldest announced first) and is a silent-degradation path: the
+/// evicted file's sidecar simply gets NONE times. One WARN is logged per
+/// eviction burst (component "agent").
+fn meta_cache_cap() -> usize {
+    config().rcm.meta_cache_cap
+}
 
 struct MetaCache {
     map: HashMap<(String, String), (String, CollectedMeta)>,
@@ -132,7 +137,7 @@ impl MetaCache {
     /// (take removes its key from both); this bounds the damage of any
     /// path that ever lets them diverge.
     fn compact_order(&mut self) {
-        if self.order.len() > 2 * META_CACHE_CAP {
+        if self.order.len() > 2 * meta_cache_cap() {
             let map = &self.map;
             self.order.retain(|k| map.contains_key(k));
         }
@@ -179,8 +184,11 @@ fn hash_file(path: &Path) -> Result<(String, String), RcmError> {
 /// fields `next_idx,total_chunks,part_len`. Anything else (including the
 /// legacy two-field format) is rejected as corrupt.
 /// Maximum number of concurrent in-flight chunked transfers of the SAME
-/// intended final path (per-transfer slots ".part", ".part.1" … ".part.7").
-const MAX_CHUNK_SLOTS: u64 = 8;
+/// intended final path (per-transfer slots ".part", ".part.1" ...).
+/// Sourced from config.rcm.chunk_slots.
+fn max_chunk_slots() -> u64 {
+    config().rcm.chunk_slots as u64
+}
 
 /// Slot part/state paths for an intended final path: slot 0 is
 /// "<X>.part"/"<X>.part.state", slot n is "<X>.part.<n>"/"<X>.part.<n>.state".
@@ -213,10 +221,10 @@ pub(crate) fn is_chunk_slot_name(name: &str) -> bool {
     false
 }
 
-/// A chunk-slot state file older than this is STALE: no graceful transfer
-/// pauses that long between chunks, so the transfer must be considered
-/// abandoned (server restart, dead agent) and the slot reaps.
-const STALE_SLOT_TTL_SECS: u64 = 24 * 60 * 60;
+/// A chunk-slot state file older than the TTL is STALE: no graceful
+/// transfer pauses that long between chunks, so the transfer must be
+/// considered abandoned (server restart, dead agent) and the slot reaps.
+/// The TTL comes from config.rcm.stale_slot_ttl_secs.
 
 /// Reap chunk-transfer slot artifacts left under downloads/ by abandoned
 /// transfers. Called at package OPEN with the SAME staleness TTL rule as
@@ -405,7 +413,7 @@ impl PackageManager {
             instance_id: instance_id.to_string(),
             write_lock: Mutex::new(()),
             meta_cache: Mutex::new(MetaCache::new()),
-            stale_ttl_secs: std::sync::atomic::AtomicU64::new(STALE_SLOT_TTL_SECS),
+            stale_ttl_secs: std::sync::atomic::AtomicU64::new(config().rcm.stale_slot_ttl_secs),
         };
         // Package-open sweep: reap STALE slot artifacts only (same TTL as
         // the chunk-0 scan, shared via stale_ttl_secs so the test-only
@@ -510,6 +518,13 @@ impl PackageManager {
         }
 
         let mut n = 0u64;
+        macro_rules! race_trace {
+            ($($a:tt)*) => {
+                if std::env::var_os("RCM_TRACE_RACE").is_some() {
+                    eprintln!("[trace {:?} {}] {}", std::thread::current().id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros()).unwrap_or(0), format!($($a)*));
+                }
+            };
+        }
         // Bound same-candidate re-evaluations: racing claims legitimately
         // re-check the SAME candidate, but a hostile/foreign artifact that
         // never resolves (e.g. a dangling symlink at the marker path) must
@@ -544,6 +559,7 @@ impl PackageManager {
                     // A symlink or non-dir here is hostile/foreign; never
                     // follow it, just move to the next candidate name.
                     if md.file_type().is_symlink() || !md.is_dir() {
+                        race_trace!("suffix: symlink/non-dir at {}", cand);
                         reevals = 0;
                         n += 1;
                         continue;
@@ -672,12 +688,23 @@ impl PackageManager {
                             }
                         }
                     }
+                    if marker.is_some() {
+                        race_trace!("suffix: foreign marker {:?} at {} (want {})", marker.as_deref().map(|m| m.trim().chars().take(24).collect::<String>()), cand, instance_id);
+                    } else {
+                        race_trace!("suffix: unresolvable after reevals at {}", cand);
+                    }
                     reevals = 0;
                     n += 1; // folder belongs to a different target
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     match std::fs::create_dir(&root) {
                         Ok(()) => {
+                            // TEST-ONLY: widen the race window when asked.
+                            if let Ok(ms) = std::env::var("RCM_RACE_DELAY_MS") {
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    ms.parse().unwrap_or(0),
+                                ));
+                            }
                             // Write the private ownership marker IMMEDIATELY
                             // with O_EXCL, before any other tree setup: a
                             // concurrent create_or_open for the same target
@@ -706,6 +733,7 @@ impl PackageManager {
                                 }
                                 Err(e) => return Err(e),
                             }
+                            race_trace!("owner path init at {}", cand);
                             return Self::init_new_package(
                                 root, hostname, instance_id, &name, &cand, n,
                             );
@@ -891,7 +919,7 @@ impl PackageManager {
     ///      NEVER deleted or overwritten; try the next slot.
     ///   4. neither exists: claim the slot (create .part O_EXCL, write
     ///      state).
-    ///   5. all MAX_CHUNK_SLOTS busy -> error.
+    ///   5. all chunk slots busy -> error.
     pub fn store_collected_chunk(
         &self,
         original_path: &str,
@@ -928,7 +956,7 @@ impl PackageManager {
             // the first provably unused slot.
             let mut retry_slot: Option<(PathBuf, PathBuf)> = None;
             let mut free_slot: Option<(PathBuf, PathBuf)> = None;
-            for slot in 0..MAX_CHUNK_SLOTS {
+            for slot in 0..max_chunk_slots() {
                 let (sp, ss) = chunk_slot_paths(&intended, slot);
                 if let Ok(raw) = std::fs::read_to_string(&ss) {
                     if let Ok((_next, stotal, _len, stid)) = parse_chunk_state(&raw) {
@@ -1044,7 +1072,7 @@ impl PackageManager {
             // Find the slot whose state names OUR transfer id; never append
             // to a foreign slot.
             let mut found: Option<(PathBuf, PathBuf, u64, u64, u64)> = None;
-            for slot in 0..MAX_CHUNK_SLOTS {
+            for slot in 0..max_chunk_slots() {
                 let (sp, ss) = chunk_slot_paths(&intended, slot);
                 if let Ok(raw) = std::fs::read_to_string(&ss) {
                     if let Ok((next, total, len, stid)) = parse_chunk_state(&raw) {
@@ -1388,8 +1416,9 @@ impl PackageManager {
 
     /// Wire-protocol metadata cache (SPEC §4): record metadata announced by
     /// a `file:meta|` message before the data it describes arrives. Bounded
-    /// to META_CACHE_CAP entries with FIFO eviction: a hostile agent
-    /// flooding announcements cannot grow server memory without bound.
+    /// to the configured cap (config.rcm.meta_cache_cap) entries with FIFO
+    /// eviction: a hostile agent flooding announcements cannot grow server
+    /// memory without bound.
     pub fn note_file_meta(
         &self,
         batch_ts: &str,
@@ -1401,7 +1430,7 @@ impl PackageManager {
         let key = (batch_ts.to_string(), rel_path.to_string());
         if !cache.map.contains_key(&key) {
             // Evict the oldest entries until there is room for this one.
-            while cache.map.len() >= META_CACHE_CAP {
+            while cache.map.len() >= meta_cache_cap() {
                 let oldest = match cache.order.pop_front() {
                     Some(k) => k,
                     None => break,
@@ -1417,7 +1446,7 @@ impl PackageManager {
                         "WARN",
                         &format!(
                             "meta cache full ({} entries): evicting oldest announced metadata (FIFO); affected sidecars get NONE times",
-                            META_CACHE_CAP
+                            meta_cache_cap()
                         ),
                     );
                     cache.warned = true;
@@ -1447,7 +1476,7 @@ impl PackageManager {
         }
         cache.compact_order();
         // Below the cap again: the eviction burst is over, re-arm the WARN.
-        if cache.map.len() < META_CACHE_CAP {
+        if cache.map.len() < meta_cache_cap() {
             cache.warned = false;
         }
         out
@@ -1986,15 +2015,15 @@ mod tests {
                 CollectedMeta::default(),
             );
         }
-        assert!(pm.meta_cache_len() <= META_CACHE_CAP);
-        assert_eq!(pm.meta_cache_len(), META_CACHE_CAP);
+        assert!(pm.meta_cache_len() <= meta_cache_cap());
+        assert_eq!(pm.meta_cache_len(), meta_cache_cap());
         // FIFO: the oldest announcements were evicted, the newest survive.
         assert!(pm.peek_file_meta("batch", "rel/0.txt").is_none());
         assert!(pm
-            .peek_file_meta("batch", &format!("rel/{}.txt", 5000 - META_CACHE_CAP - 1))
+            .peek_file_meta("batch", &format!("rel/{}.txt", 5000 - meta_cache_cap() - 1))
             .is_none());
         assert!(pm
-            .peek_file_meta("batch", &format!("rel/{}.txt", 5000 - META_CACHE_CAP))
+            .peek_file_meta("batch", &format!("rel/{}.txt", 5000 - meta_cache_cap()))
             .is_some());
         assert!(pm.peek_file_meta("batch", "rel/4999.txt").is_some());
         // The eviction burst was logged once (component "agent", WARN).
@@ -2063,7 +2092,7 @@ mod tests {
         }
         assert_eq!(pm.meta_cache_len(), 0, "taken entries linger in map");
         assert!(
-            pm.meta_cache_order_len() <= 2 * META_CACHE_CAP,
+            pm.meta_cache_order_len() <= 2 * meta_cache_cap(),
             "order leaked: {} entries after 5000 note+take cycles",
             pm.meta_cache_order_len()
         );
@@ -2071,13 +2100,13 @@ mod tests {
         for i in 0..5000u64 {
             pm.note_file_meta("batch", &format!("n/{}.txt", i), "C:\\abs", CollectedMeta::default());
         }
-        assert_eq!(pm.meta_cache_len(), META_CACHE_CAP);
-        assert!(pm.meta_cache_order_len() <= 2 * META_CACHE_CAP);
+        assert_eq!(pm.meta_cache_len(), meta_cache_cap());
+        assert!(pm.meta_cache_order_len() <= 2 * meta_cache_cap());
         assert!(pm
-            .peek_file_meta("batch", &format!("n/{}.txt", 5000 - META_CACHE_CAP - 1))
+            .peek_file_meta("batch", &format!("n/{}.txt", 5000 - meta_cache_cap() - 1))
             .is_none());
         assert!(pm
-            .peek_file_meta("batch", &format!("n/{}.txt", 5000 - META_CACHE_CAP))
+            .peek_file_meta("batch", &format!("n/{}.txt", 5000 - meta_cache_cap()))
             .is_some());
         assert!(pm.peek_file_meta("batch", "n/4999.txt").is_some());
     }
@@ -2286,7 +2315,7 @@ mod tests {
         let meta = CollectedMeta::default();
         let d = pm.root().join("downloads/x");
         std::fs::create_dir_all(&d).unwrap();
-        for slot in 0..MAX_CHUNK_SLOTS {
+        for slot in 0..max_chunk_slots() {
             let (sp, ss) = chunk_slot_paths(&d.join("f"), slot);
             std::fs::write(&sp, b"OLD").unwrap();
             std::fs::write(&ss, format!("1,2,3,other-{}", slot)).unwrap();
@@ -2307,7 +2336,7 @@ mod tests {
             std::fs::read(pm.root().join("downloads/x/f")).unwrap(),
             b"NEW"
         );
-        for slot in 0..MAX_CHUNK_SLOTS {
+        for slot in 0..max_chunk_slots() {
             let (sp, ss) = chunk_slot_paths(&d.join("f"), slot);
             assert!(!sp.exists(), "stale slot {} part not reaped", slot);
             assert!(!ss.exists(), "stale slot {} state not reaped", slot);
