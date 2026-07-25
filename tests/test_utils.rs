@@ -63,7 +63,7 @@ fn shell_long_output_returns_completely() {
     let (out, _, _) = utils::execute_shell_command(
         "cmd /c python -c \"print('X' * 100000)\" 2>NUL"
     );
-    if out.is_empty() { return; } // python not available — skip
+    if out.is_empty() { return; } // python not available - skip
     assert!(out.len() > 99000, "long output should not be truncated: {} chars", out.len());
 }
 

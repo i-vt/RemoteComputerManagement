@@ -16,7 +16,7 @@ fn p(dir: &TempDir, name: &str) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/fs.rs  — text read / write / ls
+// scripting/fs.rs - text read / write / ls
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -78,7 +78,7 @@ fn fs_self_path_is_nonempty() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/io.rs  — binary read / write / copy / move / delete / mkdir / stat
+// scripting/io.rs - binary read / write / copy / move / delete / mkdir / stat
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -204,7 +204,7 @@ fn io_file_size_missing_file_returns_minus_one() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/system.rs  — env, exec_os, procs, sleep
+// scripting/system.rs - env, exec_os, procs, sleep
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -261,7 +261,7 @@ fn system_sleep_blocks_for_minimum_duration() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/sysinfo.rs  — hostname, username, interfaces, uptime, disk
+// scripting/sysinfo.rs - hostname, username, interfaces, uptime, disk
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -293,7 +293,7 @@ fn sysinfo_network_interfaces_contains_loopback() {
     let v: serde_json::Value = serde_json::from_str(&json)
         .expect("network_interfaces should return JSON");
     assert!(v.is_array(), "should be a JSON array");
-    // Some Docker environments enumerate no interfaces — skip rather than fail.
+    // Some Docker environments enumerate no interfaces - skip rather than fail.
     let ifaces = v.as_array().unwrap();
     if ifaces.is_empty() { eprintln!("[SKIP] no network interfaces enumerated"); return; }
     // Loopback is present on every OS that exposes interfaces.

@@ -1,4 +1,4 @@
-// tests/test_shellcode.rs — Integration tests for DLL→shellcode conversion.
+// tests/test_shellcode.rs - Integration tests for DLL->shellcode conversion.
 //
 // Black-box tests over the public shellcode API (rcm::shellcode) plus
 // CLI-level tests of the builder binary's --format shellcode path.
@@ -6,7 +6,7 @@
 // The conversion is byte-for-byte compatible with sRDI's ConvertToShellcode
 // (https://github.com/monoxgas/sRDI, BSD 3-Clause). The golden vectors below
 // (stub SHA-256, full-blob SHA-256, exact 69-byte bootstrap) were produced
-// by sRDI's own Python reference implementation — if they ever change, the
+// by sRDI's own Python reference implementation - if they ever change, the
 // compatibility guarantee is broken and the change must be deliberate.
 
 use rcm::rdi_stub::RDI_STUB_X64;
@@ -300,7 +300,7 @@ fn c_array_is_compilable_shape() {
     assert!(c.starts_with("unsigned char payload[] = {\n"));
     assert!(c.contains("0x90, "));
     assert!(c.ends_with("};\nunsigned int payload_len = 25;\n"));
-    // 25 bytes → 2 full lines of 12 + 1 byte on the last line
+    // 25 bytes -> 2 full lines of 12 + 1 byte on the last line
     assert_eq!(c.matches('\n').count(), 2 + 2 + 2); // header + 3 data lines + "};\n" + len line
 }
 
@@ -328,7 +328,7 @@ fn builder() -> std::process::Command {
     // Isolate side effects (dist/, c2_audit.db) in a temp directory.
     let dir = tempfile::tempdir().expect("tempdir");
     // The builder's first preflight is find_project_root(): it requires a
-    // Cargo.toml at CWD (existence only — the content is never parsed for
+    // Cargo.toml at CWD (existence only - the content is never parsed for
     // the early-exit paths exercised here).
     std::fs::write(
         dir.path().join("Cargo.toml"),
@@ -336,7 +336,7 @@ fn builder() -> std::process::Command {
     )
     .expect("write stub Cargo.toml");
     cmd.current_dir(dir.path());
-    // Keep the tempdir alive for the lifetime of the Command by leaking —
+    // Keep the tempdir alive for the lifetime of the Command by leaking -
     // tests are short-lived processes, so this is acceptable here.
     std::mem::forget(dir);
     cmd

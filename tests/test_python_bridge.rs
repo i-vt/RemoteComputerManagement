@@ -141,7 +141,7 @@ fn exec_file_with_existing_script() {
 #[test]
 fn exec_syntax_error_returns_error_string() {
     if !has_python() { eprintln!("[SKIP]"); return; }
-    // This should not panic — it should return an error string.
+    // This should not panic - it should return an error string.
     let result = run(r#"internal_python_exec("this is not valid python !!!")"#);
     // The output comes from stderr of the Python process.
     // Our function returns stderr when stdout is empty.

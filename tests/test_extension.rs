@@ -7,21 +7,21 @@
 // require auth so no real database or server is needed.
 //
 // Each test that touches the filesystem uses a unique name derived from
-// the test name + process ID.  A DropFile / DropDir guard ensures cleanup
+// the test name + process ID. A DropFile / DropDir guard ensures cleanup
 // even on panic.
 //
 // Coverage
 // ──────────────────────────────────────────────────────────────────────
-//  safe_name                : see inline unit tests in extensions.rs
-//  list_extensions          : empty dir, populated dir, non-rhai files filtered
-//  get_extension            : 200 + content, 404 for missing, 400 for traversal
-//  put_extension (admin)    : creates file, overwrites, 400 for bad names
-//  put_extension (viewer)   : 403 for viewer role
+//  safe_name : see inline unit tests in extensions.rs
+//  list_extensions : empty dir, populated dir, non-rhai files filtered
+//  get_extension : 200 + content, 404 for missing, 400 for traversal
+//  put_extension (admin) : creates file, overwrites, 400 for bad names
+//  put_extension (viewer) : 403 for viewer role
 //  delete_extension (admin) : 204 + file gone, 404 for missing
 //  delete_extension (viewer): 403 for viewer role
 //  modules (GET/PUT/DELETE) : same structure, separate directory
-//  /api/modules list        : existing list_modules handler unaffected
-//  middleware ?key= param   : accepted on /api/loot/zip, rejected elsewhere
+//  /api/modules list : existing list_modules handler unaffected
+//  middleware ?key= param : accepted on /api/loot/zip, rejected elsewhere
 
 use axum::{
     Router,
@@ -184,12 +184,12 @@ async fn get_extension_missing_returns_404() {
 async fn get_extension_traversal_is_blocked() {
     // Two distinct paths through traversal blocking:
     //
-    // A) URL-encoded slash  "..%2Fetc_passwd"  → router sees one segment,
-    //    Path extractor decodes to "../etc_passwd", safe_name() → false → 400.
+    // A) URL-encoded slash "..%2Fetc_passwd"  -> router sees one segment,
+    //    Path extractor decodes to "../etc_passwd", safe_name() -> false -> 400.
     //
-    // B) Literal slash  "sub/script" or "../etc_passwd"  → the HTTP stack
+    // B) Literal slash "sub/script" or "../etc_passwd"  -> the HTTP stack
     //    (hyper) normalises the path before routing: "../" collapses a
-    //    segment and "/" splits into two segments — neither form matches
+    //    segment and "/" splits into two segments - neither form matches
     //    /api/extensions/:name, so the router returns 404 before the handler
     //    is even called.
     //
@@ -374,7 +374,7 @@ async fn delete_module_traversal_returns_400() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-// ── round-trip: put → get → delete ────────────────────────────────────────────
+// ── round-trip: put -> get -> delete ────────────────────────────────────────────
 
 #[tokio::test]
 async fn extension_full_round_trip() {
@@ -456,7 +456,7 @@ fn middleware_query_key_key_only_with_empty_value() {
             let k = kv.next()?;
             if k == "key" { kv.next().map(|v| v.to_owned()) } else { None }
         });
-    // An empty key is present but meaningless — the middleware checks is_empty() after.
+    // An empty key is present but meaningless - the middleware checks is_empty() after.
     assert_eq!(parsed.as_deref(), Some(""));
 }
 

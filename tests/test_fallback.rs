@@ -1,4 +1,4 @@
-// tests/test_fallback.rs — Integration tests for FallbackManager strategies.
+// tests/test_fallback.rs - Integration tests for FallbackManager strategies.
 //
 // These tests run as Rust integration tests (`cargo test --test test_fallback`)
 // and cover the full public surface of FallbackManager with all four strategies
@@ -104,14 +104,14 @@ fn priority_falls_to_next_after_max_failures() {
     assert_eq!(r.host, "primary.com");
     mgr.record_failure(r.index);
     mgr.record_failure(r.index);
-    mgr.record_failure(r.index); // max_failures=3 → dead
+    mgr.record_failure(r.index); // max_failures=3 -> dead
     assert_eq!(mgr.next_endpoint(&c).unwrap().host, "backup.com");
 }
 
 #[test]
 fn priority_returns_to_primary_after_dead_window_expires() {
     // Uses dead_time_secs=5; we can't sleep in tests, but we can verify the
-    // manager doesn't permanently exclude an endpoint — it must return something.
+    // manager doesn't permanently exclude an endpoint - it must return something.
     let c = make_config(vec![ep("only.com", 443, 0)], FallbackStrategy::Priority);
     let mut mgr = FallbackManager::from_config(&c);
     mgr.record_failure(0);
@@ -205,7 +205,7 @@ fn random_selects_only_live_endpoints() {
 
 #[test]
 fn random_weighted_heavily_favours_high_weight() {
-    // 99:1 weighting — in 200 draws, a.com should appear ≥ 150 times.
+    // 99:1 weighting - in 200 draws, a.com should appear ≥ 150 times.
     let c = make_config(vec![
         ep_weighted("a.com", 99),
         ep_weighted("b.com", 1),
@@ -243,7 +243,7 @@ fn record_success_clears_failure_counter() {
     mgr.record_failure(0); // 2 of 3
     mgr.record_success(0); // reset to 0
     mgr.record_failure(0);
-    mgr.record_failure(0); // 2 of 3 again — still alive
+    mgr.record_failure(0); // 2 of 3 again - still alive
     let r = mgr.next_endpoint(&c).unwrap();
     assert_eq!(r.host, "host.com");
 }

@@ -19,7 +19,7 @@ fn p(dir: &TempDir, name: &str) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/search.rs  — grep
+// scripting/search.rs - grep
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -68,7 +68,7 @@ fn grep_invalid_regex_returns_error() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/search.rs  — find_files
+// scripting/search.rs - find_files
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -102,7 +102,7 @@ fn find_files_depth_limit_respected() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/search.rs  — regex_match, regex_findall
+// scripting/search.rs - regex_match, regex_findall
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -141,7 +141,7 @@ fn regex_findall_no_match_returns_empty_array() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/search.rs  — json_get
+// scripting/search.rs - json_get
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -175,7 +175,7 @@ fn json_get_invalid_json_returns_error() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/state.rs  — in-session KV store
+// scripting/state.rs - in-session KV store
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -261,7 +261,7 @@ fn state_persists_across_multiple_run_script_calls() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/loader.rs  — exec_script, load_script
+// scripting/loader.rs - exec_script, load_script
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -297,7 +297,7 @@ fn loader_exec_script_can_call_rhai_builtins() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/credential.rs  — file discovery helpers with TempDir mock HOME
+// scripting/credential.rs - file discovery helpers with TempDir mock HOME
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]

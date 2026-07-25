@@ -18,8 +18,8 @@ fn run(script: &str) -> String {
 }
 
 /// Spawn a minimal HTTP echo server on a random loopback port.
-/// GET  /*  → {"url":"http://127.0.0.1:<port><path>"}
-/// POST /*  → {"data":"<raw body>"}
+/// GET /*  -> {"url":"http://127.0.0.1:<port><path>"}
+/// POST /*  -> {"data":"<raw body>"}
 /// Returns the bound port. The server handles up to 4 sequential requests
 /// then exits; the JoinHandle can be dropped (server runs in background).
 fn spawn_echo_server() -> u16 {
@@ -94,17 +94,17 @@ fn dns_resolve_nonexistent_domain_returns_error() {
 
 #[test]
 fn dns_txt_without_network_returns_error_or_empty() {
-    // This makes a real DoH request. If there's no network, we get an error — that's acceptable.
+    // This makes a real DoH request. If there's no network, we get an error - that's acceptable.
     // If network is available, the shape must be a JSON array.
     let result = run(r#"internal_dns_txt("example.com")"#);
-    if result.starts_with("Error") { return; } // no network — skip
+    if result.starts_with("Error") { return; } // no network - skip
     let v: serde_json::Value = serde_json::from_str(&result)
         .expect("dns_txt should return JSON when network is available");
     assert!(v.is_array(), "dns_txt should return a JSON array: {}", result);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/network.rs  — tcp_connect (loopback, no external network)
+// scripting/network.rs - tcp_connect (loopback, no external network)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -140,7 +140,7 @@ fn tcp_connect_no_listener_returns_closed_or_error() {
 
 #[test]
 fn tcp_connect_timeout_is_respected() {
-    // 192.0.2.0/24 is TEST-NET-1 (RFC 5737) — packets go nowhere, so the connect times out.
+    // 192.0.2.0/24 is TEST-NET-1 (RFC 5737) - packets go nowhere, so the connect times out.
     let start  = std::time::Instant::now();
     let result = run(r#"internal_tcp_connect("192.0.2.1", 9999, 300)"#);
     let elapsed = start.elapsed().as_millis();
@@ -150,7 +150,7 @@ fn tcp_connect_timeout_is_respected() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/network.rs  — udp_send / udp_recv (loopback round-trip)
+// scripting/network.rs - udp_send / udp_recv (loopback round-trip)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -193,7 +193,7 @@ fn udp_recv_times_out_with_no_sender() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/network.rs  — http_get (external, skip if offline)
+// scripting/network.rs - http_get (external, skip if offline)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -236,7 +236,7 @@ fn http_get_invalid_url_returns_error() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/network.rs  — exec_detach
+// scripting/network.rs - exec_detach
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -255,7 +255,7 @@ fn exec_detach_returns_numeric_pid() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/evasion.rs  — mutex create / exists / release
+// scripting/evasion.rs - mutex create / exists / release
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]

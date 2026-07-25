@@ -1,6 +1,6 @@
 // tests/test_streaming_zip.rs
 //
-// Tests for src/streaming_zip.rs — write_zip_directory().
+// Tests for src/streaming_zip.rs - write_zip_directory().
 //
 // All tests run in TempDir so the host filesystem is unchanged.
 // The produced ZIP bytes are verified using the `zip` crate (already

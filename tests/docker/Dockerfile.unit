@@ -46,6 +46,7 @@ WORKDIR /build
 # Copy manifests first. Docker caches this layer until Cargo.toml/lock changes.
 COPY Cargo.toml Cargo.lock* ./
 COPY build.rs ./
+COPY strcrypt/Cargo.toml ./strcrypt/Cargo.toml
 
 # Stub out every [[bin]] source so `cargo fetch` resolves the full dep graph
 # without needing the real source files. The stubs are replaced in stage 2.
@@ -55,7 +56,9 @@ RUN mkdir -p src/bin src/server src/agent/handlers src/agent/injection \
     && for b in server client builder client_dll client_service stager; do \
            echo 'fn main() {}' > "src/bin/${b}.rs"; \
        done \
-    && echo 'pub fn _placeholder() {}' > src/lib.rs
+    && echo 'pub fn _placeholder() {}' > src/lib.rs \
+    && mkdir -p strcrypt/src \
+    && echo 'pub fn _placeholder() {}' > strcrypt/src/lib.rs
 
 RUN cargo fetch
 
@@ -70,6 +73,8 @@ RUN bash gen_certs.sh ./certs
 
 # Replace stubs with the real source tree.
 COPY src/ ./src/
+COPY strcrypt/ ./strcrypt/
+COPY config.example.toml ./
 COPY tests/ ./tests/
 
 # Unit tests don't use modules/ or extensions/ at runtime, but some crate

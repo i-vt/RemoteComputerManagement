@@ -1,4 +1,4 @@
-// tests/test_database.rs — Database CRUD integration tests
+// tests/test_database.rs - Database CRUD integration tests
 // Uses a temporary SQLite file per test for isolation.
 
 use rcm::database;

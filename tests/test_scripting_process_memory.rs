@@ -14,7 +14,7 @@ fn run(script: &str) -> String {
 fn self_pid() -> String { std::process::id().to_string() }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/process.rs  — proc_kill, spawn_hidden, proc_env, is_elevated
+// scripting/process.rs - proc_kill, spawn_hidden, proc_env, is_elevated
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -95,7 +95,7 @@ fn process_token_steal_nonwindows_returns_error() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/procinfo.rs  — proc_path, proc_parent, proc_cmdline, proc_modules
+// scripting/procinfo.rs - proc_path, proc_parent, proc_cmdline, proc_modules
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -158,7 +158,7 @@ fn procinfo_proc_modules_self_json_array() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// scripting/memory.rs  — mem_regions, mem_scan (Linux self-PID)
+// scripting/memory.rs - mem_regions, mem_scan (Linux self-PID)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -188,7 +188,7 @@ fn memory_mem_scan_finds_known_pattern() {
     ));
     // The needle is on the stack of this test thread; mem_scan may or may not
     // find it depending on /proc/mem permissions and ASLR.
-    // We only verify the shape — a JSON array of hex addresses.
+    // We only verify the shape - a JSON array of hex addresses.
     assert!(!json.starts_with("Error") || json.contains("/proc"),
         "mem_scan should return JSON or a /proc error: {}", json);
     if !json.starts_with("Error") {

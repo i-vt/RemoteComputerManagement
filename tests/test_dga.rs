@@ -1,4 +1,4 @@
-// tests/test_dga.rs — Integration tests for the Domain Generation Algorithm.
+// tests/test_dga.rs - Integration tests for the Domain Generation Algorithm.
 //
 // Black-box tests over the public DGA API: domain generation, endpoint
 // building, and the full FallbackManager integration path.
@@ -112,7 +112,7 @@ fn adjacent_windows_produce_different_domains() {
     for i in 0..20 {
         let d0 = generate_domain(7777, 100, i, TLDS);
         let d1 = generate_domain(7777, 101, i, TLDS);
-        if d0 != d1 { return; } // At least one pair differs — test passes
+        if d0 != d1 { return; } // At least one pair differs - test passes
     }
     panic!("adjacent windows produced identical domain sets for all 20 indices");
 }
@@ -133,7 +133,7 @@ fn window_is_time_based_and_advances() {
 
 #[test]
 fn current_window_advances_with_time() {
-    // current_window(1) with 1-second windows changes every second — we just
+    // current_window(1) with 1-second windows changes every second - we just
     // verify it returns a non-zero value (we can't advance time in tests).
     let w = current_window(86400);
     assert!(w > 0, "current window should be non-zero for any real timestamp");

@@ -26,6 +26,8 @@ COPY Cargo.toml Cargo.lock* ./
 COPY build.rs ./
 COPY gen_certs.sh ./
 COPY src/ src/
+COPY strcrypt/ strcrypt/
+COPY config.example.toml config.example.toml
 COPY embedded/ embedded/
 COPY dga_templates/ dga_templates/
 COPY extensions/ extensions/
@@ -142,6 +144,7 @@ COPY --from=agents /build/Cargo.toml ./
 COPY --from=agents /build/Cargo.lock.export ./Cargo.lock
 COPY --from=agents /build/build.rs ./
 COPY --from=agents /build/src/ ./src/
+COPY --from=agents /build/strcrypt/ ./strcrypt/
 COPY --from=agents /build/embedded/ ./embedded/
 COPY --from=agents /build/extensions/ ./extensions/
 COPY --from=agents /build/dga_templates/ ./dga_templates/

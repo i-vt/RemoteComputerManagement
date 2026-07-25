@@ -1,4 +1,4 @@
-// tests/test_signing.rs — Signature verification tests for SecuredCommand
+// tests/test_signing.rs - Signature verification tests for SecuredCommand
 
 use rcm::common::SecuredCommand;
 use ed25519_dalek::{SigningKey, Signer, Verifier};
@@ -80,7 +80,7 @@ fn test_replay_counter_ordering() {
     if cmd1.counter > last_counter { last_counter = cmd1.counter; }
     assert_eq!(last_counter, 5);
     
-    // cmd2 has lower counter — should be rejected
+    // cmd2 has lower counter - should be rejected
     assert!(cmd2.counter <= last_counter);
 }
 

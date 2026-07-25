@@ -1,4 +1,4 @@
-// tests/test_jobs.rs — Job manager lifecycle tests
+// tests/test_jobs.rs - Job manager lifecycle tests
 
 use rcm::agent::jobs::{JobManager, JobStatus};
 use tokio::sync::mpsc;

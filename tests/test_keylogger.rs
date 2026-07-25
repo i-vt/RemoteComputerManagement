@@ -1,6 +1,6 @@
 // tests/test_keylogger.rs
 //
-// Unit tests for src/agent/keylogger.rs — buffer management only.
+// Unit tests for src/agent/keylogger.rs - buffer management only.
 //
 // The OS-level keyboard/clipboard hooks are deliberately NOT called here:
 //   • start() installs a system hook on Windows that would interfere with
@@ -9,7 +9,7 @@
 //     is a no-op anyway.
 //
 // Instead we test the buffer initialisation, read/write, and get_logs()
-// path — the logic that runs on every platform regardless of OS support.
+// path - the logic that runs on every platform regardless of OS support.
 
 use rcm::agent::keylogger;
 
@@ -41,7 +41,7 @@ fn get_buffer_returns_some_after_init() {
 fn get_logs_returns_string_after_init() {
     keylogger::init_buffer();
     let logs = keylogger::get_logs();
-    // Logs may be empty or contain prior content — just verify no panic and
+    // Logs may be empty or contain prior content - just verify no panic and
     // returns a String.
     let _: &str = &logs;
 }
@@ -81,7 +81,7 @@ fn init_buffer_is_idempotent() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// start() / stop() — smoke tests (no assertions on output content)
+// start() / stop() - smoke tests (no assertions on output content)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -108,7 +108,7 @@ fn get_logs_after_start_stop_returns_string() {
     std::thread::sleep(std::time::Duration::from_millis(50));
     keylogger::stop();
     let logs = keylogger::get_logs();
-    // Content will be empty in a headless test environment — just verify no panic.
+    // Content will be empty in a headless test environment - just verify no panic.
     let _: &str = &logs;
 }
 
