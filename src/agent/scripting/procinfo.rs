@@ -13,13 +13,13 @@ pub fn register(engine: &mut Engine) {
 
         #[cfg(target_os = "linux")]
         {
-            match std::fs::read(format!("/proc/{}/cmdline", pid)) {
+            match std::fs::read(format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/cmdline"))) {
                 Ok(bytes) => bytes.split(|&b| b == 0)
                     .filter(|s| !s.is_empty())
                     .map(|s| String::from_utf8_lossy(s).to_string())
                     .collect::<Vec<_>>()
                     .join(" "),
-                Err(e) => format!("Error: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Error: "), e),
             }
         }
         #[cfg(target_os = "windows")]
@@ -29,7 +29,7 @@ pub fn register(engine: &mut Engine) {
             get_win_proc_cmdline(pid)
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        format!("Error: not supported on this platform (pid {})", pid)
+        format!("{}{})", aes_str!("Error: not supported on this platform (pid "), pid)
     });
 
     // ── Binary path ───────────────────────────────────────────────────────────
@@ -39,25 +39,25 @@ pub fn register(engine: &mut Engine) {
 
         #[cfg(target_os = "linux")]
         {
-            match std::fs::read_link(format!("/proc/{}/exe", pid)) {
+            match std::fs::read_link(format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/exe"))) {
                 Ok(p)  => p.to_string_lossy().to_string(),
-                Err(e) => format!("Error: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Error: "), e),
             }
         }
         #[cfg(target_os = "windows")]
         unsafe {
             use super::win_ffi::{win_ext::*, proc_ext::*};
             let h = OpenProcess(crate::config::config().ffi_windows.process_all_access, 0, pid);
-            if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
+            if h.is_null() { return format!("{}{})", aes_str!("Error: OpenProcess failed ("), GetLastError()); }
             let mut buf  = [0u16; 1024];
             let mut size = buf.len() as u32;
             let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut size);
             CloseHandle(h);
             if ok != 0 { wstr_to_string(&buf[..size as usize]) }
-            else { format!("Error: QueryFullProcessImageName failed ({})", GetLastError()) }
+            else { format!("{}{})", aes_str!("Error: QueryFullProcessImageName failed ("), GetLastError()) }
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        format!("Error: not supported on this platform (pid {})", pid)
+        format!("{}{})", aes_str!("Error: not supported on this platform (pid "), pid)
     });
 
     // ── Parent PID ────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ pub fn register(engine: &mut Engine) {
 
         #[cfg(target_os = "linux")]
         {
-            std::fs::read_to_string(format!("/proc/{}/status", pid))
+            std::fs::read_to_string(format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/status")))
                 .ok()
                 .and_then(|s| {
                     s.lines()
@@ -75,7 +75,7 @@ pub fn register(engine: &mut Engine) {
                         .and_then(|l| l.split_whitespace().nth(1))
                         .map(|v| v.to_string())
                 })
-                .unwrap_or_else(|| format!("Error: could not read status for pid {}", pid))
+                .unwrap_or_else(|| format!("{}{}", aes_str!("Error: could not read status for pid "), pid))
         }
         #[cfg(target_os = "windows")]
         unsafe {
@@ -102,7 +102,7 @@ pub fn register(engine: &mut Engine) {
             found
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        format!("Error: not supported on this platform (pid {})", pid)
+        format!("{}{})", aes_str!("Error: not supported on this platform (pid "), pid)
     });
 
     // ── Owner username ────────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ pub fn register(engine: &mut Engine) {
         #[cfg(target_os = "linux")]
         {
             // Parse Uid from /proc/{pid}/status, then look up in /etc/passwd.
-            let uid: u32 = std::fs::read_to_string(format!("/proc/{}/status", pid))
+            let uid: u32 = std::fs::read_to_string(format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/status")))
                 .ok()
                 .and_then(|s| {
                     s.lines()
@@ -122,7 +122,7 @@ pub fn register(engine: &mut Engine) {
                         .and_then(|v| v.parse().ok())
                 })
                 .unwrap_or(u32::MAX);
-            if uid == u32::MAX { return format!("Error: could not read UID for pid {}", pid); }
+            if uid == u32::MAX { return format!("{}{}", aes_str!("Error: could not read UID for pid "), pid); }
             // Look up username in /etc/passwd.
             std::fs::read_to_string(aes_str!("/etc/passwd"))
                 .ok()
@@ -136,7 +136,7 @@ pub fn register(engine: &mut Engine) {
                 .unwrap_or_else(|| uid.to_string())
         }
         #[cfg(not(target_os = "linux"))]
-        format!("Error: proc_user not supported on this platform (pid {})", pid)
+        format!("{}{})", aes_str!("Error: proc_user not supported on this platform (pid "), pid)
     });
 
     // ── Loaded modules ────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ pub fn register(engine: &mut Engine) {
         #[cfg(target_os = "linux")]
         {
             // Parse /proc/{pid}/maps - filter to file-backed executable regions.
-            match std::fs::read_to_string(format!("/proc/{}/maps", pid)) {
+            match std::fs::read_to_string(format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/maps"))) {
                 Ok(content) => {
                     let mut seen = std::collections::HashSet::new();
                     let modules: Vec<serde_json::Value> = content.lines()
@@ -162,21 +162,21 @@ pub fn register(engine: &mut Engine) {
                             let base = u64::from_str_radix(addrs.first()?, 16).ok()?;
                             let end  = u64::from_str_radix(addrs.get(1)?, 16).ok()?;
                             Some(json!({
-                                "name": std::path::Path::new(&path).file_name()
+                                aes_str!("name").as_str(): std::path::Path::new(&path).file_name()
                                     .map(|n| n.to_string_lossy().to_string())
                                     .unwrap_or(path),
-                                "base": format!("0x{:x}", base),
-                                "size": end - base,
+                                "base": format!("{}{:x}", aes_str!("0x"), base),
+                                aes_str!("size").as_str(): end - base,
                             }))
                         })
                         .collect();
                     serde_json::to_string(&modules).unwrap_or("[]".into())
                 }
-                Err(e) => format!("Error: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Error: "), e),
             }
         }
         #[cfg(not(target_os = "linux"))]
-        format!("Error: proc_modules not supported on this platform (pid {})", pid)
+        format!("{}{})", aes_str!("Error: proc_modules not supported on this platform (pid "), pid)
     });
 }
 
@@ -192,11 +192,11 @@ fn get_win_proc_cmdline(pid: u32) -> String {
     // The process list JSON contains {pid, name} entries; cmdline requires WMI.
     // Return a best-effort name from the snapshot.
     let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(&procs) else {
-        return format!("Error: could not parse process list");
+        return format!("{}", aes_str!("Error: could not parse process list"));
     };
     list.iter()
-        .find(|p| p["pid"].as_u64() == Some(pid as u64))
-        .and_then(|p| p["name"].as_str())
-        .map(|n| format!("[{}] (full cmdline requires WMI)", n))
-        .unwrap_or_else(|| format!("Error: PID {} not found", pid))
+        .find(|p| p[aes_str!("pid").as_str()].as_u64() == Some(pid as u64))
+        .and_then(|p| p[aes_str!("name").as_str()].as_str())
+        .map(|n| format!("[{}{}", n, aes_str!("] (full cmdline requires WMI)")))
+        .unwrap_or_else(|| format!("{}{}{}", aes_str!("Error: PID "), pid, aes_str!(" not found")))
 }

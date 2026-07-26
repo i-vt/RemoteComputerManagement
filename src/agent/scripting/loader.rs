@@ -25,9 +25,9 @@ pub fn register(engine: &mut Engine) {
         let script = match reqwest::blocking::get(url) {
             Ok(r)  => match r.text() {
                 Ok(t)  => t,
-                Err(e) => return format!("Error reading response: {}", e),
+                Err(e) => return format!("{}{}", aes_str!("Error reading response: "), e),
             },
-            Err(e) => return format!("Error fetching {}: {}", url, e),
+            Err(e) => return format!("{}{}: {}", aes_str!("Error fetching "), url, e),
         };
         let mut em = super::ExtensionManager::new();
         em.run_script(&script, vec![])
@@ -38,7 +38,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_load_script_args"), |url: &str, args_json: &str| -> String {
         let script = match reqwest::blocking::get(url) {
             Ok(r)  => r.text().unwrap_or_default(),
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let args: Vec<String> = serde_json::from_str(args_json).unwrap_or_default();
         let mut em = super::ExtensionManager::new();

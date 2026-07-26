@@ -10,6 +10,7 @@ mod win_service {
     use std::ffi::c_void;
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+    use rcm::strcrypt_rt;
 
     static RUNNING: AtomicBool = AtomicBool::new(true);
     static SERVICE_STATUS_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -60,8 +61,9 @@ mod win_service {
     }
 
     unsafe extern "system" fn service_main(_argc: u32, _argv: *mut *mut u8) {
+        let svc_name = strcrypt::aes_str!("RCMAgent\0");
         SERVICE_STATUS_HANDLE.store(RegisterServiceCtrlHandlerA(
-            b"RCMAgent\0".as_ptr(),
+            svc_name.as_ptr(),
             service_ctrl_handler,
         ), Ordering::Relaxed);
 
@@ -100,9 +102,10 @@ mod win_service {
 
     pub fn run_as_service() {
         unsafe {
+            let svc_name = strcrypt::aes_str!("RCMAgent\0");
             let table = [
                 SERVICE_TABLE_ENTRY {
-                    lp_service_name: b"RCMAgent\0".as_ptr(),
+                    lp_service_name: svc_name.as_ptr(),
                     lp_service_proc: service_main,
                 },
                 SERVICE_TABLE_ENTRY {
@@ -121,8 +124,11 @@ fn main() {
 }
 
 #[cfg(not(target_os = "windows"))]
+use rcm::strcrypt_rt;
+
+#[cfg(not(target_os = "windows"))]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    eprintln!("[!] Service mode is Windows-only, running as normal agent");
+    eprintln!("{}", strcrypt::aes_str!("[!] Service mode is Windows-only, running as normal agent"));
     rcm::agent::run().await
 }

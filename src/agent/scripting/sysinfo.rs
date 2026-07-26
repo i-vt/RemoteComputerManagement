@@ -41,7 +41,7 @@ pub fn register(engine: &mut Engine) {
                         .as_secs();
                     ((now - t.tv_sec as u64) as i64).to_string()
                 })
-                .unwrap_or("-1".into())
+                .unwrap_or_else(|_| aes_str!("-1"))
         }
         #[cfg(target_os = "windows")]
         {
@@ -53,22 +53,22 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_disk_info"), || -> String {
         match sys_info::disk_info() {
             Ok(di) => json!({
-                "total_kb": di.total,
-                "free_kb":  di.free,
+                aes_str!("total_kb").as_str(): di.total,
+                aes_str!("free_kb").as_str():  di.free,
             }).to_string(),
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
     // Convenience: returns the full sysinfo blob as JSON.
     engine.register_fn(&aes_str!("internal_sysinfo_json"), || -> String {
         json!({
-            "hostname": sys_info::hostname().unwrap_or_default(),
-            "os_type":  sys_info::os_type().unwrap_or_default(),
-            "os_release": sys_info::os_release().unwrap_or_default(),
-            "cpu_num":  sys_info::cpu_num().unwrap_or(0),
-            "mem_total_kb": sys_info::mem_info().map(|m| m.total).unwrap_or(0),
-            "mem_free_kb":  sys_info::mem_info().map(|m| m.free).unwrap_or(0),
+            aes_str!("hostname").as_str(): sys_info::hostname().unwrap_or_default(),
+            aes_str!("os_type").as_str():  sys_info::os_type().unwrap_or_default(),
+            aes_str!("os_release").as_str(): sys_info::os_release().unwrap_or_default(),
+            aes_str!("cpu_num").as_str():  sys_info::cpu_num().unwrap_or(0),
+            aes_str!("mem_total_kb").as_str(): sys_info::mem_info().map(|m| m.total).unwrap_or(0),
+            aes_str!("mem_free_kb").as_str():  sys_info::mem_info().map(|m| m.free).unwrap_or(0),
         }).to_string()
     });
 }

@@ -226,7 +226,7 @@ pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
     const PROCESS_HEAP_ENTRY_BUSY: u16 = 0x4;
 
     // Key schedule is stack-allocated (~240 bytes) - no heap alloc.
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("cipher init: {e}"))?;
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("{}: {}", aes_str!("cipher init"), e))?;
 
     unsafe {
         let heap = GetProcessHeap();

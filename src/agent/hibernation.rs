@@ -91,7 +91,7 @@ pub async fn run_hibernation(
                 s
             }
             Err(e) => {
-                warn!("Hibernation connect failed: {}", e);
+                warn!("{}: {}", aes_str!("Hibernation connect failed"), e);
                 // Exponential backoff capped at agent.backoff_cap_secs (5 min default)
                 let base = std::cmp::min(5u64 * 2u64.saturating_pow(connect_failures), backoff_cap_secs);
                 let jitter = rand::thread_rng().gen_range(0..=(base / 2).max(1));
@@ -166,7 +166,7 @@ pub async fn run_hibernation(
             {
                 Ok(Ok(b)) => b,
                 _ => {
-                    debug!("Hibernation: no challenge received — skipping");
+                    debug!("{}", aes_str!("Hibernation: no challenge received — skipping"));
                     drop(writer_task);
                     sleep_cycle(&mut config).await;
                     continue;
@@ -195,7 +195,7 @@ pub async fn run_hibernation(
                 };
                 let sig = Signature::from_bytes(&sig_arr);
                 if verify_key.verify(challenge.nonce.as_bytes(), &sig).is_err() {
-                    warn!("Hibernation: server proof failed — aborting check-in");
+                    warn!("{}", aes_str!("Hibernation: server proof failed — aborting check-in"));
                     drop(writer_task);
                     sleep_cycle(&mut config).await;
                     continue;
@@ -245,11 +245,11 @@ pub async fn run_hibernation(
             {
                 Ok(Ok(b)) => b,
                 Ok(Err(_)) => {
-                    debug!("Hibernation: connection closed after {} tasks", executed);
+                    debug!("{}: {} {}", aes_str!("Hibernation: connection closed after"), executed, aes_str!("tasks"));
                     break 'batch;
                 }
                 Err(_) => {
-                    debug!("Hibernation: read timeout after {} tasks", executed);
+                    debug!("{}: {} {}", aes_str!("Hibernation: read timeout after"), executed, aes_str!("tasks"));
                     break 'batch;
                 }
             };
@@ -273,7 +273,7 @@ pub async fn run_hibernation(
             };
             let sig = Signature::from_bytes(&sig_arr);
             if verify_key.verify(&sign_bytes, &sig).is_err() {
-                warn!("Hibernation: invalid signature on task — aborting batch");
+                warn!("{}", aes_str!("Hibernation: invalid signature on task — aborting batch"));
                 break 'batch;
             }
 
@@ -301,7 +301,7 @@ pub async fn run_hibernation(
             }
         }
 
-        info!("Hibernation check-in complete: {} tasks executed", executed);
+        info!("{}: {} {}", aes_str!("Hibernation check-in complete"), executed, aes_str!("tasks executed"));
 
         // Drop the writer channel to let the writer task finish cleanly.
         drop(tx);

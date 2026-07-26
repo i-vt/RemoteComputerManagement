@@ -47,14 +47,14 @@ pub fn is_virtualized() -> bool {
 // check fails; the resulting process tree gives the analyst nothing useful.
 
 pub fn run_decoy() {
-    eprintln!("[*] Initializing system integrity check...");
+    eprintln!("{}", aes_str!("[*] Initializing system integrity check..."));
     thread::sleep(Duration::from_secs(2));
-    eprintln!("[*] Verifying environment...");
+    eprintln!("{}", aes_str!("[*] Verifying environment..."));
     thread::sleep(Duration::from_secs(1));
     if cfg!(target_os = "windows") {
-        eprintln!("Error: VCRUNTIME140.dll is missing or corrupted. Reinstall the application.");
+        eprintln!("{}", aes_str!("Error: VCRUNTIME140.dll is missing or corrupted. Reinstall the application."));
     } else {
-        eprintln!("error: while loading shared libraries: libssl.so.1.1: cannot open shared object file: No such file or directory");
+        eprintln!("{}", aes_str!("error: while loading shared libraries: libssl.so.1.1: cannot open shared object file: No such file or directory"));
     }
     std::process::exit(1);
 }

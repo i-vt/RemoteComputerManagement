@@ -13,10 +13,7 @@ pub fn register(engine: &mut Engine) {
         #[cfg(target_os = "windows")]
         {
             use std::ffi::CString;
-            let pipe_name = format!(
-                "\\\\.\\pipe\\{}",
-                name.trim_start_matches(&aes_str!("\\\\.\\pipe\\")),
-            );
+            let pipe_name = format!("{}{}", aes_str!("\\\\.\\pipe\\"), name.trim_start_matches(&aes_str!("\\\\.\\pipe\\")));
             let cname = match CString::new(pipe_name.as_bytes()) {
                 Ok(s)  => s,
                 Err(_) => return aes_str!("Error: invalid pipe name"),
@@ -33,7 +30,7 @@ pub fn register(engine: &mut Engine) {
                     std::ptr::null_mut(),
                 );
                 if h == INVALID_HANDLE_VALUE {
-                    return format!("Error: CreateNamedPipe failed ({})", GetLastError());
+                    return format!("{}{})", aes_str!("Error: CreateNamedPipe failed ("), GetLastError());
                 }
                 ConnectNamedPipe(h, std::ptr::null_mut());
                 let mut buf  = vec![0u8; 65536];
@@ -45,11 +42,11 @@ pub fn register(engine: &mut Engine) {
                 DisconnectNamedPipe(h);
                 CloseHandle(h);
                 if ok != 0 { hex::encode(&buf[..read as usize]) }
-                else { format!("Error: ReadFile failed ({})", GetLastError()) }
+                else { format!("{}{})", aes_str!("Error: ReadFile failed ("), GetLastError()) }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: named_pipe_listen is Windows only ({})", name)
+        format!("{}{})", aes_str!("Error: named_pipe_listen is Windows only ("), name)
     });
 
     // Connect to an existing named pipe as a client and write hex-encoded data.
@@ -62,10 +59,7 @@ pub fn register(engine: &mut Engine) {
                 Ok(d)  => d,
                 Err(_) => data_hex.as_bytes().to_vec(),
             };
-            let pipe_name = format!(
-                "\\\\.\\pipe\\{}",
-                name.trim_start_matches(&aes_str!("\\\\.\\pipe\\")),
-            );
+            let pipe_name = format!("{}{}", aes_str!("\\\\.\\pipe\\"), name.trim_start_matches(&aes_str!("\\\\.\\pipe\\")));
             let cname = match CString::new(pipe_name.as_bytes()) {
                 Ok(s)  => s,
                 Err(_) => return aes_str!("Error: invalid pipe name"),
@@ -78,7 +72,7 @@ pub fn register(engine: &mut Engine) {
                     std::ptr::null_mut(),
                 );
                 if h == INVALID_HANDLE_VALUE {
-                    return format!("Error: CreateFile failed ({})", GetLastError());
+                    return format!("{}{})", aes_str!("Error: CreateFile failed ("), GetLastError());
                 }
                 let mut written: DWORD = 0;
                 let ok = WriteFile(
@@ -86,11 +80,11 @@ pub fn register(engine: &mut Engine) {
                     &mut written, std::ptr::null_mut(),
                 );
                 CloseHandle(h);
-                if ok != 0 { format!("Wrote {} bytes", written) }
-                else { format!("Error: WriteFile failed ({})", GetLastError()) }
+                if ok != 0 { format!("{}{}{}", aes_str!("Wrote "), written, aes_str!(" bytes")) }
+                else { format!("{}{})", aes_str!("Error: WriteFile failed ("), GetLastError()) }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: named_pipe_write is Windows only ({})", name)
+        format!("{}{})", aes_str!("Error: named_pipe_write is Windows only ("), name)
     });
 }

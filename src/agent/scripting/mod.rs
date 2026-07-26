@@ -103,7 +103,7 @@ impl ExtensionManager {
         self.scope.set_or_push(&*aes_str!("args"), rhai_args);
         match self.engine.eval_with_scope::<String>(&mut self.scope, script_content) {
             Ok(result) => result,
-            Err(e)     => format!("[Script Exception]: {}", e),
+            Err(e)     => format!("{}{}", aes_str!("[Script Exception]: "), e),
         }
     }
 }

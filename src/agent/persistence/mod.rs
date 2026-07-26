@@ -177,5 +177,5 @@ pub fn list() -> String {
     #[cfg(target_os = "macos")]
     return macos::list();
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-    "Unsupported platform".to_string()
+    aes_str!("Unsupported platform")
 }

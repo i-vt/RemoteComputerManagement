@@ -35,11 +35,11 @@ pub fn register(engine: &mut Engine) {
             { unsafe { use super::win_ffi::proc_ext::IsDebuggerPresent; IsDebuggerPresent() != 0 } }
             #[cfg(target_os = "linux")]
             {
-                std::fs::read_to_string("/proc/self/status")
+                std::fs::read_to_string(aes_str!("/proc/self/status"))
                     .ok()
                     .and_then(|s| {
                         s.lines()
-                            .find(|l| l.starts_with("TracerPid:"))
+                            .find(|l| l.starts_with(aes_str!("TracerPid:").as_str()))
                             .and_then(|l| l.split_whitespace().nth(1))
                             .and_then(|v| v.parse::<i64>().ok())
                     })
@@ -133,7 +133,7 @@ pub fn register(engine: &mut Engine) {
         #[cfg(not(target_os = "windows"))]
         {
             // Lockfile approach: O_CREAT | O_EXCL guarantees atomicity.
-            let path = std::env::temp_dir().join(format!(".rcm_mutex_{}", name));
+            let path = std::env::temp_dir().join(format!("{}{}", aes_str!(".rcm_mutex_"), name));
             match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(_)  => {
                     if let Ok(mut store) = mutex_store().lock() {
@@ -161,7 +161,7 @@ pub fn register(engine: &mut Engine) {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            if std::env::temp_dir().join(format!(".rcm_mutex_{}", name)).exists() {
+            if std::env::temp_dir().join(format!("{}{}", aes_str!(".rcm_mutex_"), name)).exists() {
                 aes_str!("true")
             } else {
                 aes_str!("false")
@@ -182,10 +182,10 @@ pub fn register(engine: &mut Engine) {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let path = std::env::temp_dir().join(format!(".rcm_mutex_{}", name));
+            let path = std::env::temp_dir().join(format!("{}{}", aes_str!(".rcm_mutex_"), name));
             match std::fs::remove_file(&path) {
                 Ok(_)  => aes_str!("Released"),
-                Err(e) => format!("Error: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Error: "), e),
             }
         }
     });

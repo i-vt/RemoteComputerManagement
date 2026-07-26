@@ -31,11 +31,12 @@ pub fn handle_fallback_config() -> DispatchResult {
     let info = if fb.endpoints.is_empty() {
         aes_str!("No fallback endpoints configured (single host mode)")
     } else {
-        let mut lines = vec![format!("Strategy: {:?}", fb.strategy)];
-        lines.push(format!("Dead time: {}s", fb.dead_time_secs));
+        let mut lines = vec![format!("{}: {:?}", aes_str!("Strategy"), fb.strategy)];
+        lines.push(format!("{}: {}s", aes_str!("Dead time"), fb.dead_time_secs));
         for (i, ep) in fb.endpoints.iter().enumerate() {
-            lines.push(format!("[{}] {}:{} {:?} prio={} weight={} max_fail={}",
-                i, ep.host, ep.port, ep.transport, ep.priority, ep.weight, ep.max_failures));
+            lines.push(format!("[{}] {}:{} {:?} {}{} {}{} {}{}",
+                i, ep.host, ep.port, ep.transport,
+                aes_str!("prio="), ep.priority, aes_str!("weight="), ep.weight, aes_str!("max_fail="), ep.max_failures));
         }
         lines.join("\n")
     };

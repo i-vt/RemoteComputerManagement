@@ -18,20 +18,20 @@ pub fn register(engine: &mut Engine) {
         if encoder.write_all(&data).is_err() { return aes_str!("Error: write failed"); }
         match encoder.finish() {
             Ok(compressed) => hex::encode(compressed),
-            Err(e)         => format!("Error: {}", e),
+            Err(e)         => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
     engine.register_fn(&aes_str!("internal_gunzip"), |data_hex: &str| -> String {
         let data = match hex::decode(data_hex) {
             Ok(d)  => d,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let mut decoder = GzDecoder::new(data.as_slice());
         let mut out = Vec::new();
         match decoder.read_to_end(&mut out) {
             Ok(_)  => hex::encode(out),
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -42,11 +42,11 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_zip_create"), |paths_json: &str, output_path: &str| -> String {
         let paths: Vec<String> = match serde_json::from_str(paths_json) {
             Ok(p)  => p,
-            Err(e) => return format!("Error parsing paths: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error parsing paths: "), e),
         };
         let file = match fs::File::create(output_path) {
             Ok(f)  => f,
-            Err(e) => return format!("Error creating archive: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error creating archive: "), e),
         };
         let mut zip = zip::ZipWriter::new(file);
         let opts = zip::write::FileOptions::default()
@@ -72,9 +72,9 @@ pub fn register(engine: &mut Engine) {
         }
         let _ = zip.finish();
         if errors.is_empty() {
-            format!("Created {} entries", count)
+            format!("{}{}{}", aes_str!("Created "), count, aes_str!(" entries"))
         } else {
-            format!("Created {} entries; errors: {}", count, errors.join(", "))
+            format!("{}{}{}{}", aes_str!("Created "), count, aes_str!(" entries; errors: "), errors.join(", "))
         }
     });
 
@@ -82,11 +82,11 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_zip_extract"), |zip_path: &str, output_dir: &str| -> String {
         let file = match fs::File::open(zip_path) {
             Ok(f)  => f,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let mut archive = match zip::ZipArchive::new(file) {
             Ok(a)  => a,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let _ = fs::create_dir_all(output_dir);
         let mut count = 0usize;
@@ -104,28 +104,28 @@ pub fn register(engine: &mut Engine) {
                 }
             }
         }
-        if errors.is_empty() { format!("Extracted {} files", count) }
-        else { format!("Extracted {}; errors: {}", count, errors.join(", ")) }
+        if errors.is_empty() { format!("{}{}{}", aes_str!("Extracted "), count, aes_str!(" files")) }
+        else { format!("{}{}{}{}", aes_str!("Extracted "), count, aes_str!("; errors: "), errors.join(", ")) }
     });
 
     // List entries in a zip archive - returns JSON array of {name, size, compressed}.
     engine.register_fn(&aes_str!("internal_zip_list"), |zip_path: &str| -> String {
         let file = match fs::File::open(zip_path) {
             Ok(f)  => f,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let mut archive = match zip::ZipArchive::new(file) {
             Ok(a)  => a,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let mut entries = Vec::new();
         for i in 0..archive.len() {
             if let Ok(e) = archive.by_index(i) {
                 entries.push(serde_json::json!({
-                    "name":       e.name().to_string(),
-                    "size":       e.size(),
-                    "compressed": e.compressed_size(),
-                    "is_dir":     e.is_dir(),
+                    aes_str!("name").as_str():       e.name().to_string(),
+                    aes_str!("size").as_str():       e.size(),
+                    aes_str!("compressed").as_str(): e.compressed_size(),
+                    aes_str!("is_dir").as_str():     e.is_dir(),
                 }));
             }
         }

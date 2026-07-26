@@ -17,7 +17,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_grep"), |pattern: &str, path: &str, recursive: bool| -> String {
         let re = match Regex::new(pattern) {
             Ok(r)  => r,
-            Err(e) => return format!("Error: invalid regex: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: invalid regex: "), e),
         };
         let mut results = Vec::new();
         let walker = if recursive {
@@ -31,9 +31,9 @@ pub fn register(engine: &mut Engine) {
                 for (line_no, line) in content.lines().enumerate() {
                     if re.is_match(line) {
                         results.push(json!({
-                            "file":    entry.path().display().to_string(),
-                            "line":    line_no + 1,
-                            "content": line,
+                            aes_str!("file").as_str():    entry.path().display().to_string(),
+                            aes_str!("line").as_str():    line_no + 1,
+                            aes_str!("content").as_str(): line,
                         }));
                         if results.len() >= 10_000 { break 'outer; }
                     }
@@ -50,7 +50,7 @@ pub fn register(engine: &mut Engine) {
         let re_str = glob_to_regex(pattern);
         let re = match Regex::new(&re_str) {
             Ok(r)  => r,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let depth = if max_depth <= 0 { usize::MAX } else { max_depth as usize };
         let results: Vec<String> = WalkDir::new(root)
@@ -78,7 +78,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_regex_findall"), |pattern: &str, text: &str| -> String {
         let re = match Regex::new(pattern) {
             Ok(r)  => r,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let matches: Vec<&str> = re.find_iter(text).map(|m| m.as_str()).collect();
         serde_json::to_string(&matches).unwrap_or("[]".into())

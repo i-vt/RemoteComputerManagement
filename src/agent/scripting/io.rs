@@ -14,7 +14,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_read_bytes"), |path: &str| -> String {
         match fs::read(path) {
             Ok(bytes) => hex::encode(bytes),
-            Err(e)    => format!("Error: {}", e),
+            Err(e)    => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -25,8 +25,8 @@ pub fn register(engine: &mut Engine) {
             Err(_) => data_hex.as_bytes().to_vec(), // fall back to raw UTF-8
         };
         match fs::write(path, &data) {
-            Ok(_)  => format!("Wrote {} bytes", data.len()),
-            Err(e) => format!("Error: {}", e),
+            Ok(_)  => format!("{}{}{}", aes_str!("Wrote "), data.len(), aes_str!(" bytes")),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -34,8 +34,8 @@ pub fn register(engine: &mut Engine) {
 
     engine.register_fn(&aes_str!("internal_copy"), |src: &str, dst: &str| -> String {
         match fs::copy(src, dst) {
-            Ok(n)  => format!("Copied {} bytes", n),
-            Err(e) => format!("Error: {}", e),
+            Ok(n)  => format!("{}{}{}", aes_str!("Copied "), n, aes_str!(" bytes")),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -47,9 +47,9 @@ pub fn register(engine: &mut Engine) {
         match fs::copy(src, dst) {
             Ok(_) => match fs::remove_file(src) {
                 Ok(_)  => aes_str!("Moved (copy+delete)"),
-                Err(e) => format!("Copied but could not delete source: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Copied but could not delete source: "), e),
             },
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -62,14 +62,14 @@ pub fn register(engine: &mut Engine) {
         };
         match result {
             Ok(_)  => aes_str!("Deleted"),
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
     engine.register_fn(&aes_str!("internal_mkdir"), |path: &str| -> String {
         match fs::create_dir_all(path) {
             Ok(_)  => aes_str!("Created"),
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -90,15 +90,15 @@ pub fn register(engine: &mut Engine) {
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
                 json!({
-                    "size":     m.len(),
-                    "is_dir":   m.is_dir(),
-                    "is_file":  m.is_file(),
-                    "readonly": m.permissions().readonly(),
-                    "modified": modified,
-                    "created":  created,
+                    aes_str!("size").as_str():     m.len(),
+                    aes_str!("is_dir").as_str():   m.is_dir(),
+                    aes_str!("is_file").as_str():  m.is_file(),
+                    aes_str!("readonly").as_str(): m.permissions().readonly(),
+                    aes_str!("modified").as_str(): modified,
+                    aes_str!("created").as_str():  created,
                 }).to_string()
             }
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 

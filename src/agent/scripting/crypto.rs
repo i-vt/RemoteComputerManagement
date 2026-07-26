@@ -77,7 +77,7 @@ pub fn register(engine: &mut Engine) {
         match BASE64.decode(b64.trim()) {
             Ok(bytes) => String::from_utf8(bytes.clone())
                 .unwrap_or_else(|_| hex::encode(bytes)),
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
@@ -89,18 +89,18 @@ pub fn register(engine: &mut Engine) {
         match hex::decode(h) {
             Ok(bytes) => String::from_utf8(bytes)
                 .unwrap_or_else(|_| aes_str!("Error: not valid UTF-8")),
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
     engine.register_fn(&aes_str!("internal_xor"), |data_hex: &str, key_hex: &str| -> String {
         let data = match hex::decode(data_hex) {
             Ok(d)  => d,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let key = match hex::decode(key_hex) {
             Ok(k)  => k,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         if key.is_empty() { return aes_str!("Error: empty key"); }
         let out: Vec<u8> = data.iter()
@@ -124,21 +124,21 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_decrypt_bytes"), |data_hex: &str, key_hex: &str| -> String {
         let data   = match hex::decode(data_hex) {
             Ok(d)  => d,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         let cipher = match aes_cipher_from_hex(key_hex) { Ok(c) => c, Err(e) => return e };
-        match do_decrypt(&cipher, &data) { Ok(out) => hex::encode(out), Err(e) => format!("Error: {}", e) }
+        match do_decrypt(&cipher, &data) { Ok(out) => hex::encode(out), Err(e) => format!("{}{}", aes_str!("Error: "), e) }
     });
 
     // ── File-based AES-256-GCM ────────────────────────────────────────────────
 
     engine.register_fn(&aes_str!("internal_encrypt_file"), |path: &str, key_hex: &str| -> String {
         let cipher    = match aes_cipher_from_hex(key_hex) { Ok(c) => c, Err(e) => return e };
-        let plaintext = match fs::read(path) { Ok(d) => d, Err(e) => return format!("Read Error: {}", e) };
+        let plaintext = match fs::read(path) { Ok(d) => d, Err(e) => return format!("{}{}", aes_str!("Read Error: "), e) };
         match do_encrypt(&cipher, &plaintext) {
             Ok(data) => match fs::write(path, data) {
                 Ok(_)  => aes_str!("Success"),
-                Err(e) => format!("Write Error: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Write Error: "), e),
             },
             Err(e) => e,
         }
@@ -146,11 +146,11 @@ pub fn register(engine: &mut Engine) {
 
     engine.register_fn(&aes_str!("internal_decrypt_file"), |path: &str, key_hex: &str| -> String {
         let cipher    = match aes_cipher_from_hex(key_hex) { Ok(c) => c, Err(e) => return e };
-        let encrypted = match fs::read(path) { Ok(d) => d, Err(e) => return format!("Read Error: {}", e) };
+        let encrypted = match fs::read(path) { Ok(d) => d, Err(e) => return format!("{}{}", aes_str!("Read Error: "), e) };
         match do_decrypt(&cipher, &encrypted) {
             Ok(data) => match fs::write(path, data) {
                 Ok(_)  => aes_str!("Success"),
-                Err(e) => format!("Write Error: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Write Error: "), e),
             },
             Err(e) => e,
         }
@@ -169,7 +169,7 @@ pub fn register(engine: &mut Engine) {
                 } else { fail += 1; }
             }
         }
-        format!("Encrypted: {}, Failed: {}", ok, fail)
+        format!("{}{}{}{}", aes_str!("Encrypted: "), ok, aes_str!(", Failed: "), fail)
     });
 
     engine.register_fn(&aes_str!("internal_decrypt_recursive"), |root_path: &str, key_hex: &str| -> String {
@@ -185,7 +185,7 @@ pub fn register(engine: &mut Engine) {
                 } else { fail += 1; }
             }
         }
-        format!("Decrypted: {}, Failed: {}", ok, fail)
+        format!("{}{}{}{}", aes_str!("Decrypted: "), ok, aes_str!(", Failed: "), fail)
     });
 }
 
@@ -212,10 +212,12 @@ pub fn register_crypto_ext(engine: &mut rhai::Engine) {
         let iter = iterations.max(1) as u32;
         let klen = key_len.max(1).min(64) as usize;
         let mut key = vec![0u8; klen];
-        match hash_algo {
-            "sha1"   => pbkdf2_hmac::<Sha1>  (password.as_bytes(), &salt, iter, &mut key),
-            "sha256" => pbkdf2_hmac::<sha2::Sha256>(password.as_bytes(), &salt, iter, &mut key),
-            other    => return format!("Error: unsupported hash {}", other),
+        if hash_algo == aes_str!("sha1").as_str() {
+            pbkdf2_hmac::<Sha1>(password.as_bytes(), &salt, iter, &mut key);
+        } else if hash_algo == aes_str!("sha256").as_str() {
+            pbkdf2_hmac::<sha2::Sha256>(password.as_bytes(), &salt, iter, &mut key);
+        } else {
+            return format!("{}{}", aes_str!("Error: unsupported hash "), hash_algo);
         }
         hex::encode(key)
     });
@@ -223,9 +225,9 @@ pub fn register_crypto_ext(engine: &mut rhai::Engine) {
     // AES-128-CBC decryption.
     // All inputs are hex-encoded. Returns hex plaintext or "Error: ...".
     engine.register_fn(&aes_str!("internal_aes128_cbc_decrypt"), |data_hex: &str, key_hex: &str, iv_hex: &str| -> String {
-        let data = match hex::decode(data_hex) { Ok(d) => d, Err(e) => return format!("Error: {}", e) };
-        let key  = match hex::decode(key_hex)  { Ok(k) => k, Err(e) => return format!("Error: {}", e) };
-        let iv   = match hex::decode(iv_hex)   { Ok(i) => i, Err(e) => return format!("Error: {}", e) };
+        let data = match hex::decode(data_hex) { Ok(d) => d, Err(e) => return format!("{}{}", aes_str!("Error: "), e) };
+        let key  = match hex::decode(key_hex)  { Ok(k) => k, Err(e) => return format!("{}{}", aes_str!("Error: "), e) };
+        let iv   = match hex::decode(iv_hex)   { Ok(i) => i, Err(e) => return format!("{}{}", aes_str!("Error: "), e) };
         if key.len() != 16 { return aes_str!("Error: key must be 16 bytes for AES-128"); }
         if iv.len()  != 16 { return aes_str!("Error: IV must be 16 bytes"); }
         type Aes128CbcDec = cbc::Decryptor<Aes128>;
@@ -234,16 +236,16 @@ pub fn register_crypto_ext(engine: &mut rhai::Engine) {
         match Aes128CbcDec::new(&key_arr.into(), &iv_arr.into())
             .decrypt_padded_vec_mut::<Pkcs7>(&data) {
             Ok(pt) => hex::encode(pt),
-            Err(e) => format!("Error: unpad failed: {:?}", e),
+            Err(e) => format!("{}{:?}", aes_str!("Error: unpad failed: "), e),
         }
     });
 
     // AES-256-CBC decryption.
     engine.register_fn(&aes_str!("internal_aes256_cbc_decrypt"), |data_hex: &str, key_hex: &str, iv_hex: &str| -> String {
         use aes::Aes256;
-        let data = match hex::decode(data_hex) { Ok(d) => d, Err(e) => return format!("Error: {}", e) };
-        let key  = match hex::decode(key_hex)  { Ok(k) => k, Err(e) => return format!("Error: {}", e) };
-        let iv   = match hex::decode(iv_hex)   { Ok(i) => i, Err(e) => return format!("Error: {}", e) };
+        let data = match hex::decode(data_hex) { Ok(d) => d, Err(e) => return format!("{}{}", aes_str!("Error: "), e) };
+        let key  = match hex::decode(key_hex)  { Ok(k) => k, Err(e) => return format!("{}{}", aes_str!("Error: "), e) };
+        let iv   = match hex::decode(iv_hex)   { Ok(i) => i, Err(e) => return format!("{}{}", aes_str!("Error: "), e) };
         if key.len() != 32 { return aes_str!("Error: key must be 32 bytes for AES-256"); }
         if iv.len()  != 16 { return aes_str!("Error: IV must be 16 bytes"); }
         type Aes256CbcDec = cbc::Decryptor<Aes256>;
@@ -252,7 +254,7 @@ pub fn register_crypto_ext(engine: &mut rhai::Engine) {
         match Aes256CbcDec::new(&key_arr.into(), &iv_arr.into())
             .decrypt_padded_vec_mut::<Pkcs7>(&data) {
             Ok(pt) => hex::encode(pt),
-            Err(e) => format!("Error: unpad failed: {:?}", e),
+            Err(e) => format!("{}{:?}", aes_str!("Error: unpad failed: "), e),
         }
     });
 
@@ -262,20 +264,20 @@ pub fn register_crypto_ext(engine: &mut rhai::Engine) {
     engine.register_fn(&aes_str!("internal_chrome_decrypt_linux"), |encrypted_hex: &str| -> String {
         let mut data = match hex::decode(encrypted_hex) {
             Ok(d) => d,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         // Strip "v10" / "v11" prefix (3 bytes).
-        if data.len() > 3 && &data[..3] == b"v10" || (data.len() > 3 && &data[..3] == b"v11") {
+        if data.len() > 3 && &data[..3] == aes_str!("v10").as_bytes() || (data.len() > 3 && &data[..3] == aes_str!("v11").as_bytes()) {
             data = data[3..].to_vec();
         }
         let mut key = [0u8; 16];
-        pbkdf2_hmac::<Sha1>(b"peanuts", b"saltysalt", 1, &mut key);
+        pbkdf2_hmac::<Sha1>(aes_str!("peanuts").as_bytes(), aes_str!("saltysalt").as_bytes(), 1, &mut key);
         let iv = [b' '; 16]; // 0x20 * 16
         type Aes128CbcDec = cbc::Decryptor<Aes128>;
         match Aes128CbcDec::new(&key.into(), &iv.into())
             .decrypt_padded_vec_mut::<Pkcs7>(&data) {
             Ok(pt) => String::from_utf8_lossy(&pt).to_string(),
-            Err(e) => format!("Error: {:?}", e),
+            Err(e) => format!("{}{:?}", aes_str!("Error: "), e),
         }
     });
 }

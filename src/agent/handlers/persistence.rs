@@ -19,7 +19,7 @@ fn split2<'a>(args: &'a str, usage: &str) -> Result<(&'a str, &'a str), Dispatch
         [a, b] if !a.is_empty() && !b.is_empty() => Ok((a, b)),
         _ => Err(DispatchResult::Reply(
             String::new(),
-            format!("Usage: {usage}"),
+            format!("{}: {}", aes_str!("Usage"), usage),
             1,
             AgentAction::None,
         )),
@@ -30,7 +30,7 @@ fn require_arg<'a>(arg: &'a str, usage: &str) -> Result<&'a str, DispatchResult>
     if arg.trim().is_empty() {
         Err(DispatchResult::Reply(
             String::new(),
-            format!("Usage: {usage}"),
+            format!("{}: {}", aes_str!("Usage"), usage),
             1,
             AgentAction::None,
         ))

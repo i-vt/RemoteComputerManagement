@@ -25,17 +25,17 @@ pub fn register(engine: &mut Engine) {
         unsafe {
             use super::win_ffi::win_ext::*;
             let h = OpenProcess(crate::config::config().ffi_windows.process_all_access, 0, pid);
-            if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
+            if h.is_null() { return format!("{}{})", aes_str!("Error: OpenProcess failed ("), GetLastError()); }
             let mut buf  = vec![0u8; n];
             let mut read = 0usize;
             let ok = ReadProcessMemory(h, addr as *const std::ffi::c_void, buf.as_mut_ptr() as _, n, &mut read);
             CloseHandle(h);
             if ok != 0 { hex::encode(&buf[..read]) }
-            else { format!("Error: ReadProcessMemory failed ({})", GetLastError()) }
+            else { format!("{}{})", aes_str!("Error: ReadProcessMemory failed ("), GetLastError()) }
         }
         #[cfg(target_os = "linux")]
         {
-            let mem_path = format!("/proc/{}/mem", pid);
+            let mem_path = format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/mem"));
             match fs::OpenOptions::new().read(true).open(&mem_path) {
                 Ok(mut f) => {
                     if f.seek(std::io::SeekFrom::Start(addr)).is_err() {
@@ -44,14 +44,14 @@ pub fn register(engine: &mut Engine) {
                     let mut buf = vec![0u8; n];
                     match f.read(&mut buf) {
                         Ok(r) => hex::encode(&buf[..r]),
-                        Err(e) => format!("Error: {}", e),
+                        Err(e) => format!("{}{}", aes_str!("Error: "), e),
                     }
                 }
-                Err(e) => format!("Error: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Error: "), e),
             }
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-        format!("Error: mem_read not supported on this platform (pid {}, addr {})", pid, addr_hex)
+        format!("{}{}{}{})", aes_str!("Error: mem_read not supported on this platform (pid "), pid, aes_str!(", addr "), addr_hex)
     });
 
     // Write hex-encoded bytes into a process's address space.
@@ -67,24 +67,24 @@ pub fn register(engine: &mut Engine) {
         };
         let data = match hex::decode(data_hex) {
             Ok(d)  => d,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
 
         #[cfg(target_os = "windows")]
         unsafe {
             use super::win_ffi::win_ext::*;
             let h = OpenProcess(crate::config::config().ffi_windows.process_all_access, 0, pid);
-            if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
+            if h.is_null() { return format!("{}{})", aes_str!("Error: OpenProcess failed ("), GetLastError()); }
             let mut written = 0usize;
             let ok = WriteProcessMemory(
                 h, addr as *mut std::ffi::c_void, data.as_ptr() as _, data.len(), &mut written,
             );
             CloseHandle(h);
-            if ok != 0 { format!("Wrote {} bytes", written) }
-            else { format!("Error: WriteProcessMemory failed ({})", GetLastError()) }
+            if ok != 0 { format!("{}{}{}", aes_str!("Wrote "), written, aes_str!(" bytes")) }
+            else { format!("{}{})", aes_str!("Error: WriteProcessMemory failed ("), GetLastError()) }
         }
         #[cfg(not(target_os = "windows"))]
-        format!("Error: mem_write not supported on this platform (pid {}, addr {})", pid, addr_hex)
+        format!("{}{}{}{})", aes_str!("Error: mem_write not supported on this platform (pid "), pid, aes_str!(", addr "), addr_hex)
     });
 
     // List committed virtual memory regions.
@@ -102,7 +102,7 @@ pub fn register(engine: &mut Engine) {
             // defaults) - fetched once, used across the region walk.
             let ffi = &crate::config::config().ffi_windows;
             let h = OpenProcess(ffi.process_all_access, 0, pid);
-            if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
+            if h.is_null() { return format!("{}{})", aes_str!("Error: OpenProcess failed ("), GetLastError()); }
             let mut regions = Vec::new();
             let mut addr: u64 = 0;
             loop {
@@ -115,10 +115,10 @@ pub fn register(engine: &mut Engine) {
                 if ret == 0 { break; }
                 if mbi.state == ffi.mem_commit {
                     regions.push(json!({
-                        "base":    format!("0x{:x}", mbi.base_address as u64),
-                        "size":    mbi.region_size,
-                        "protect": mbi.protect,
-                        "type":    mbi.mem_type,
+                        "base":    format!("{}{:x}", aes_str!("0x"), mbi.base_address as u64),
+                        aes_str!("size").as_str():    mbi.region_size,
+                        aes_str!("protect").as_str(): mbi.protect,
+                        aes_str!("type").as_str():    mbi.mem_type,
                     }));
                 }
                 addr = mbi.base_address as u64 + mbi.region_size as u64;
@@ -129,18 +129,18 @@ pub fn register(engine: &mut Engine) {
         }
         #[cfg(target_os = "linux")]
         {
-            let maps_path = format!("/proc/{}/maps", pid);
+            let maps_path = format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/maps"));
             match fs::read_to_string(&maps_path) {
                 Ok(content) => {
                     let regions: Vec<serde_json::Value> =
-                        content.lines().map(|line| json!({ "raw": line })).collect();
+                        content.lines().map(|line| json!({ aes_str!("raw").as_str(): line })).collect();
                     serde_json::to_string(&regions).unwrap_or("[]".into())
                 }
-                Err(e) => format!("Error: {}", e),
+                Err(e) => format!("{}{}", aes_str!("Error: "), e),
             }
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-        format!("Error: mem_regions not supported on this platform (pid {})", pid_str)
+        format!("{}{})", aes_str!("Error: mem_regions not supported on this platform (pid "), pid_str)
     });
 
     // Scan all readable committed regions for a byte pattern.
@@ -152,7 +152,7 @@ pub fn register(engine: &mut Engine) {
         };
         let pattern = match hex::decode(pattern_hex) {
             Ok(p)  => p,
-            Err(e) => return format!("Error: {}", e),
+            Err(e) => return format!("{}{}", aes_str!("Error: "), e),
         };
         if pattern.is_empty() { return aes_str!("Error: empty pattern"); }
 
@@ -160,14 +160,14 @@ pub fn register(engine: &mut Engine) {
 
         #[cfg(target_os = "linux")]
         {
-            let maps = match fs::read_to_string(format!("/proc/{}/maps", pid)) {
+            let maps = match fs::read_to_string(format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/maps"))) {
                 Ok(m)  => m,
-                Err(e) => return format!("Error: {}", e),
+                Err(e) => return format!("{}{}", aes_str!("Error: "), e),
             };
-            let mem_path = format!("/proc/{}/mem", pid);
+            let mem_path = format!("{}{}{}", aes_str!("/proc/"), pid, aes_str!("/mem"));
             let mut mem_file = match fs::OpenOptions::new().read(true).open(&mem_path) {
                 Ok(f)  => f,
-                Err(e) => return format!("Error: {}", e),
+                Err(e) => return format!("{}{}", aes_str!("Error: "), e),
             };
             for line in maps.lines() {
                 let parts: Vec<&str> = line.splitn(2, ' ').collect();
@@ -182,7 +182,7 @@ pub fn register(engine: &mut Engine) {
                 let n = mem_file.read(&mut buf).unwrap_or(0);
                 for (i, window) in buf[..n].windows(pattern.len()).enumerate() {
                     if window == pattern.as_slice() {
-                        hits.push(format!("0x{:x}", start + i as u64));
+                        hits.push(format!("{}{:x}", aes_str!("0x"), start + i as u64));
                     }
                 }
                 if hits.len() >= 10_000 { break; }
@@ -195,7 +195,7 @@ pub fn register(engine: &mut Engine) {
             // defaults) - fetched once, used across the region walk.
             let ffi = &crate::config::config().ffi_windows;
             let h = OpenProcess(ffi.process_all_access, 0, pid);
-            if h.is_null() { return format!("Error: OpenProcess failed ({})", GetLastError()); }
+            if h.is_null() { return format!("{}{})", aes_str!("Error: OpenProcess failed ("), GetLastError()); }
             let mut addr: u64 = 0;
             loop {
                 let mut mbi = MemoryBasicInformation {
@@ -218,7 +218,7 @@ pub fn register(engine: &mut Engine) {
                     ) != 0 {
                         for (i, window) in buf[..read].windows(pattern.len()).enumerate() {
                             if window == pattern.as_slice() {
-                                hits.push(format!("0x{:x}", mbi.base_address as u64 + i as u64));
+                                hits.push(format!("{}{:x}", aes_str!("0x"), mbi.base_address as u64 + i as u64));
                             }
                         }
                     }

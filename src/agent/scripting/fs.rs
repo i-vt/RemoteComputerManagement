@@ -9,14 +9,14 @@ pub fn register(engine: &mut Engine) {
     engine.register_fn(&aes_str!("internal_read"), |path: &str| -> String {
         match fs::read_to_string(path) {
             Ok(c)  => c,
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
     engine.register_fn(&aes_str!("internal_write"), |path: &str, data: &str| -> String {
         match fs::write(path, data) {
             Ok(_)  => aes_str!("Success"),
-            Err(e) => format!("Error: {}", e),
+            Err(e) => format!("{}{}", aes_str!("Error: "), e),
         }
     });
 
