@@ -342,7 +342,14 @@ pub fn handle_connection(
                     };
 
                     let profile = if let Some(json) = profile_json_opt {
-                        serde_json::from_str::<MalleableProfile>(&json).unwrap_or_else(|_| MalleableProfile::default())
+                        serde_json::from_str::<MalleableProfile>(&json).unwrap_or_else(|e| {
+                            warn!(
+                                "Stored profile for build {} does not parse as positional MalleableProfile ({}); \
+                                 pre-upgrade object-format profiles must be converted - using default profile",
+                                hello.build_id, e
+                            );
+                            MalleableProfile::default()
+                        })
                     } else {
                         MalleableProfile::default()
                     };
@@ -976,11 +983,13 @@ fn handle_file_line(
         };
         let _ = pkg.log("agent", "INFO", &format!("batch report {}: {}", root, json));
         // One-line custody summary parsed from the report counts.
+        // RecursiveReport is a positional seq (see src/file_transfer.rs):
+        // [root_path, total_files_found, total_success, failed_downloads].
         let summary = serde_json::from_str::<serde_json::Value>(json)
             .map(|j| {
-                let found = j["total_files_found"].as_u64().unwrap_or(0);
-                let ok = j["total_success"].as_u64().unwrap_or(0);
-                let failed = j["failed_downloads"].as_array().map(|a| a.len()).unwrap_or(0);
+                let found = j[1].as_u64().unwrap_or(0);
+                let ok = j[2].as_u64().unwrap_or(0);
+                let failed = j[3].as_array().map(|a| a.len()).unwrap_or(0);
                 format!("batch {}: {} found, {} collected, {} failed", batch, found, ok, failed)
             })
             .unwrap_or_else(|_| format!("batch {} report received", batch));

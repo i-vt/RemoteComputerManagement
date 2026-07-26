@@ -1,4 +1,6 @@
 // src/traffic.rs
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::common::{max_frame_size, MalleableProfile, TransformStep, HttpBlock};
 use std::io;
@@ -73,7 +75,7 @@ impl DataMolder {
                     if buffer.starts_with(p_bytes) {
                         buffer = buffer[p_bytes.len()..].to_vec();
                     } else {
-                        return Err(io::Error::new(io::ErrorKind::InvalidData, "Prepend Mismatch"));
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("Prepend Mismatch")));
                     }
                 },
                 TransformStep::Append(s) => {
@@ -81,7 +83,7 @@ impl DataMolder {
                     if buffer.ends_with(a_bytes) {
                         buffer = buffer[..buffer.len() - a_bytes.len()].to_vec();
                     } else {
-                        return Err(io::Error::new(io::ErrorKind::InvalidData, "Append Mismatch"));
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("Append Mismatch")));
                     }
                 }
             }
@@ -129,7 +131,7 @@ impl DataMolder {
             header_buf.push(byte[0]);
             if header_buf.ends_with(b"\r\n\r\n") { break; }
             if header_buf.len() > 8192 {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "Header Too Large"));
+                return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("Header Too Large")));
             }
         }
 
@@ -144,10 +146,10 @@ impl DataMolder {
                 && line[..14].eq_ignore_ascii_case("content-length")
             {
                 let val = line[15..].trim().parse::<usize>()
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid Content-Length value"))?;
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, aes_str!("Invalid Content-Length value")))?;
                 if let Some(prev) = content_len {
                     if prev != val {
-                        return Err(io::Error::new(io::ErrorKind::InvalidData, "Conflicting Content-Length headers"));
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("Conflicting Content-Length headers")));
                     }
                     // Duplicate with same value - tolerated but already recorded
                 } else {
@@ -203,7 +205,7 @@ impl DataMolder {
         if !profile.format_http {
             let len = reader.read_u32().await? as usize;
             if len > max_frame_size() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "Frame too large"));
+                return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("Frame too large")));
             }
             let mut buf = vec![0u8; len];
             reader.read_exact(&mut buf).await?;
@@ -214,7 +216,7 @@ impl DataMolder {
 
         if content_len == 0 { return Ok(vec![]); }
         if content_len > max_frame_size() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP frame too large"));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("HTTP frame too large")));
         }
 
         let mut body = vec![0u8; content_len];
@@ -250,7 +252,7 @@ impl DataMolder {
                 header_buf.push(byte[0]);
                 if header_buf.ends_with(b"\r\n\r\n") { break; }
                 if header_buf.len() > 8192 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Handshake Header Too Large"));
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("Handshake Header Too Large")));
                 }
             }
 
@@ -262,10 +264,10 @@ impl DataMolder {
                 .unwrap_or(0);
 
             if content_len == 0 {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP handshake with no body"));
+                return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("HTTP handshake with no body")));
             }
             if content_len > max_frame_size() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP handshake frame too large"));
+                return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("HTTP handshake frame too large")));
             }
 
             let mut body = vec![0u8; content_len];
@@ -278,7 +280,7 @@ impl DataMolder {
         // Standard raw mode: 4 bytes = big-endian length prefix
         let len = u32::from_be_bytes(prefix) as usize;
         if len > max_frame_size() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Handshake frame too large"));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, aes_str!("Handshake frame too large")));
         }
         let mut buf = vec![0u8; len];
         reader.read_exact(&mut buf).await?;

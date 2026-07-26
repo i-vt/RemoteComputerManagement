@@ -426,12 +426,11 @@ async fn handle_register(
         }
     }
 
-    // Return session token + any queued commands
+    // Return session token + any queued commands. Positional array mirrors
+    // the agent-side RegisterResponse seq struct in
+    // src/agent/http_transport.rs: [token, commands].
     let queued = drain_commands(&state, sess_id);
-    let response = serde_json::json!({
-        "token": session_token,
-        "commands": queued,
-    });
+    let response = serde_json::json!([session_token, queued]);
 
     (StatusCode::OK, axum::Json(response)).into_response()
 }

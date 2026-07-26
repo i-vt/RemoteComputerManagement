@@ -25,6 +25,8 @@
 use std::fmt;
 
 use crate::rdi_stub::RDI_STUB_X64;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 /// Hash value the RDI stub interprets as "do not call any export -
 /// DllMain did all the work". Matches sRDI's convention.
@@ -59,22 +61,25 @@ pub enum ShellcodeError {
 impl fmt::Display for ShellcodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ShellcodeError::TooSmall => write!(f, "file too small to be a PE"),
-            ShellcodeError::BadDosMagic => write!(f, "missing MZ DOS magic"),
-            ShellcodeError::BadPeSignature => write!(f, "missing PE\\0\\0 signature"),
+            ShellcodeError::TooSmall => write!(f, "{}", aes_str!("file too small to be a PE")),
+            ShellcodeError::BadDosMagic => write!(f, "{}", aes_str!("missing MZ DOS magic")),
+            ShellcodeError::BadPeSignature => write!(f, "{}", aes_str!("missing PE\\0\\0 signature")),
             ShellcodeError::NotAmd64(m) => write!(
                 f,
-                "not a 64-bit PE (machine 0x{m:04X}); only x86_64 DLLs are supported"
+                "{}{:04X}{}",
+                aes_str!("not a 64-bit PE (machine 0x"), m, aes_str!("); only x86_64 DLLs are supported")
             ),
             ShellcodeError::NotPe32Plus(m) => write!(
                 f,
-                "unexpected optional-header magic 0x{m:04X} (want PE32+)"
+                "{}{:04X}{}",
+                aes_str!("unexpected optional-header magic 0x"), m, aes_str!(" (want PE32+)")
             ),
             ShellcodeError::NotADll => write!(
                 f,
-                "PE is not a DLL (IMAGE_FILE_DLL not set); build with --format dll semantics"
+                "{}",
+                aes_str!("PE is not a DLL (IMAGE_FILE_DLL not set); build with --format dll semantics")
             ),
-            ShellcodeError::TruncatedHeaders => write!(f, "truncated PE headers"),
+            ShellcodeError::TruncatedHeaders => write!(f, "{}", aes_str!("truncated PE headers")),
         }
     }
 }
@@ -99,7 +104,7 @@ impl Default for ShellcodeOptions {
     fn default() -> Self {
         ShellcodeOptions {
             function_hash: DEFAULT_FUNCTION_HASH,
-            user_data: b"None".to_vec(),
+            user_data: aes_str!("None").into_bytes(),
             flags: 0,
         }
     }
@@ -202,7 +207,7 @@ pub fn convert_dll_to_shellcode(
     b.push(0x5E); // pop rsi
     b.push(0xC3); // ret
 
-    debug_assert_eq!(b.len(), BOOTSTRAP_SIZE_X64, "x64 bootstrap size drifted");
+    debug_assert_eq!(b.len(), BOOTSTRAP_SIZE_X64, "{}", aes_str!("x64 bootstrap size drifted"));
 
     b.extend_from_slice(RDI_STUB_X64);
     b.extend_from_slice(dll);
@@ -265,16 +270,16 @@ pub fn encode_hex(data: &[u8]) -> String {
 
 pub fn encode_c_array(data: &[u8], name: &str) -> String {
     let mut out = String::with_capacity(data.len() * 6 + 128);
-    out.push_str(&format!("unsigned char {name}[] = {{\n"));
+    out.push_str(&format!("{}{}{}", aes_str!("unsigned char "), name, aes_str!("[] = {\n")));
     for chunk in data.chunks(12) {
         out.push_str("    ");
         for &byte in chunk {
-            out.push_str(&format!("0x{byte:02X}, "));
+            out.push_str(&format!("{}{:02X}, ", aes_str!("0x"), byte));
         }
         out.push('\n');
     }
     out.push_str("};\n");
-    out.push_str(&format!("unsigned int {name}_len = {};\n", data.len()));
+    out.push_str(&format!("{}{}{}{};\n", aes_str!("unsigned int "), name, aes_str!("_len = "), data.len()));
     out
 }
 

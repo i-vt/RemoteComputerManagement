@@ -1,3 +1,5 @@
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -8,9 +10,9 @@ where
 {
     // 1. Handshake
     let mut header = [0u8; 2];
-    if stream.read_exact(&mut header).await.is_err() { return Err("Read error".into()); }
+    if stream.read_exact(&mut header).await.is_err() { return Err(aes_str!("Read error").into()); }
     
-    if header[0] != 0x05 { return Err("Not SOCKS5".into()); }
+    if header[0] != 0x05 { return Err(aes_str!("Not SOCKS5").into()); }
 
     let n_methods = header[1] as usize;
     let mut methods = vec![0u8; n_methods];
@@ -27,7 +29,7 @@ where
     let atyp = req_header[3];
 
     if cmd != 0x01 { // 0x01 = CONNECT
-        return Err("Unsupported SOCKS command".into());
+        return Err(aes_str!("Unsupported SOCKS command").into());
     }
 
     let addr_str = match atyp {
@@ -51,7 +53,7 @@ where
             let ip = Ipv6Addr::from(buf);
             format!("[{}]", ip)
         }
-        _ => return Err("Unsupported Address Type".into()),
+        _ => return Err(aes_str!("Unsupported Address Type").into()),
     };
 
     let mut port_buf = [0u8; 2];

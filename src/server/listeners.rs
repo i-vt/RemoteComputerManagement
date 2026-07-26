@@ -83,7 +83,15 @@ impl ListenerManager {
         };
 
         let profile = lc.profile_json.as_ref()
-            .and_then(|j| serde_json::from_str::<MalleableProfile>(j).ok())
+            .map(|j| serde_json::from_str::<MalleableProfile>(j).unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Listener '{}' has a stored profile that does not parse as positional \
+                     MalleableProfile ({}); pre-upgrade object-format profiles must be \
+                     converted - using default profile",
+                    lc.name, e
+                );
+                MalleableProfile::default()
+            }))
             .unwrap_or_default();
 
         let config = C2Config {

