@@ -5,6 +5,8 @@
 #
 #   Unit tests   — cargo test --lib (all Rust #[test] items, no server needed)
 #   Integration  — bash scripts (test_01–test_15) against a live stack
+#   String audit — OPSEC denylist scan of release agent binaries
+#                  (tools/string_audit.sh; skips with a warning if none exist)
 #
 # Usage:
 #   ./run_tests.sh                  # unit tests only  (fast, ~30s)
@@ -157,6 +159,8 @@ info "Compose: $($COMPOSE version 2>/dev/null | head -1)"
 UNIT_EXIT=0
 INT_EXIT=0
 PIVOT_EXIT=0
+AUDIT_EXIT=0
+AUDIT_RAN=0
 
 # ── Unit tests ─────────────────────────────────────────────────────────────────
 
@@ -329,15 +333,58 @@ run_pivot_phase() {
         || fail "Pivot phase FAILED (exit $PIVOT_EXIT)."
 }
 
+# ── String audit (OPSEC denylist gate) ───────────────────────────────────────
+#
+# Scans the newest release agent binaries for informative strings (panic paths,
+# serde field names, endpoints, API names, protocol markers). Hard gate: any
+# match fails the run. Never silently passes — when no agent binary exists
+# (e.g. Linux-only CI that never cross-compiled one) it warns loudly and skips.
+run_string_audit() {
+    header "Stage — String audit (OPSEC denylist scan)"
+
+    local rel_dir="target/x86_64-pc-windows-gnu/release"
+    local bins=()
+    if [[ -d "$rel_dir" ]]; then
+        # Newest first; client*.exe (client, client_dll, client_service, ...) + stager.exe
+        while IFS= read -r f; do
+            bins+=("$f")
+        done < <(ls -t "$rel_dir"/client*.exe "$rel_dir"/stager.exe 2>/dev/null || true)
+    fi
+
+    if [[ ${#bins[@]} -eq 0 ]]; then
+        warn "No agent binaries found in $rel_dir — string audit SKIPPED."
+        warn "Build a release agent first; on Linux-only CI this stage is expected to skip."
+        return 0
+    fi
+
+    if [[ ! -x tools/string_audit.sh ]]; then
+        fail "tools/string_audit.sh missing or not executable."
+        AUDIT_EXIT=2
+        AUDIT_RAN=1   # ran and failed - summary must not print "skipped"
+        return
+    fi
+
+    AUDIT_RAN=1
+    info "Auditing ${#bins[@]} binary(ies): ${bins[*]}"
+    if tools/string_audit.sh "${bins[@]}"; then
+        success "String audit passed — no informative strings in agent binaries."
+    else
+        AUDIT_EXIT=$?
+        fail "String audit FAILED (exit $AUDIT_EXIT) — informative strings leak in the agent binary."
+        warn "Rebuild on nightly (see rust-toolchain.toml) so builder.rs can inject -Zlocation-detail=none -Ztrim-paths."
+    fi
+}
+
 # ── Run ────────────────────────────────────────────────────────────────────────
 
 [[ $RUN_UNIT -eq 1 ]]        && run_unit_tests
 [[ $RUN_INTEGRATION -eq 1 ]] && run_integration_tests
 [[ $RUN_PIVOT_PHASE -eq 1 ]] && run_pivot_phase
+run_string_audit
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 
-OVERALL=$(( UNIT_EXIT | INT_EXIT | PIVOT_EXIT ))
+OVERALL=$(( UNIT_EXIT | INT_EXIT | PIVOT_EXIT | AUDIT_EXIT ))
 
 header "═══ Results ═══"
 echo ""
@@ -350,6 +397,11 @@ echo ""
 [[ $RUN_PIVOT_PHASE -eq 1 ]] && {
     [[ $PIVOT_EXIT -eq 0 ]] && success "Pivot        passed" || fail "Pivot        FAILED"
 }
+if [[ $AUDIT_RAN -eq 1 ]]; then
+    [[ $AUDIT_EXIT -eq 0 ]] && success "String audit passed" || fail "String audit FAILED"
+else
+    warn "String audit skipped (no agent binaries — see above)"
+fi
 echo ""
 [[ $OVERALL -eq 0 ]] && success "All tests passed." || fail "Tests failed."
 

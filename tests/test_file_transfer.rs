@@ -123,7 +123,10 @@ fn test_recursive_report_serialization() {
         ],
     };
     let json = serde_json::to_string(&report).unwrap();
-    assert!(json.contains("\"total_success\":8"));
+    // Positional seq format: [root_path, total_files_found, total_success,
+    // failed_downloads] - no field names may appear.
+    assert_eq!(json, "[\"/test\",10,8,[[\"file1.txt\",\"permission denied\"],[\"file2.txt\",\"too large\"]]]");
+    assert!(!json.contains("total_success"));
     assert!(json.contains("permission denied"));
 
     let parsed: file_transfer::RecursiveReport = serde_json::from_str(&json).unwrap();

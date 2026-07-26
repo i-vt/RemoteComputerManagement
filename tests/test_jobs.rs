@@ -91,13 +91,15 @@ async fn test_job_list_json() {
 
     let json = mgr.list_json();
 
-    // Parse rather than string-search: list_json() uses to_string_pretty()
-    // which emits spaces after colons, breaking compact-form substring checks.
+    // JobInfo serializes as a positional seq:
+    // [id, description, status, started_at, finished_at, chunks_sent]
+    // with JobStatus as a u8 tag (Running=0).
     let jobs: Vec<serde_json::Value> = serde_json::from_str(&json)
         .expect("list_json must return valid JSON");
     assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0]["description"], "test");
-    assert_eq!(jobs[0]["status"], "Running");
+    assert_eq!(jobs[0][0], 1);
+    assert_eq!(jobs[0][1], "test");
+    assert_eq!(jobs[0][2], 0); // JobStatus::Running
 }
 
 #[tokio::test]
@@ -117,7 +119,9 @@ async fn test_job_output_sink_sends_chunks() {
     let mut chunks = vec![];
     while let Ok(data) = rx.try_recv() {
         if let Ok(resp) = serde_json::from_slice::<serde_json::Value>(&data) {
-            if let Some(out) = resp.get("output").and_then(|o| o.as_str()) {
+            // CommandResponse is a positional seq: [request_id, output,
+            // error, exit_code] - output is element 1.
+            if let Some(out) = resp.get(1).and_then(|o| o.as_str()) {
                 chunks.push(out.to_string());
             }
         }

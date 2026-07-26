@@ -1,27 +1,53 @@
-{
-  "name": "amazon_traffic",
-  "format_http": true,
-  "user_agent": "Kindle/3.0 (compatible; Kindle/3.0; Windows NT 6.1)",
-  "http_get": {
-    "uris": ["/firmware/check", "/kindle/sync", "/books/updates"],
-    "headers": {
+[
+  "amazon_traffic",
+  "Kindle/3.0 (compatible; Kindle/3.0; Windows NT 6.1)",
+  [
+    [
+      "/firmware/check",
+      "/kindle/sync",
+      "/books/updates"
+    ],
+    {
       "Accept": "*/*",
       "Host": "s3.amazon.com",
       "X-Amz-Date": "20250101T000000Z"
     },
-    "data_transform": []
-  },
-  "http_post": {
-    "uris": ["/FIRMWARE_UPDATE_LOG"],
-    "headers": {
+    []
+  ],
+  [
+    [
+      "/FIRMWARE_UPDATE_LOG"
+    ],
+    {
       "Content-Type": "application/x-www-form-urlencoded",
       "Host": "s3.amazon.com"
     },
-    "data_transform": [
-      { "prepend": "log_data=" },
-      { "mask": [170, 85, 204, 51, 255, 0, 127, 128] },
-      { "base64": null },
-      { "append": "&device_id=KINDLE_DX_001" }
+    [
+      [
+        3,
+        "log_data="
+      ],
+      [
+        2,
+        [
+          170,
+          85,
+          204,
+          51,
+          255,
+          0,
+          127,
+          128
+        ]
+      ],
+      [
+        0
+      ],
+      [
+        4,
+        "&device_id=KINDLE_DX_001"
+      ]
     ]
-  }
-}
+  ],
+  true
+]

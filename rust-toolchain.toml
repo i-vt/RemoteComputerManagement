@@ -1,0 +1,30 @@
+# --- Toolchain pin: NIGHTLY REQUIRED for OPSEC release builds ----------------
+#
+# Nightly is required for the unstable panic-path stripping flags:
+#
+#   -Zlocation-detail=none   do not embed file/line/col in panic locations
+#   -Ztrim-paths             rewrite own-crate paths to <crate>/..., registry
+#                            paths to a neutral form, and strip sysroot paths
+#
+# Without them a release agent binary leaks strings like:
+#   src/agent/...  /cargo/registry/...  /rustc/...
+# via Rust's panic metadata (stable always embeds file:line:col).
+#
+# builder.rs (see FIX 1) injects these flags into RUSTFLAGS on nightly.
+# A STABLE toolchain still builds successfully, but panic locations WILL leak -
+# the builder prints a loud warning in that case. For any build that leaves the
+# lab, use nightly and confirm with: tools/string_audit.sh <binary>.
+#
+# If a specific nightly is ever known to break this crate, pin a dated release
+# instead, e.g. channel = "nightly-2024-12-01".
+
+# rust-src is required so the builder can pass:
+#   -Zbuild-std=std,panic_abort -Zbuild-std-features=panic_immediate_abort
+# which recompiles the standard library with the flags above AND removes the
+# std panic-message strings (called `Option::unwrap()`..., thread '...'
+# panicked at, RUST_BACKTRACE) that would otherwise fingerprint the binary as
+# Rust even with location stripping enabled.
+
+[toolchain]
+channel = "nightly"
+components = ["rust-src"]

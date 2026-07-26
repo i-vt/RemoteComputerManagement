@@ -265,8 +265,9 @@ fn batch_report_in_custody_log_not_on_disk() {
     let dir = tempfile::tempdir().unwrap();
     let p = pkg(dir.path(), "HOST-REPORT");
 
-    // Mirror what session.rs does for file:report_batch|.
-    let json = r#"{"root_path":"/home/user","total_files_found":3,"total_success":3,"failed_downloads":[]}"#;
+    // Mirror what session.rs does for file:report_batch|. RecursiveReport
+    // serializes as a positional seq (see src/file_transfer.rs).
+    let json = r#"["/home/user",3,3,[]]"#;
     p.log("agent", "INFO", &format!("batch report {}: {}", "MyLootDir", json)).unwrap();
     p.custody("rcm-server", CustodyAction::Collect, None,
         Some("batch b1: 3 found, 3 collected, 0 failed")).unwrap();
