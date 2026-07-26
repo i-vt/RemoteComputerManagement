@@ -13,4 +13,3 @@
 | [Evasion](evasion.md) | AMSI, ETW, syscalls, sleep mask, unhooking |
 | [Panel Guide](panel.md) | UI pages, keyboard shortcuts, theming |
 | [Testing](testing.md) | Running and extending the test suite |
-| [Disclaimer](disclaimer.md) | Project purpose and disclaimer |

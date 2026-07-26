@@ -1,21 +1,26 @@
-{
-  "_description": "Simple failover: try primary, fall to backup after 3 failures",
-  "strategy": "failover",
-  "dead_time_secs": 600,
-  "endpoints": [
-    {
-      "host": "primary-c2.example.com",
-      "port": 443,
-      "transport": "https",
-      "priority": 0,
-      "max_failures": 3
-    },
-    {
-      "host": "backup-c2.example.com",
-      "port": 443,
-      "transport": "https",
-      "priority": 1,
-      "max_failures": 5
-    }
-  ]
-}
+[
+  [
+    [
+      "primary-c2.example.com",
+      443,
+      4,
+      null,
+      null,
+      0,
+      1,
+      3
+    ],
+    [
+      "backup-c2.example.com",
+      443,
+      4,
+      null,
+      null,
+      1,
+      1,
+      5
+    ]
+  ],
+  3,
+  600
+]

@@ -19,25 +19,60 @@ cargo run --bin builder -- \
 
 ### Strategies
 
-| Strategy | Behavior |
-|----------|----------|
-| `priority` | Try lowest priority number first; fall to next on failure |
-| `round_robin` | Cycle through endpoints in order, skip dead |
-| `random` | Weighted random selection across alive endpoints |
-| `failover` | Use first until dead, permanently switch to next |
+| Strategy | Tag | Behavior |
+|----------|-----|----------|
+| `priority` | `2` | Try lowest priority number first; fall to next on failure |
+| `round_robin` | `0` | Cycle through endpoints in order, skip dead |
+| `random` | `1` | Weighted random selection across alive endpoints |
+| `failover` | `3` | Use first until dead, permanently switch to next |
 
-### Endpoint Fields
+In the JSON file the strategy is given as its **u8 tag** (second element of the top-level array), not as a name string.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `host` | string | - | C2 hostname or IP |
-| `port` | number | - | C2 port |
-| `transport` | string | `tls` | `tls`, `tcp_plain`, `http`, `https`, `named_pipe` |
-| `profile` | object | - | Per-endpoint malleable profile override |
-| `proxy` | object | - | Per-endpoint proxy override |
-| `priority` | number | `0` | Lower = tried first (priority/failover) |
-| `weight` | number | `1` | Higher = more likely (random) |
-| `max_failures` | number | `5` | Mark dead after N consecutive failures |
+### Fallback File Format (positional JSON)
+
+> **Breaking change:** the fallback file is now a **positional JSON array** with no
+> field names (this keeps field-name strings out of the agent binary). Old
+> object-format files (`{"endpoints": [...], "strategy": "priority", ...}`) **no
+> longer parse** — the builder rejects them with
+> `Invalid fallback JSON (expected positional array format)`, and anywhere a parse
+> error is swallowed the config silently falls back to defaults. **Convert your
+> files before building.** All templates in `fallback_profiles/` are already
+> converted.
+
+Top level (`FallbackConfig`) — a 3-element array:
+
+| Index | Field | Type | Default if omitted |
+|-------|-------|------|--------------------|
+| 0 | `endpoints` | array of endpoint arrays | `[]` |
+| 1 | `strategy` | u8 tag (see Strategies) | `2` (priority) |
+| 2 | `dead_time_secs` | number | `300` |
+
+Each endpoint (`FallbackEndpoint`) — an 8-element array. Trailing elements may be
+omitted and fall back to the defaults shown:
+
+| Index | Field | Type | Default | Description |
+|-------|-------|------|---------|-------------|
+| 0 | `host` | string | *(required)* | C2 hostname or IP |
+| 1 | `port` | number | *(required)* | C2 port |
+| 2 | `transport` | u8 tag | `0` | `0`=tls, `1`=tcp_plain, `2`=named_pipe, `3`=http, `4`=https |
+| 3 | `profile` | array or `null` | `null` | Per-endpoint malleable profile override (positional, see [Builder Guide](builder.md#profile--fallback-file-formats-positional-json)) |
+| 4 | `proxy` | array or `null` | `null` | Per-endpoint proxy override: `[use_system, url, username, password]` |
+| 5 | `priority` | number | `0` | Lower = tried first (priority/failover) |
+| 6 | `weight` | number | `1` | Higher = more likely (random) |
+| 7 | `max_failures` | number | `5` | Mark dead after N consecutive failures |
+
+Example (`fallback_profiles/simple_failover.json` — two HTTPS servers, failover strategy, 10-minute dead time):
+
+```json
+[
+  [
+    ["primary-c2.example.com", 443, 4, null, null, 0, 1, 3],
+    ["backup-c2.example.com", 443, 4, null, null, 1, 1, 5]
+  ],
+  3,
+  600
+]
+```
 
 ### Dead Endpoint Handling
 
@@ -115,14 +150,16 @@ python3 tools/dga_precompute.py --seed 9183726450 --days 7 --tlds com,net,org
 ### Example: DGA + Static Fallback Together
 
 ```json
-{
-  "strategy": "priority",
-  "endpoints": [
-    {"host": "primary.example.com", "port": 443, "transport": "https", "priority": 0},
-    {"host": "backup.example.com", "port": 4443, "transport": "tls", "priority": 10}
-  ]
-}
+[
+  [
+    ["primary.example.com", 443, 4, null, null, 0],
+    ["backup.example.com", 4443, 0, null, null, 10]
+  ],
+  2,
+  300
+]
 ```
+(`4` = https, `0` = tls, strategy tag `2` = priority; trailing endpoint fields default to weight `1`, max_failures `5`.)
 ```bash
 cargo run --bin builder -- \
   --host primary.example.com --port 443 --transport https --platform linux \

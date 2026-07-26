@@ -53,26 +53,38 @@ Release binaries also strip symbols (`strip = true` in `[profile.release]`,
 plus `panic = "abort"` and `lto`), so function and variable names do not appear
 in `nm`/`strings` output either.
 
-Verified on the release agent binary (`cargo build --release --bin client`):
+Verified on the release agent binary (`cargo build --release --bin client`,
+nightly toolchain — see `rust-toolchain.toml`):
 
 - 0 DLL names, 0 WinAPI names (GetProcAddress, LoadLibrary, AmsiScanBuffer,
   EtwEventWrite, Nt*), 0 credential paths, 0 wire-protocol tokens
   (file:chunk|, file:data|, JOB_FINAL:|, JOB_STREAM:|, KEYLOG_DUMP:),
   0 AMSI/ETW markers, 1 symbol total in `nm`.
+- 0 Rust toolchain fingerprints: no `/rustc/<hash>/...` or
+  `/cargo/registry/...` paths, no `library/core|std|alloc` paths, no panic
+  strings (`called \`Option::unwrap()\`...`, `thread '...' panicked at`), no
+  `RUST_BACKTRACE`. Achieved by `rust-toolchain.toml` (nightly +
+  rust-src) plus builder-injected `-Zlocation-detail=none -Ztrim-paths
+  -Zbuild-std=std,panic_abort -Zbuild-std-features=panic_immediate_abort`,
+  which recompiles the standard library so it carries no Rust markers either
+  (see `rust-toolchain.toml` and `src/bin/builder.rs`).
+- 0 serde field/variant names: all wire and config structs use positional
+  (seq) serialization; the embedded config is a packed binary blob.
+- Enforcement: `tools/string_audit.sh <binary>` fails CI on any denylist hit
+  (runs automatically at the end of `run_tests.sh`).
 
 ### Documented exception categories (cannot be macro-encrypted)
 
 These remain readable by construction and are low-sensitivity or third-party:
 
-- `format!`/`write!`/tracing templates (compile-time evaluated), minus the
-  sensitive tokens in them, which were restructured to decrypted segments
-  (e.g. the AMSI/ETW markers and the file: wire prefixes).
-- serde field/struct names (protocol and config schema), including the TOML
-  config keys - the config file must stay operator-readable.
-- Attribute strings (`#[link(name)]`, `#[serde(rename)]`), match patterns,
-  doc attributes.
-- Third-party dependency strings (rustls, h2, regex-automata, GIF codec,
-  getrandom, TOML deserializer).
+- `format!`/`write!`/tracing template SKELETONS (`"{} {}: {}"`) — compile-time
+  templates must stay literals; every informative fragment was hoisted into
+  encrypted value arguments.
+- Attribute strings (`#[link(name)]`, ABI strings) — linker requirements.
+  Names resolved through GetProcAddress ARE encrypted; the PE import table
+  itself (direct externs) is not encryptable by construction.
+- Third-party dependency literals that are not panic/std artifacts (generic
+  codec/library strings with no project information).
 - Algorithmic byte tables (DGA alphabets), test code.
 
 ## 3. Where things live

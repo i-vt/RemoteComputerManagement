@@ -1,51 +1,92 @@
-{
-  "_description": "Tiered infrastructure: fast redirector first, slow CDN fallback",
-  "strategy": "priority",
-  "dead_time_secs": 120,
-  "endpoints": [
-    {
-      "host": "cdn-assets.example.com",
-      "port": 443,
-      "transport": "https",
-      "priority": 0,
-      "max_failures": 3,
-      "profile": {
-        "name": "cdn_assets",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "format_http": false,
-        "http_get": {
-          "uris": ["/api/v2/telemetry"],
-          "headers": {"Accept": "application/json", "X-Client-Version": "3.2.1"},
-          "data_transform": ["base64"]
-        },
-        "http_post": {
-          "uris": ["/api/v2/telemetry"],
-          "headers": {"Content-Type": "application/json"},
-          "data_transform": ["base64"]
-        }
-      }
-    },
-    {
-      "host": "static-images.example.com",
-      "port": 443,
-      "transport": "https",
-      "priority": 10,
-      "max_failures": 10,
-      "profile": {
-        "name": "image_cdn",
-        "user_agent": "Mozilla/5.0 (compatible; ImageFetcher/2.0)",
-        "format_http": false,
-        "http_get": {
-          "uris": ["/images/check.gif", "/images/pixel.png"],
-          "headers": {"Accept": "image/*"},
-          "data_transform": ["base64"]
-        },
-        "http_post": {
-          "uris": ["/upload/image"],
-          "headers": {"Content-Type": "image/gif"},
-          "data_transform": [{"prepend": "GIF89a"}, "base64"]
-        }
-      }
-    }
-  ]
-}
+[
+  [
+    [
+      "cdn-assets.example.com",
+      443,
+      4,
+      [
+        "cdn_assets",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        [
+          [
+            "/api/v2/telemetry"
+          ],
+          {
+            "Accept": "application/json",
+            "X-Client-Version": "3.2.1"
+          },
+          [
+            [
+              0
+            ]
+          ]
+        ],
+        [
+          [
+            "/api/v2/telemetry"
+          ],
+          {
+            "Content-Type": "application/json"
+          },
+          [
+            [
+              0
+            ]
+          ]
+        ],
+        false
+      ],
+      null,
+      0,
+      1,
+      3
+    ],
+    [
+      "static-images.example.com",
+      443,
+      4,
+      [
+        "image_cdn",
+        "Mozilla/5.0 (compatible; ImageFetcher/2.0)",
+        [
+          [
+            "/images/check.gif",
+            "/images/pixel.png"
+          ],
+          {
+            "Accept": "image/*"
+          },
+          [
+            [
+              0
+            ]
+          ]
+        ],
+        [
+          [
+            "/upload/image"
+          ],
+          {
+            "Content-Type": "image/gif"
+          },
+          [
+            [
+              3,
+              "GIF89a"
+            ],
+            [
+              0
+            ]
+          ]
+        ],
+        false
+      ],
+      null,
+      10,
+      1,
+      10
+    ]
+  ],
+  2,
+  120
+]

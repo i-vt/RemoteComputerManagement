@@ -27,8 +27,8 @@ cargo run --bin builder -- \
 | `--transport` | `tls` | Transport: `tls`, `tcp_plain`, `named_pipe`, `http`, `https` |
 | `--format` | `exe` | Output: `exe`, `dll`, `service`, `stager`, `shellcode` |
 | `--profile` | `default` | Built-in profile: `default`, `http_post`, `http_image` |
-| `--profile-file` | - | Path to custom malleable profile JSON |
-| `--fallback-file` | - | Path to fallback endpoints JSON |
+| `--profile-file` | - | Path to custom malleable profile JSON (**positional array format** — see below) |
+| `--fallback-file` | - | Path to fallback endpoints JSON (**positional array format** — see below) |
 | `--sleep` | `40` | Beacon interval in seconds |
 | `--jitter-min` | `20` | Minimum jitter percentage |
 | `--jitter-max` | `10` | Maximum jitter percentage |
@@ -64,6 +64,84 @@ Hibernation agents do not maintain a long-lived connection, which avoids long-co
 | `--dga-tlds <list>` | `com,net,org` | Comma-separated TLD list to sample from, e.g. `com,net,io`. |
 
 DGA domains are appended after any statically-configured fallback endpoints (priority ≥ 100) so they only activate when all explicit endpoints are unreachable. The algorithm is deterministic: given the same seed and window index, both the agent and operator compute identical domain lists. See [Fallback & DGA](fallback.md) for full details.
+
+## Profile & Fallback File Formats (positional JSON)
+
+> **Breaking change:** `--profile-file` and `--fallback-file` now take **positional
+> JSON arrays** with no field names (this keeps field-name strings out of the agent
+> binary). Old object-format files **no longer parse** — the builder rejects them
+> with `Invalid Profile JSON format` / `Invalid fallback JSON (expected positional
+> array format)`. Convert your files before building. Truncated positional arrays
+> are tolerated: missing trailing elements fall back to the per-field defaults
+> shown below. All templates in `fallback_profiles/` and `traffic_profiles/` are
+> converted to the new format.
+
+### Malleable profile (`--profile-file`)
+
+`MalleableProfile` — a 5-element array:
+
+| Index | Field | Type | Description |
+|-------|-------|------|-------------|
+| 0 | `name` | string | Profile name |
+| 1 | `user_agent` | string | User-Agent header sent by the agent |
+| 2 | `http_get` | HttpBlock array | GET request shaping |
+| 3 | `http_post` | HttpBlock array | POST request shaping |
+| 4 | `format_http` | bool | Strictly enforce HTTP/1.1 formatting over the raw stream |
+
+`HttpBlock` — a 3-element array (`headers` stays a JSON object; everything else is positional):
+
+| Index | Field | Type | Description |
+|-------|-------|------|-------------|
+| 0 | `uris` | array of strings | URIs to rotate through |
+| 1 | `headers` | object | Header name → value map |
+| 2 | `data_transform` | array of TransformStep arrays | Transforms applied to C2 data before sending |
+
+`TransformStep` — a 1- or 2-element array, first element is the u8 tag:
+
+| Tag | Transform | Payload | Example |
+|-----|-----------|---------|---------|
+| `0` | base64 | none | `[0]` |
+| `1` | hex | none | `[1]` |
+| `2` | mask (XOR) | array of bytes (multi-byte key) | `[2, [170, 187]]` |
+| `3` | prepend | string | `[3, "var _0x5a1b = \""]` |
+| `4` | append | string | `[4, "\";"]` |
+
+`ProxyConfig` (per-endpoint proxy override) — a 4-element array:
+`[use_system, url, username, password]`, e.g. `[true, "", "", ""]` (use system
+proxy settings) or `[false, "http://proxy.corp.com:8080", "user", "pass"]`.
+
+Example (converted `traffic_profiles/jquery_cdn.json`):
+
+```json
+[
+  "jquery_cdn",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+  [
+    ["/jquery-3.6.0.min.js", "/jquery-ui.min.js", "/jquery-migrate.js"],
+    {"Host": "code.jquery.com", "Referer": "http://code.jquery.com/", "Accept": "application/javascript"},
+    []
+  ],
+  [
+    ["/beacon/telemetry.js"],
+    {"Host": "code.jquery.com", "Content-Type": "application/javascript"},
+    [
+      [3, "/* jQuery v3.6.0 | (c) OpenJS Foundation and other contributors | jquery.org/license */\nvar _0x5a1b = \""],
+      [1],
+      [4, "\";"]
+    ]
+  ],
+  true
+]
+```
+
+### Fallback endpoints (`--fallback-file`)
+
+`FallbackConfig` — `[endpoints, strategy, dead_time_secs]`; each endpoint is
+`[host, port, transport, profile, proxy, priority, weight, max_failures]` with
+u8 tags for `transport` (`0`=tls, `1`=tcp_plain, `2`=named_pipe, `3`=http,
+`4`=https) and `strategy` (`0`=round_robin, `1`=random, `2`=priority,
+`3`=failover). Full field tables and a complete example:
+[Fallback & DGA — Fallback File Format](fallback.md#fallback-file-format-positional-json).
 
 ## Output Formats
 

@@ -6,6 +6,14 @@ name = "rcm"
 version = "0.1.0"
 edition = "2021"
 
+# `agent_build` is a custom cfg injected by src/bin/builder.rs (via RUSTFLAGS)
+# when compiling agent binaries (client, client_dll, client_service, stager).
+# Register it here so plain `cargo check`/`cargo build` of the lib and the
+# server-side bins does not trip the unexpected_cfgs lint on the
+# `#[cfg(agent_build)]` gates in src/config.rs.
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(agent_build)"] }
+
 [lib]
 name = "rcm"
 path = "src/lib.rs"
@@ -133,9 +141,24 @@ sha2        = "0.10"
 hyper       = { version = "0.14", features = ["http1","server","client"] }
 tower       = { version = "0.4", features = ["util"] }
 
+# --- OPSEC release profile ----------------------------------------------------
+# Release binaries (especially the agent) must carry zero recoverable metadata:
+#   opt-level = "z"    minimize size (smaller attack/analysis surface)
+#   lto = true         full cross-crate LTO; enables dead-code elimination of
+#                      unused string/data paths
+#   codegen-units = 1  single unit so LTO sees the whole crate graph
+#   panic = "abort"    no unwinding runtime, no landing pads, smaller binary
+#   strip = true       strip symbols from the final binary
+#   debug = false      no DWARF debuginfo (no source paths / line tables).
+#                      Explicit because profile values are inherited by anyone
+#                      overriding this profile, and debuginfo would re-leak the
+#                      paths -Ztrim-paths removes from panic strings.
+# Panic-location strings additionally need nightly RUSTFLAGS injected by
+# builder.rs: -Zlocation-detail=none -Ztrim-paths (see rust-toolchain.toml).
 [profile.release]
 opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+debug = false
