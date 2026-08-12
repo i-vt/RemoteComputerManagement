@@ -1,4 +1,3 @@
-// src/server/listeners.rs
 //
 // Dynamic listener manager. Starts and stops C2 listeners at runtime
 // without requiring a server restart. Each listener gets its own accept
@@ -73,6 +72,15 @@ impl ListenerManager {
     pub async fn start_listener(&mut self, lc: &ListenerConfig) -> Result<String, String> {
         if self.active.contains_key(&lc.id) {
             return Err(format!("Listener {} already running", lc.id));
+        }
+
+        // Rows created before https was rejected would start a cleartext
+        // listener while claiming TLS. Refuse them too (covers start_auto).
+        if lc.transport == "https" {
+            return Err(format!(
+                "Listener '{}': https listeners require a TLS-terminating redirector; create an http listener instead",
+                lc.name
+            ));
         }
 
         let transport_proto = match lc.transport.as_str() {
@@ -151,7 +159,11 @@ impl ListenerManager {
         let handle: JoinHandle<()> = tokio::spawn(async move {
             info!(port, name = %listener_name, "Listener started");
 
-            let semaphore = Arc::new(tokio::sync::Semaphore::new(256));
+            // Per-listener concurrent-session cap (config key
+            // server.listener_max_sessions; was hard-coded 256).
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(
+                crate::config::config().server.listener_max_sessions.max(1),
+            ));
 
             loop {
                 tokio::select! {
@@ -240,6 +252,12 @@ impl ListenerManager {
         transport: &str,
         profile_json: Option<&str>,
     ) -> Result<ListenerConfig, String> {
+        // The HTTP C2 listener serves plain axum HTTP only; a "https"
+        // listener would silently bind cleartext. Fail loudly instead.
+        // HTTPS agents are expected behind a TLS-terminating redirector.
+        if transport == "https" {
+            return Err("https listeners require a TLS-terminating redirector; create an http listener instead".into());
+        }
         let id = {
             let conn = self.db.get().map_err(|e| e.to_string())?;
             database::create_listener(&conn, name, port, transport, profile_json)

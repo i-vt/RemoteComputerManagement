@@ -507,7 +507,27 @@ impl PackageManager {
                 )));
             }
         }
-        std::fs::create_dir_all(base)?;
+        std::fs::create_dir_all(base).map_err(|e| RcmError(format!("create base: {}", e)))?;
+
+        // Serialize same-(base, instance) claims within this process. The
+        // .rcmtarget marker protocol arbitrates cross-process claims, but
+        // thread-level racers in one process would otherwise interleave
+        // between marker creation and tree setup (flaky regression_8_threads_*
+        // / create_or_open_concurrent_single_folder). The guard is held until
+        // the function returns.
+        let __claim_lock_arc = {
+            use std::collections::HashMap as StdHashMap;
+            use std::sync::{Mutex as StdMutex, OnceLock as StdOnceLock};
+            static CLAIM_LOCKS: StdOnceLock<StdMutex<StdHashMap<(std::path::PathBuf, String), Arc<StdMutex<()>>>>> = StdOnceLock::new();
+            CLAIM_LOCKS
+                .get_or_init(|| StdMutex::new(StdHashMap::new()))
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entry((base.to_path_buf(), instance_id.to_string()))
+                .or_insert_with(|| Arc::new(StdMutex::new(())))
+                .clone()
+        };
+        let _claim_guard = __claim_lock_arc.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut name = paths::sanitize_root_name(hostname);
         if name.is_empty() {
@@ -574,7 +594,7 @@ impl PackageManager {
                         // Our target already owns this folder. Guarantee the
                         // standard tree (a racing claimant may still be
                         // mid-init; ensure_dir is idempotent + race-safe).
-                        Self::ensure_tree(&root)?;
+                        Self::ensure_tree(&root).map_err(|e| RcmError(format!("ensure_tree {}: {}", root.display(), e)))?;
                         return Ok(Arc::new(Self::new(root, instance_id)));
                     }
                     match marker {
@@ -602,7 +622,8 @@ impl PackageManager {
                             std::fs::write(
                                 &marker_path,
                                 format!("{}\n", instance_id).as_bytes(),
-                            )?;
+                            )
+                            .map_err(|e| RcmError(format!("marker takeover write {}: {}", marker_path.display(), e)))?;
                             let confirm = std::fs::read_to_string(&marker_path)
                                 .unwrap_or_default();
                             if confirm.trim() == instance_id {
@@ -714,7 +735,9 @@ impl PackageManager {
                             match xml::atomic_write(
                                 &root.join(".rcmtarget"),
                                 format!("{}\n", instance_id).as_bytes(),
-                            ) {
+                            )
+                            .map_err(|e| RcmError(format!("marker atomic_write {}: {}", root.display(), e)))
+                            {
                                 Ok(()) => {
                                     // Confirm we still own the marker (a
                                     // racing takeover would show here).

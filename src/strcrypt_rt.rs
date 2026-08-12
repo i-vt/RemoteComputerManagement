@@ -25,7 +25,14 @@ use std::sync::OnceLock;
 
 // Fixed, non-informative value returned for every failure mode (bad tag,
 // bad key, bad utf8). It deliberately says nothing about what went wrong.
-const DECRYPT_FAILED: &str = "<rcm>";
+// Stored litcrypt-encrypted: a static "<rcm>" in .rodata is itself a
+// framework fingerprint, and this module cannot use aes_str! (it IS the
+// aes_str! runtime) - litcrypt's independent lc! is used instead.
+use crate::lc;
+
+fn decrypt_failed() -> String {
+    lc!("<rcm>")
+}
 
 static MASTER_KEY: OnceLock<[u8; 32]> = OnceLock::new();
 
@@ -73,16 +80,16 @@ pub fn decrypt(nonce: &[u8; 32], iv: &[u8; 12], tag: &[u8; 16], ct: &[u8]) -> St
     let key = string_key(nonce);
     let cipher = match Aes256Gcm::new_from_slice(&key) {
         Ok(cipher) => cipher,
-        Err(_) => return DECRYPT_FAILED.to_string(),
+        Err(_) => return decrypt_failed(),
     };
     let mut sealed = Vec::with_capacity(ct.len() + 16);
     sealed.extend_from_slice(ct);
     sealed.extend_from_slice(tag);
     match cipher.decrypt(Nonce::from_slice(iv), sealed.as_ref()) {
         Ok(plaintext) => {
-            String::from_utf8(plaintext).unwrap_or_else(|_| DECRYPT_FAILED.to_string())
+            String::from_utf8(plaintext).unwrap_or_else(|_| decrypt_failed())
         }
-        Err(_) => DECRYPT_FAILED.to_string(),
+        Err(_) => decrypt_failed(),
     }
 }
 
@@ -139,7 +146,7 @@ mod tests {
     fn tampered_tag_fails_closed() {
         let (nonce, iv, mut tag, ct) = encrypt_fixture("EtwEventWrite");
         tag[0] ^= 0x01;
-        assert_eq!(decrypt(&nonce, &iv, &tag, &ct), DECRYPT_FAILED);
+        assert_eq!(decrypt(&nonce, &iv, &tag, &ct), decrypt_failed());
     }
 
     #[test]
@@ -147,21 +154,21 @@ mod tests {
         let (nonce, iv, tag, mut ct) = encrypt_fixture("AmsiScanBuffer");
         let last = ct.len() - 1;
         ct[last] ^= 0x80;
-        assert_eq!(decrypt(&nonce, &iv, &tag, &ct), DECRYPT_FAILED);
+        assert_eq!(decrypt(&nonce, &iv, &tag, &ct), decrypt_failed());
     }
 
     #[test]
     fn wrong_nonce_fails_closed() {
         let (mut nonce, iv, tag, ct) = encrypt_fixture("kernel32.dll");
         nonce[31] ^= 0x01;
-        assert_eq!(decrypt(&nonce, &iv, &tag, &ct), DECRYPT_FAILED);
+        assert_eq!(decrypt(&nonce, &iv, &tag, &ct), decrypt_failed());
     }
 
     #[test]
     fn wrong_iv_fails_closed() {
         let (nonce, mut iv, tag, ct) = encrypt_fixture("amsi.dll");
         iv[0] ^= 0x01;
-        assert_eq!(decrypt(&nonce, &iv, &tag, &ct), DECRYPT_FAILED);
+        assert_eq!(decrypt(&nonce, &iv, &tag, &ct), decrypt_failed());
     }
 
     #[test]
@@ -183,6 +190,6 @@ mod tests {
         assert_ne!(t1, t2);
         assert_ne!(c1, c2);
         // Cross-decrypt with the other record's nonce must fail closed.
-        assert_eq!(decrypt(&n1, &i2, &t2, &c2), DECRYPT_FAILED);
+        assert_eq!(decrypt(&n1, &i2, &t2, &c2), decrypt_failed());
     }
 }

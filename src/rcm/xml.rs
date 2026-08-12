@@ -175,11 +175,55 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), RcmError> {
                                 tmp.display()
                             )));
                         }
-                        // A regular file is a crash leftover from a previous
-                        // atomic_write: remove it and retry create_new ONCE.
-                        Ok(_) => {
-                            if let Err(e) = std::fs::remove_file(&tmp) {
-                                return Outcome::Failed(e.into());
+                        // A regular file at the .tmp path is either a crash
+                        // leftover (stale: its writer died mid-write) or a
+                        // LIVE racing writer's temp file (fresh). Only stale
+                        // leftovers may be removed: deleting a fresh tmp makes
+                        // the racing owner's rename fail with a bare ENOENT
+                        // (observed in regression_8_threads_create_or_open_one_folder).
+                        Ok(_md) => {
+                            // A regular file at the .tmp path is either a
+                            // crash leftover or a LIVE racing writer's tmp.
+                            // Discriminate by flock: the live owner HOLDS an
+                            // exclusive lock on its tmp until rename; a dead
+                            // writer's lock is already released by the kernel.
+                            // Deleting a live tmp makes the owner's rename
+                            // fail with a bare ENOENT (the regression race).
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::io::AsRawFd;
+                                // Give a just-created winner a moment to take
+                                // its lock before we judge (closes the
+                                // create->lock window).
+                                std::thread::sleep(std::time::Duration::from_millis(5));
+                                let locked = match std::fs::File::open(&tmp) {
+                                    Ok(f) => unsafe {
+                                        libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) != 0
+                                    },
+                                    // The racer completed its rename between our
+                                    // create_new failure and the probe: the final
+                                    // file now exists - re-evaluate, never delete.
+                                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                                        return Outcome::Retry;
+                                    }
+                                    Err(e) => return Outcome::Failed(e.into()),
+                                };
+                                if locked {
+                                    // Live racer: bounded backoff, then retry
+                                    // the whole write; never remove its tmp.
+                                    std::thread::sleep(std::time::Duration::from_millis(25));
+                                    return Outcome::Retry;
+                                }
+                            }
+                            // Crash leftover (no live lock holder): remove and retry ONCE.
+                            match std::fs::remove_file(&tmp) {
+                                Ok(()) => {}
+                                // Same vanish window as the probe: the racer
+                                // finished; re-evaluate instead of failing.
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                                    return Outcome::Retry;
+                                }
+                                Err(e) => return Outcome::Failed(e.into()),
                             }
                             match OpenOptions::new()
                                 .write(true)
@@ -193,10 +237,10 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), RcmError> {
                                 Err(e2)
                                     if e2.kind() == std::io::ErrorKind::AlreadyExists =>
                                 {
-                                    return Outcome::Failed(RcmError(format!(
-                                        "racing writer at temp path: {}",
-                                        tmp.display()
-                                    )));
+                                    // A live writer won the recreate: back off
+                                    // and retry; do NOT remove its fresh tmp.
+                                    std::thread::sleep(std::time::Duration::from_millis(25));
+                                    return Outcome::Retry;
                                 }
                                 Err(e2) => return Outcome::Failed(e2.into()),
                             }
@@ -206,6 +250,16 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), RcmError> {
                 }
                 Err(e) => return Outcome::Failed(e.into()),
             };
+            // Hold an exclusive flock on our tmp until the rename so racing
+            // writers can distinguish a LIVE owner from a crash leftover
+            // (the kernel releases a dead writer's lock automatically).
+            #[cfg(unix)]
+            {
+                use std::os::unix::io::AsRawFd;
+                unsafe {
+                    libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB);
+                }
+            }
             if let Err(e) = f.write_all(bytes) {
                 return Outcome::Failed(e.into());
             }
