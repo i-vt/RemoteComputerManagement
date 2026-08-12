@@ -111,6 +111,16 @@ pub fn install_systemd(name: &str, path: &str) -> Result<String, String> {
     #[cfg(not(target_os = "linux"))]
     { let _ = (name, path); Err(aes_str!("Linux only")) }
 }
+#[cfg(target_os = "linux")]
+pub fn install_user_unit(name: &str, path: &str) -> Result<String, String> {
+    return linux::install_user_unit(name, path);
+}
+
+#[cfg(target_os = "linux")]
+pub fn install_system_unit(name: &str, path: &str) -> Result<String, String> {
+    return linux::install_system_unit(name, path);
+}
+
 
 pub fn remove_systemd(name: &str) -> Result<String, String> {
     #[cfg(target_os = "linux")]

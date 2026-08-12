@@ -1,4 +1,3 @@
-// src/api/mod.rs
 pub mod state;
 pub mod models;
 pub mod middleware;
@@ -210,9 +209,21 @@ pub async fn start_api_server(
         .layer(cors)
         .with_state(shared_state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    eprintln!("[+] API Endpoint: http://0.0.0.0:{}", port);
-    eprintln!("[+] Web Panel:    http://127.0.0.1:{}", port);
+    // Loopback by default (config.server.api_bind_addr). The panel and REST
+    // API share this port and are protected only by the API key, so binding
+    // a non-loopback address exposes them to the network - warn loudly.
+    let bind_ip: std::net::IpAddr = config().server.api_bind_addr.parse()
+        .unwrap_or_else(|_| {
+            eprintln!("[-] Invalid server.api_bind_addr '{}' - falling back to 127.0.0.1",
+                config().server.api_bind_addr);
+            std::net::IpAddr::from([127, 0, 0, 1])
+        });
+    if !bind_ip.is_loopback() {
+        eprintln!("[!] WARNING: API/Web panel binding {} - reachable off-host, protected only by the API key", bind_ip);
+    }
+    let addr = SocketAddr::from((bind_ip, port));
+    eprintln!("[+] API Endpoint: http://{}:{}", bind_ip, port);
+    eprintln!("[+] Web Panel:    http://{}:{}", bind_ip, port);
 
     let server = axum::Server::bind(&addr)
         .serve(app.into_make_service_with_connect_info::<SocketAddr>());

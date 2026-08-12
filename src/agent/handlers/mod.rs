@@ -1,4 +1,3 @@
-// src/agent/handlers/mod.rs
 //
 // Command dispatch split by domain. Each submodule owns a focused set of
 // commands with its own tests. The router in this file is the only place
@@ -45,6 +44,7 @@ pub struct RportfwdHandle {
 
 pub enum AgentAction {
     UpdateConfig(u64, u32, u32),
+    UpdateFallback(crate::common::FallbackConfig),
     SetMode(bool),
     None,
 }
@@ -119,6 +119,9 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
     }
     if cmd == aes_str!("fallback:config") {
         return config::handle_fallback_config();
+    }
+    if let Some(args) = cmd.strip_prefix(&aes_str!("fallback:push|")) {
+        return config::handle_fallback_push(args);
     }
 
     // ── Jobs ───────────────────────────────────────────────────────

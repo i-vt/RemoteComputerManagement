@@ -1,4 +1,3 @@
-// ./src/config.rs
 // Typed configuration core: the single source of truth for every value that
 // used to be hardcoded across the server, agent, transfer, RCM packaging,
 // logging, evasion and Windows FFI code paths.
@@ -37,6 +36,10 @@ use std::sync::OnceLock;
 pub struct ServerConfig {
     /// Port of the operator REST API (bound on 127.0.0.1).
     pub api_port: u16,
+    /// Bind address of the operator REST API / web panel. Loopback by
+    /// default; set to a specific interface IP only if you intentionally
+    /// expose the panel off-host (it is protected only by the API key).
+    pub api_bind_addr: String,
     /// Port of the default TLS listener created on first run.
     pub default_listener_port: u16,
     /// Max commands queued per HTTP agent before backpressure drops new work.
@@ -73,6 +76,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             api_port: 8080,
+            api_bind_addr: "127.0.0.1".to_string(),
             default_listener_port: 4443,
             max_queued_commands: 256,
             http_prune_interval_secs: 300,
@@ -542,7 +546,8 @@ pub fn template_toml() -> String {
 # config.toml in the working directory.
 
 [server]
-api_port = {api_port} # operator REST API port (bound on 127.0.0.1)
+api_bind_addr = "{api_bind_addr}" # bind address of the operator REST API / web panel (127.0.0.1 = loopback only)
+api_port = {api_port} # operator REST API port (bound on api_bind_addr)
 default_listener_port = {default_listener_port} # port of the default TLS listener created on first run
 max_queued_commands = {max_queued_commands} # max commands queued per HTTP agent before backpressure drops new work
 http_prune_interval_secs = {http_prune_interval_secs} # how often the HTTP listener sweeps for stale sessions (seconds)
@@ -631,6 +636,7 @@ se_debug_name = "{se_debug_name}" # name of the debug privilege (SE_DEBUG_NAME)
 fingerprint_hash = "{fingerprint_hash}" # hash used for RCM fingerprint values (spec mandates md5 for v1)
 file_hash_algorithms = [{algos}] # hashes computed for collected-file integrity manifests
 "##,
+        api_bind_addr = c.server.api_bind_addr,
         api_port = c.server.api_port,
         default_listener_port = c.server.default_listener_port,
         max_queued_commands = c.server.max_queued_commands,
@@ -731,6 +737,7 @@ mod tests {
     fn defaults_are_sane() {
         let c = Config::default();
         assert_eq!(c.server.api_port, 8080);
+        assert_eq!(c.server.api_bind_addr, "127.0.0.1");
         assert_eq!(c.server.default_listener_port, 4443);
         assert!(c.server.max_queued_commands > 0);
         assert!(c.transfer.max_file_size_bytes >= c.transfer.small_file_threshold_bytes);
