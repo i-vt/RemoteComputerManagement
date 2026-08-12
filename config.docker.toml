@@ -1,0 +1,10 @@
+# Docker deployment overrides. Mounted read-only to /app/config.toml by
+# docker-compose.yml. Loaded after embedded defaults (every key optional).
+#
+# api_bind_addr: bind address of the operator REST API / web panel.
+#   "127.0.0.1"  loopback only (safe default; use an SSH tunnel to reach it)
+#   "0.0.0.0"    all interfaces (panel reachable from the network; plain HTTP -
+#                the admin password and API key cross the wire unencrypted,
+#                so restrict by firewall or front it with TLS)
+[server]
+api_bind_addr = "0.0.0.0"

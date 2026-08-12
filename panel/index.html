@@ -30,7 +30,7 @@
     </div>
     <div style="display:flex;flex-direction:column;gap:14px;">
       <div class="form-group" style="margin-bottom:0">
-        <label class="form-label">C2 Server URL</label>
+        <label class="form-label">Server URL</label>
         <input type="text" id="api-url" value="http://127.0.0.1:8080"
                class="form-input" autocomplete="url" spellcheck="false">
       </div>
@@ -86,7 +86,7 @@
       </button>
       <button class="nav-item" data-page="loot"
               onclick="window.Router.navigate('loot',event)">
-        <i class="fas fa-box-open"></i> Loot (RCM)
+        <i class="fas fa-box-open"></i> Loot
       </button>
       <button class="nav-item" id="nav-users" data-page="users"
               onclick="window.Router.navigate('users',event)">
@@ -298,7 +298,7 @@
         <div class="card" style="flex:1;position:relative;overflow:hidden;">
           <div id="cy" style="position:absolute;inset:0;width:100%;height:100%;"></div>
           <div style="position:absolute;bottom:14px;right:14px;background:rgba(13,17,23,0.85);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 14px;font-size:11px;pointer-events:none;display:flex;flex-direction:column;gap:7px;">
-            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--red);display:inline-block;"></span><span style="color:var(--text-secondary)">C2 Server</span></div>
+            <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--red);display:inline-block;"></span><span style="color:var(--text-secondary)">Server</span></div>
             <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--blue);display:inline-block;"></span><span style="color:var(--text-secondary)">Windows</span></div>
             <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--yellow);display:inline-block;"></span><span style="color:var(--text-secondary)">Linux</span></div>
             <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;border:2px solid var(--accent);display:inline-block;"></span><span style="color:var(--text-secondary)">Proxy On</span></div>
@@ -392,7 +392,7 @@
       <div id="page-loot" class="hidden" style="display:none;flex-direction:column;gap:14px;height:calc(100dvh - 120px);">
         <div class="flex items-center justify-between">
           <div>
-            <h1 class="page-title"><i class="fas fa-box-open text-yellow-400 mr-2"></i>Loot (RCM)</h1>
+            <h1 class="page-title"><i class="fas fa-box-open text-yellow-400 mr-2"></i>Loot</h1>
             <p class="page-subtitle">Files collected from agents - saved in the server's downloads/ folder</p>
           </div>
           <button onclick="window.LootBrowser.init()"
@@ -656,7 +656,7 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Listeners</h1>
-            <p class="page-subtitle">Manage C2 ingress points</p>
+            <p class="page-subtitle">Manage ingress points</p>
           </div>
           <div class="page-actions">
             <button onclick="window.ListenerManager.refresh()" class="btn btn-ghost btn-sm">
@@ -897,7 +897,7 @@
             <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
-                  <label class="form-label">C2 Host <span style="color:var(--red);">*</span></label>
+                  <label class="form-label">Server Host <span style="color:var(--red);">*</span></label>
                   <input type="text" id="builder-host" placeholder="10.0.0.1"
                          class="form-input form-mono">
                 </div>

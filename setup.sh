@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # setup.sh — RCM one-shot setup: generate TLS certs, start server, build agent
 # Usage:
-#   ./setup.sh [IP] [build|tls] [--reset]
-#   --reset  wipes c2_audit.db so a fresh admin account is created
+#   ./setup.sh [IP] [build|tls] [--reset] [--recert]
+#   --reset   wipes c2_audit.db so a fresh admin account is created
+#             (also forces TLS certificate regeneration)
+#   --recert  forces TLS CA/certificate regeneration (orphans deployed agents)
 set -euo pipefail
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
@@ -21,10 +23,12 @@ cd "$SCRIPT_DIR"
 C2_IP=""
 BUILD_MODE="none"
 RESET=false
+RECERT=false
 
 for _arg in "$@"; do
     case "$_arg" in
         --reset) RESET=true ;;
+        --recert) RECERT=true ;;
         build|tls) BUILD_MODE="$_arg" ;;
         *) [[ -z "$C2_IP" ]] && C2_IP="$_arg" ;;
     esac
@@ -72,20 +76,29 @@ if [[ -f "$DB_FILE" ]] && [[ -s "$DB_FILE" ]]; then
 fi
 
 # ── 4. Generate TLS certificates ─────────────────────────────────────────────
-info "Generating TLS certificates for ${BOLD}${C2_IP}${NC}..."
-mkdir -p certs && cd certs
-rm -f ca.key ca.crt ca.srl \
-      server.key server.csr server.crt server.key.der server_ext.cnf \
-      client.key client.csr client.crt client.key.der
+# Agents pin the CA at build time; regenerating it orphans every deployed
+# agent. Skip when a CA already exists unless --recert (or --reset) forces
+# rotation.
+if [[ -s certs/ca.crt && "$RESET" == "false" && "$RECERT" == "false" ]]; then
+    ok "Existing CA preserved (agents keep working; use --recert to rotate)"
+else
+    if [[ -s certs/ca.crt ]]; then
+        warn "Regenerating CA — ALL previously built agents will permanently fail mTLS."
+    fi
+    info "Generating TLS certificates for ${BOLD}${C2_IP}${NC}..."
+    mkdir -p certs && cd certs
+    rm -f ca.key ca.crt ca.srl \
+          server.key server.csr server.crt server.key.der server_ext.cnf \
+          client.key client.csr client.crt client.key.der
 
-openssl genrsa -out ca.key 4096 2>/dev/null
-openssl req -new -x509 -days 3650 -key ca.key -out ca.crt \
-    -subj "/CN=RCM-CA" 2>/dev/null
-ok "CA generated"
+    openssl genrsa -out ca.key 4096 2>/dev/null
+    openssl req -new -x509 -days 3650 -key ca.key -out ca.crt \
+        -subj "/CN=RCM-CA" 2>/dev/null
+    ok "CA generated"
 
-openssl genrsa -out server.key 2048 2>/dev/null
-openssl req -new -key server.key -out server.csr -subj "/CN=${C2_IP}" 2>/dev/null
-cat > server_ext.cnf <<EOF
+    openssl genrsa -out server.key 2048 2>/dev/null
+    openssl req -new -key server.key -out server.csr -subj "/CN=${C2_IP}" 2>/dev/null
+    cat > server_ext.cnf <<EOF
 [v3_req]
 subjectAltName = @alt_names
 basicConstraints = CA:FALSE
@@ -95,27 +108,28 @@ IP.1 = ${C2_IP}
 IP.2 = 127.0.0.1
 DNS.1 = localhost
 EOF
-openssl x509 -req -days 3650 \
-    -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-    -out server.crt -extfile server_ext.cnf -extensions v3_req 2>/dev/null
-ok "Server cert generated (SAN: ${C2_IP})"
+    openssl x509 -req -days 3650 \
+        -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+        -out server.crt -extfile server_ext.cnf -extensions v3_req 2>/dev/null
+    ok "Server cert generated (SAN: ${C2_IP})"
 
-openssl genrsa -out client.key 2048 2>/dev/null
-openssl req -new -key client.key -out client.csr -subj "/CN=rcm-agent" 2>/dev/null
-openssl x509 -req -days 3650 \
-    -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-    -out client.crt 2>/dev/null
-ok "Client cert generated"
+    openssl genrsa -out client.key 2048 2>/dev/null
+    openssl req -new -key client.key -out client.csr -subj "/CN=rcm-agent" 2>/dev/null
+    openssl x509 -req -days 3650 \
+        -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+        -out client.crt 2>/dev/null
+    ok "Client cert generated"
 
-openssl pkcs8 -topk8 -nocrypt -in server.key -outform DER -out server.key.der 2>/dev/null
-openssl pkcs8 -topk8 -nocrypt -in client.key -outform DER -out client.key.der 2>/dev/null
-ok "DER private keys written"
+    openssl pkcs8 -topk8 -nocrypt -in server.key -outform DER -out server.key.der 2>/dev/null
+    openssl pkcs8 -topk8 -nocrypt -in client.key -outform DER -out client.key.der 2>/dev/null
+    ok "DER private keys written"
 
-openssl verify -CAfile ca.crt server.crt &>/dev/null \
-    || die "Certificate chain verification failed"
-ok "Certificate chain verified ✓"
+    openssl verify -CAfile ca.crt server.crt &>/dev/null \
+        || die "Certificate chain verification failed"
+    ok "Certificate chain verified ✓"
 
-cd "$SCRIPT_DIR"
+    cd "$SCRIPT_DIR"
+fi
 for _f in certs/ca.crt certs/server.crt certs/server.key.der \
            certs/client.crt certs/client.key.der; do
     [[ -s "$_f" ]] || die "Missing or empty: $_f"
@@ -166,19 +180,71 @@ if [[ "$FIRST_RUN" == "false" ]] && command -v sqlite3 &>/dev/null; then
         2>/dev/null && ok "Admin API key refreshed" || warn "Could not update API key in DB"
 fi
 
+# ── 7b. systemd unit (root + systemd only, idempotent) ─────────────────────
+# When running as root on a systemd host, manage the server as a proper
+# service. Otherwise fall through to the pid-file path in section 8.
+USE_SYSTEMD=false
+UNIT_FILE="/etc/systemd/system/rcm-server.service"
+if [[ "$(id -u)" -eq 0 ]] && command -v systemctl &>/dev/null \
+   && [[ -d /run/systemd/system ]]; then
+    info "Installing systemd unit rcm-server.service..."
+    # Overwritten on every run: idempotent and picks up SCRIPT_DIR moves.
+    cat > "$UNIT_FILE" <<EOF
+[Unit]
+Description=RCM C2 Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# REQUIRED: the server opens certs/, c2_audit.db, logs/, downloads/,
+# extensions/ and modules/ via paths relative to its working directory.
+WorkingDirectory=${SCRIPT_DIR}
+ExecStart=${SCRIPT_DIR}/target/release/server
+Restart=on-failure
+RestartSec=5
+# Keep setup.sh's readiness grep (and operators' tail -f) working.
+StandardOutput=append:${SCRIPT_DIR}/server_run.log
+StandardError=append:${SCRIPT_DIR}/server_run.log
+# Hardening. ReadWritePaths must cover every relative write target:
+# c2_audit.db, logs/, downloads/, extensions/, modules/, server.pid.
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=${SCRIPT_DIR}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable rcm-server.service >/dev/null 2>&1 || true
+    USE_SYSTEMD=true
+    ok "systemd unit installed (enabled, will restart on failure)"
+else
+    info "No root/systemd - keeping pid-file supervision"
+fi
+echo ""
+
 # ── 8. Start server ───────────────────────────────────────────────────────────
 LOG="${SCRIPT_DIR}/server_run.log"
 : > "$LOG"
 
 info "Starting RCM server..."
-"${SCRIPT_DIR}/target/release/server" > "$LOG" 2>&1 &
-SERVER_PID=$!
-echo "$SERVER_PID" > server.pid
+if [[ "$USE_SYSTEMD" == "true" ]]; then
+    systemctl restart rcm-server.service
+    SERVER_PID=$(systemctl show -p MainPID --value rcm-server.service)
+else
+    "${SCRIPT_DIR}/target/release/server" > "$LOG" 2>&1 &
+    SERVER_PID=$!
+    echo "$SERVER_PID" > server.pid
+fi
 
 info "Waiting for server to be ready..."
 for _i in $(seq 1 60); do
     sleep 0.5
-    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    if [[ "$USE_SYSTEMD" == "true" ]]; then
+        systemctl is-active --quiet rcm-server.service || {
+            echo ""; err "Server crashed. Last output:"; tail -30 "$LOG"; exit 1; }
+    elif ! kill -0 "$SERVER_PID" 2>/dev/null; then
         echo ""; err "Server crashed. Last output:"; tail -30 "$LOG"; exit 1
     fi
     grep -q "API Endpoint" "$LOG" 2>/dev/null && break
@@ -283,7 +349,11 @@ fi
 
 echo ""
 sep
-info "Server PID: ${SERVER_PID}  |  Stop: kill \$(cat server.pid)"
+if [[ "$USE_SYSTEMD" == "true" ]]; then
+    info "Server: systemctl status rcm-server  |  Stop: systemctl stop rcm-server"
+else
+    info "Server PID: ${SERVER_PID}  |  Stop: kill \$(cat server.pid)"
+fi
 info "Server log: tail -f ${LOG}"
 info "Reset creds: ./setup.sh ${C2_IP} --reset"
 sep

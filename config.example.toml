@@ -4,7 +4,8 @@
 # config.toml in the working directory.
 
 [server]
-api_port = 8080 # operator REST API port (bound on 127.0.0.1)
+api_bind_addr = "127.0.0.1" # bind address of the operator REST API / web panel (127.0.0.1 = loopback only)
+api_port = 8080 # operator REST API port (bound on api_bind_addr)
 default_listener_port = 4443 # port of the default TLS listener created on first run
 max_queued_commands = 256 # max commands queued per HTTP agent before backpressure drops new work
 http_prune_interval_secs = 300 # how often the HTTP listener sweeps for stale sessions (seconds)

