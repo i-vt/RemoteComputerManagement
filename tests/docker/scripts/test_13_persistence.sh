@@ -24,7 +24,7 @@ source "$(dirname "$0")/lib.sh"
 
 AGENT_BINARY="/shared/agent-tls"   # path inside the agent container
 STABLE_BIN_DIR="/root/.local/bin"  # stable_drop destination (root home)
-SYSTEMD_USER_DIR="/root/.config/systemd/user"
+SYSTEMD_USER_DIR="/root/.config/systemd/user"  # default (non-root); overridden below after agent euid probe
 
 # ── Select a session ──────────────────────────────────────────────────────────
 
@@ -48,6 +48,7 @@ HOSTNAME=$(echo "$HOSTS" | jq -r \
     '[.[] | select(.id==($id|tonumber))][0].hostname // "unknown"')
 echo "  Using session #${SID} (${HOSTNAME})"
 assert_ne "session ID is not empty" "" "$SID"
+
 
 # ── Core helper ───────────────────────────────────────────────────────────────
 #
@@ -96,6 +97,17 @@ send_cmd() {
     return 1
 }
 
+# The agent's systemd install target depends on its euid: root installs a
+# SYSTEM unit under /etc/systemd/system (WantedBy=multi-user.target), non-root
+# a USER unit under ~/.config/systemd/user (WantedBy=default.target).
+send_cmd "shell id -u"
+if [ "$(echo "$CMD_OUTPUT" | tr -d '[:space:]')" = "0" ]; then
+    SYSTEMD_USER_DIR="/etc/systemd/system"
+    SYSTEMD_WANTS_DIR="/etc/systemd/system/multi-user.target.wants"
+else
+    SYSTEMD_WANTS_DIR="${SYSTEMD_USER_DIR}/default.target.wants"
+fi
+
 # ── Sanity: agent is alive ────────────────────────────────────────────────────
 
 suite "Persistence — agent liveness check"
@@ -119,7 +131,7 @@ suite "persist:systemd — install lifecycle"
 
 UNIT_NAME="rcm-test-svc"
 UNIT_FILE="${SYSTEMD_USER_DIR}/${UNIT_NAME}.service"
-WANTS_LINK="${SYSTEMD_USER_DIR}/default.target.wants/${UNIT_NAME}.service"
+WANTS_LINK="${SYSTEMD_WANTS_DIR}/${UNIT_NAME}.service"
 STABLE_BIN="${STABLE_BIN_DIR}/${UNIT_NAME}"
 
 send_cmd "persist:systemd ${UNIT_NAME} ${AGENT_BINARY}"

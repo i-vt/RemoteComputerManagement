@@ -28,7 +28,7 @@
 # ── Stage 1: dependency cache ──────────────────────────────────────────
 # Locked to the same Rust version used by the main Dockerfile so crate
 # features and MSRV requirements are identical.
-FROM rust:bookworm AS deps
+FROM rustlang/rust:nightly-bookworm AS deps
 
 # System libraries required by some crates at link time.
 # libssl-dev   → reqwest / native-tls (indirect dep)

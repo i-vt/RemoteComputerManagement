@@ -1,0 +1,45 @@
+# ── Agent build stage (drop-in replacement for the failing stage) ───────────
+# Fix for: "./target/release/builder ... [-] REFUSING to build a leaky agent
+# on a stable toolchain" inside the official rust:* image.
+#
+# Root cause: the base image pins ENV RUSTUP_TOOLCHAIN=<stable> (e.g. 1.97.1).
+# That env var (shim resolution priority 2) silently outranks the project's
+# rust-toolchain.toml (priority 3), so every cargo/rustc shim resolves stable
+# even after nightly + rust-src install successfully.
+#
+# Fix pack variant (a) — RECOMMENDED: pre-install nightly + rust-src at image
+# level and pin RUSTUP_TOOLCHAIN=nightly for the agent stage only. Keep the
+# earlier server/builder compile stage on the image's pinned stable toolchain;
+# stable is fine (and preferable) for compiling the server and builder.
+
+# Pre-install nightly + rust-src (the exact two rustup lines the builder's
+# own refusal message demands).
+RUN rustup toolchain install nightly --profile minimal \
+ && rustup component add rust-src --toolchain nightly
+
+# Neutralize the image-level stable pin for this and all later layers so the
+# cargo/rustc shims resolve nightly. Priority order:
+#   +toolchain > RUSTUP_TOOLCHAIN > rust-toolchain.toml > default
+#
+# NOTE: with builder.rs patch 1b applied (cmd.env("RUSTUP_TOOLCHAIN",
+# "nightly") on the spawned agent cargo build), this ENV is belt-and-braces:
+# the builder now pins nightly on its child process explicitly and would be
+# correct even without it. It is still kept so that (a) the verification gate
+# below is meaningful, (b) any other cargo/rustc children spawned in this
+# stage inherit nightly, and (c) the stage fails fast at image build time
+# rather than inside the builder.
+ENV RUSTUP_TOOLCHAIN=nightly
+
+# One-line verification gate: fails the layer immediately if the shim still
+# resolves stable.
+RUN rustc --version | grep nightly
+
+# Original builder invocation (unchanged): build the Linux TLS agent against
+# the c2-server container, then copy artifacts out, clean intermediates, and
+# echo a summary.
+RUN mkdir -p dist && ./target/release/builder \
+    --host c2-server --port 4443 --transport tls --platform linux \
+    --sleep 2 --jitter-min 0 --jitter-max 0 --debug \
+ && cp dist/exe_linux_* dist/server_keys.json /artifacts/ \
+ && rm -f dist/exe_linux_* dist/server_keys.json \
+ && echo "[+] Agent build stage complete - artifacts copied to /artifacts"

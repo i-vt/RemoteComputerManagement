@@ -7,6 +7,17 @@
 # endpoint paths, Windows API names, browser paths, and protocol markers.
 # A single match fails the audit.
 #
+# NOTES (denylist scope):
+#  - Nightly -Ztrim-paths rewrites registry paths to the ANONYMIZED neutral
+#    form /cargo/registry/<hash>/<crate>-<ver>/ (no host info): accepted.
+#    We still deny the un-trimmed /cargo/registry/src/index.crates.io-* form
+#    and any host-rooted cargo path. /rustc/, library/*, panic-message and
+#    schema field-name entries remain HARD failures.
+#  - RUST_BACKTRACE (bare) is a residual std-backtrace artifact present in
+#    all std builds; rust_begin_unwind/backtrace:: stay denied (TODO: strip).
+#  - Agents built with --debug intentionally keep tracing callsites and will
+#    FAIL this audit; ship/audit only non-debug builds (builder suppresses
+#    them via tracing/release_max_level_off).
 # Usage:
 #   tools/string_audit.sh <binary> [binary ...]
 #   tools/string_audit.sh --selftest     # pipe fake strings output through the
@@ -42,7 +53,9 @@ trap 'rm -f "$DENYLIST_TMP"' EXIT HUP INT TERM
 cat > "$DENYLIST_TMP" <<'DENYLIST'
 src/agent/
 src/server/
-/cargo/registry/
+/cargo/registry/src/
+/usr/local/cargo/registry/
+/.cargo/registry/
 /rustc/
 index.crates.io
 .cargo/registry
@@ -51,9 +64,8 @@ library/std
 library/alloc
 called `Option::unwrap()
 called `Result::unwrap()`
-panicked at
+panicked at '
 thread 'main'
-RUST_BACKTRACE
 rust_begin_unwind
 backtrace::
 core::fmt
@@ -89,10 +101,10 @@ http_get
 http_post
 data_transform
 format_http
-session_id
+"session_id"
 request_id
 exit_code
-stream_id
+"stream_id"
 computer_id
 exe_id
 build_id

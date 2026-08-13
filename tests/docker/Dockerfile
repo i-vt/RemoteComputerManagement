@@ -14,11 +14,15 @@
 # ── Stage 1: Compile everything ─────────────────────────────────────────
 # Pinned Rust version. Bump this when dependencies raise their MSRV.
 # The committed Cargo.lock ensures transitive deps don't drift.
-FROM rust:bookworm AS builder
+# NIGHTLY IS MANDATORY (agent OPSEC flags + rust-toolchain.toml pins nightly;
+# the official library/rust image is stable-only - rustlang/ hosts nightly).
+FROM rustlang/rust:nightly-bookworm AS builder
+
+RUN rustup component add rust-src --toolchain nightly
 
 RUN apt-get update && apt-get install -y \
     pkg-config libssl-dev openssl cmake \
-    gcc-mingw-w64-x86-64 \
+    gcc-mingw-w64-x86-64 musl-tools \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -135,6 +139,11 @@ ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
 
 WORKDIR /opt/rcm
+
+# Integration environment: the operator API must be reachable from sibling
+# containers (test-runner) over the compose network. Production default is
+# loopback-only; bind all interfaces here (isolated bridge network).
+RUN printf '[server]\napi_bind_addr = "0.0.0.0"\n' > /opt/rcm/config.toml
 
 # ── Project source tree ─────────────────────────────────────────────────
 # The builder binary's find_project_root() checks CWD (/opt/rcm) and the

@@ -43,6 +43,8 @@ services:
       - ./dist:/app/dist
       - ./panel:/app/panel
       - ./c2_audit.db:/app/c2_audit.db
+      # Deployment config (host-owned; survives container recreation)
+      - ./config.docker.toml:/app/config.toml:ro
 
       # ── Cargo cache (named volumes) ────────────────────────────────
       # Persist the crate registry and incremental build cache so

@@ -114,7 +114,7 @@ fn launchagent_on_non_macos_returns_os_error() {
 #[test]
 #[cfg(not(target_os = "linux"))]
 fn systemd_on_non_linux_returns_os_error() {
-    let result = persist::install_systemd("myservice", "/tmp/agent");
+    let result = persist::install_user_unit("myservice", "/tmp/agent");
     assert!(result.is_err());
     assert!(result.unwrap_err().to_lowercase().contains("linux"));
 }
@@ -141,7 +141,7 @@ mod linux {
         let h = TempHome::new("sys_creates");
         let src = fake_bin(&h.path, "agent");
 
-        let result = persist::install_systemd("creates-svc", &src);
+        let result = persist::install_user_unit("creates-svc", &src);
         assert!(result.is_ok(), "install_systemd failed: {:?}", result.err());
 
         let unit = format!("{}/.config/systemd/user/creates-svc.service", h.path);
@@ -152,7 +152,7 @@ mod linux {
     fn systemd_install_unit_contains_required_directives() {
         let h = TempHome::new("sys_content");
         let src = fake_bin(&h.path, "agent");
-        persist::install_systemd("content-svc", &src).unwrap();
+        persist::install_user_unit("content-svc", &src).unwrap();
 
         let unit = format!("{}/.config/systemd/user/content-svc.service", h.path);
         let content = fs::read_to_string(&unit).unwrap();
@@ -169,7 +169,7 @@ mod linux {
     fn systemd_install_unit_exec_start_is_stable_path() {
         let h = TempHome::new("sys_stable_path");
         let src = fake_bin(&h.path, "src_agent");
-        persist::install_systemd("stable-svc", &src).unwrap();
+        persist::install_user_unit("stable-svc", &src).unwrap();
 
         let unit = format!("{}/.config/systemd/user/stable-svc.service", h.path);
         let content = fs::read_to_string(&unit).unwrap();
@@ -185,7 +185,7 @@ mod linux {
     fn systemd_install_stable_binary_is_executable() {
         let h = TempHome::new("sys_exec_bit");
         let src = fake_bin(&h.path, "agent");
-        persist::install_systemd("exec-svc", &src).unwrap();
+        persist::install_user_unit("exec-svc", &src).unwrap();
 
         use std::os::unix::fs::PermissionsExt;
         let stable = format!("{}/.local/bin/exec-svc", h.path);
@@ -198,7 +198,7 @@ mod linux {
     fn systemd_install_creates_wants_symlink() {
         let h = TempHome::new("sys_wants");
         let src = fake_bin(&h.path, "agent");
-        persist::install_systemd("wants-svc", &src).unwrap();
+        persist::install_user_unit("wants-svc", &src).unwrap();
 
         let link = format!(
             "{}/.config/systemd/user/default.target.wants/wants-svc.service",
@@ -213,7 +213,7 @@ mod linux {
     fn systemd_install_success_message_mentions_stable_path() {
         let h = TempHome::new("sys_msg");
         let src = fake_bin(&h.path, "agent");
-        let msg = persist::install_systemd("msg-svc", &src).unwrap();
+        let msg = persist::install_user_unit("msg-svc", &src).unwrap();
 
         let stable = format!("{}/.local/bin/msg-svc", h.path);
         assert!(msg.contains(&stable), "Output must mention stable path:\n{msg}");
@@ -224,7 +224,7 @@ mod linux {
     fn systemd_install_reports_copy_source_to_destination() {
         let h = TempHome::new("sys_copy_msg");
         let src = fake_bin(&h.path, "copyme");
-        let msg = persist::install_systemd("copy-svc", &src).unwrap();
+        let msg = persist::install_user_unit("copy-svc", &src).unwrap();
 
         // Message should show: "Copied: <src> -> <dst>"
         assert!(msg.contains("Copied:") || msg.contains("→"),
@@ -235,17 +235,40 @@ mod linux {
     fn systemd_install_idempotent() {
         let h = TempHome::new("sys_idem");
         let src = fake_bin(&h.path, "agent");
-        persist::install_systemd("idem-svc", &src).unwrap();
+        persist::install_user_unit("idem-svc", &src).unwrap();
         // Second install must not error - overwrites existing unit
-        let result = persist::install_systemd("idem-svc", &src);
+        let result = persist::install_user_unit("idem-svc", &src);
         assert!(result.is_ok(), "Second install must not fail");
     }
 
     #[test]
+    #[test]
+    fn systemd_install_as_root_targets_system_dir() {
+        // The dispatcher (install_systemd) must route root installs to a
+        // SYSTEM unit under /etc/systemd/system with a multi-user.target
+        // wants symlink - the boot-start behavior user units cannot give.
+        let h = TempHome::new("sys_root_dispatch");
+        let src = fake_bin(&h.path, "agent");
+        if unsafe { libc::geteuid() } != 0 {
+            return; // meaningful only as root
+        }
+        let result = persist::install_systemd("dispatch-svc", &src);
+        assert!(result.is_ok(), "install_systemd failed: {:?}", result.err());
+        let unit = "/etc/systemd/system/dispatch-svc.service";
+        let wants = "/etc/systemd/system/multi-user.target.wants/dispatch-svc.service";
+        let content = fs::read_to_string(unit).unwrap();
+        assert!(content.contains("WantedBy=multi-user.target"),
+            "system unit must target multi-user.target:\n{content}");
+        assert!(fs::symlink_metadata(wants).is_ok(), "wants symlink must exist");
+        // cleanup
+        persist::remove_systemd("dispatch-svc").unwrap();
+        assert!(!Path::new(unit).exists(), "cleanup: system unit removed");
+    }
+
     fn systemd_remove_deletes_unit_file() {
         let h = TempHome::new("sys_rm_unit");
         let src = fake_bin(&h.path, "agent");
-        persist::install_systemd("rm-unit-svc", &src).unwrap();
+        persist::install_user_unit("rm-unit-svc", &src).unwrap();
 
         let unit = format!("{}/.config/systemd/user/rm-unit-svc.service", h.path);
         assert!(Path::new(&unit).exists(), "Setup: unit must exist");
@@ -258,7 +281,7 @@ mod linux {
     fn systemd_remove_deletes_wants_symlink() {
         let h = TempHome::new("sys_rm_link");
         let src = fake_bin(&h.path, "agent");
-        persist::install_systemd("rm-link-svc", &src).unwrap();
+        persist::install_user_unit("rm-link-svc", &src).unwrap();
 
         let link = format!(
             "{}/.config/systemd/user/default.target.wants/rm-link-svc.service",
@@ -281,7 +304,7 @@ mod linux {
     fn systemd_remove_returns_ok_message() {
         let h = TempHome::new("sys_rm_ok");
         let src = fake_bin(&h.path, "agent");
-        persist::install_systemd("good-remove", &src).unwrap();
+        persist::install_user_unit("good-remove", &src).unwrap();
         let msg = persist::remove_systemd("good-remove").unwrap();
         assert!(msg.contains("[+]"), "Success message must contain [+]");
     }
@@ -458,7 +481,7 @@ mod linux {
     fn list_shows_installed_systemd_unit() {
         let h = TempHome::new("list_sys_shows");
         let src = fake_bin(&h.path, "agent");
-        persist::install_systemd("visible-svc", &src).unwrap();
+        persist::install_user_unit("visible-svc", &src).unwrap();
 
         let out = persist::list();
         assert!(out.contains("visible-svc"), "list() must show installed unit:\n{out}");
@@ -481,7 +504,7 @@ mod linux {
     fn systemd_copies_source_binary_to_local_bin() {
         let h = TempHome::new("pub_sd_sys");
         let src = fake_bin(&h.path, "orig");
-        persist::install_systemd("copy-test-svc", &src).unwrap();
+        persist::install_user_unit("copy-test-svc", &src).unwrap();
 
         let stable = format!("{}/.local/bin/copy-test-svc", h.path);
         assert!(Path::new(&stable).exists(),
@@ -503,7 +526,7 @@ mod linux {
     fn stable_binary_survives_deletion_of_source() {
         let h = TempHome::new("pub_sd_survive");
         let src = fake_bin(&h.path, "survivebin");
-        persist::install_systemd("survive-svc", &src).unwrap();
+        persist::install_user_unit("survive-svc", &src).unwrap();
 
         // Delete the original source
         fs::remove_file(&src).unwrap();

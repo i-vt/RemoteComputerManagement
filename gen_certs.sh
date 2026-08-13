@@ -9,6 +9,15 @@ trap 'echo ""; echo "[!] FAILED at line ${LINENO}: ${BASH_COMMAND}"; echo "[!] E
 CERTS_DIR="${1:-./certs}"
 mkdir -p "$CERTS_DIR"
 
+# Idempotency guard: agents pin the CA at build time, so regenerating it
+# orphans every deployed agent. Skip when a CA already exists; automation
+# can force rotation with RECERT=1.
+RECERT="${RECERT:-0}"
+if [[ -s "$CERTS_DIR/ca.crt" && "$RECERT" != "1" ]]; then
+    echo "[+] Existing CA preserved (agents keep working; use --recert to rotate)"
+    exit 0
+fi
+
 echo "[*] Generating TLS certificates in $CERTS_DIR ..."
 
 # ── Collect IPs ───────────────────────────────────────────────────────────────
