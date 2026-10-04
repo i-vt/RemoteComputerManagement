@@ -1,5 +1,7 @@
 // panel/js/notes.js - Session tags & notes
 window.Notes = {
+    _hostnames: {},   // sessionId -> hostname, captured when the modal opens
+
     // Escape HTML entities to prevent XSS from agent-controlled data
     esc(s) {
         if (!s) return '';
@@ -7,14 +9,25 @@ window.Notes = {
     },
 
     async show(sessionId, hostname) {
+        if (hostname) this._hostnames[sessionId] = hostname;
         const url = window.Auth.url.replace(/\/$/, '');
-        const res = await fetch(`${url}/api/hosts/${sessionId}/notes`, {
-            headers: { 'X-API-KEY': window.Auth.key }
-        });
-        if(!res.ok) return;
-        const data = await res.json();
+        let data;
+        try {
+            const res = await fetch(`${url}/api/hosts/${sessionId}/notes`, {
+                headers: { 'X-API-KEY': window.Auth.key }
+            });
+            if (res.status === 401) return window.Auth.logout();
+            if (!res.ok) {
+                window.Notify?.toast(`Failed to load notes (HTTP ${res.status})`, 'error');
+                return;
+            }
+            data = await res.json();
+        } catch (e) {
+            window.Notify?.toast('Failed to load notes: server unreachable', 'error');
+            return;
+        }
         const esc = this.esc;
-        const safeHostname = esc(hostname);
+        const safeHostname = esc(this._hostnames[sessionId] || `#${sessionId}`);
 
         const modal = document.createElement('div');
         modal.id = 'notes-modal';
@@ -53,23 +66,40 @@ window.Notes = {
         if(!note) return;
 
         const url = window.Auth.url.replace(/\/$/, '');
-        await fetch(`${url}/api/hosts/${sessionId}/notes`, {
-            method: 'POST',
-            headers: { 'X-API-KEY': window.Auth.key, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ note, tag })
-        });
+        try {
+            const res = await fetch(`${url}/api/hosts/${sessionId}/notes`, {
+                method: 'POST',
+                headers: { 'X-API-KEY': window.Auth.key, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ note, tag })
+            });
+            if (res.status === 401) return window.Auth.logout();
+            if (!res.ok) {
+                window.Notify?.toast(`Note was not saved (HTTP ${res.status})`, 'error');
+                return;
+            }
+        } catch (e) {
+            window.Notify?.toast('Note was not saved: server unreachable', 'error');
+            return;
+        }
         document.getElementById('notes-modal')?.remove();
-        // Re-fetch hostname from the host table rather than passing through DOM
-        const hostEl = document.querySelector(`[data-session-id="${sessionId}"]`);
-        const hostname = hostEl?.dataset?.hostname || `#${sessionId}`;
-        this.show(sessionId, hostname);
+        this.show(sessionId);
     },
 
     async remove(sessionId, noteId) {
         const url = window.Auth.url.replace(/\/$/, '');
-        await fetch(`${url}/api/hosts/${sessionId}/notes/${noteId}`, {
-            method: 'DELETE', headers: { 'X-API-KEY': window.Auth.key }
-        });
+        try {
+            const res = await fetch(`${url}/api/hosts/${sessionId}/notes/${noteId}`, {
+                method: 'DELETE', headers: { 'X-API-KEY': window.Auth.key }
+            });
+            if (res.status === 401) return window.Auth.logout();
+            if (!res.ok) {
+                window.Notify?.toast(`Note was not deleted (HTTP ${res.status})`, 'error');
+                return;
+            }
+        } catch (e) {
+            window.Notify?.toast('Note was not deleted: server unreachable', 'error');
+            return;
+        }
         document.getElementById('notes-modal')?.remove();
         // Refresh host list to update tags
         window.API?.refreshHosts();

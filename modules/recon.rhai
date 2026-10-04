@@ -8,7 +8,7 @@ fn run(session_id) {
     send_c2_command(session_id, "shell whoami");
     send_c2_command(session_id, "shell hostname");
 
-    // OS-specific network info — send both; one will succeed
+    // OS-specific network info - send both; one will succeed
     send_c2_command(session_id, "shell ipconfig");   // Windows
     send_c2_command(session_id, "shell ip a");        // Linux
 

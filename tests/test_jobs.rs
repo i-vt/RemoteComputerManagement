@@ -83,6 +83,128 @@ async fn test_job_purge() {
 }
 
 #[tokio::test]
+async fn test_shared_manager_marks_completed() {
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(100);
+    let mgr = JobManager::new_shared(tx);
+
+    let job_id = mgr.lock().unwrap().spawn("finishing job".into(), 1, |sink| async move {
+        sink.send_chunk("chunk a").await;
+        sink.send_chunk("chunk b").await;
+        ("final output".into(), String::new(), 0)
+    });
+
+    // Give the job and its supervisor time to run to completion.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let guard = mgr.lock().unwrap();
+    let jobs = guard.list();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].id, job_id);
+    assert_eq!(jobs[0].status, JobStatus::Completed);
+    assert!(jobs[0].finished_at.is_some());
+    assert_eq!(jobs[0].chunks_sent, 2);
+    drop(guard);
+
+    // The supervisor still forwards JOB_FINAL upstream after bookkeeping.
+    let mut saw_final = false;
+    while let Ok(data) = rx.try_recv() {
+        if let Ok(resp) = serde_json::from_slice::<serde_json::Value>(&data) {
+            if let Some(out) = resp.get(1).and_then(|o| o.as_str()) {
+                if out.starts_with("JOB_FINAL:") {
+                    saw_final = true;
+                }
+            }
+        }
+    }
+    assert!(saw_final, "supervisor must send JOB_FINAL after completion");
+}
+
+#[tokio::test]
+async fn test_shared_manager_marks_failed() {
+    let (tx, _rx) = mpsc::channel::<Vec<u8>>(100);
+    let mgr = JobManager::new_shared(tx);
+
+    mgr.lock().unwrap().spawn("failing job".into(), 1, |_| async {
+        (String::new(), "boom".into(), 1)
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let guard = mgr.lock().unwrap();
+    let jobs = guard.list();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].status, JobStatus::Failed);
+    assert!(jobs[0].finished_at.is_some());
+}
+
+#[tokio::test]
+async fn test_supervisor_does_not_resurrect_killed_job() {
+    let (tx, _rx) = mpsc::channel::<Vec<u8>>(100);
+    let mgr = JobManager::new_shared(tx);
+
+    let job_id = mgr.lock().unwrap().spawn("long job".into(), 1, |_sink| async {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        ("should not reach".into(), String::new(), 0)
+    });
+
+    let msg = mgr.lock().unwrap().kill(job_id);
+    assert!(msg.contains("killed"));
+
+    // Wait long enough for the supervisor to observe the abort and report.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let guard = mgr.lock().unwrap();
+    let jobs = guard.list();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].status, JobStatus::Killed);
+}
+
+#[tokio::test]
+async fn test_purge_removes_naturally_finished_jobs() {
+    let (tx, _rx) = mpsc::channel::<Vec<u8>>(100);
+    let mgr = JobManager::new_shared(tx);
+
+    mgr.lock().unwrap().spawn("quick".into(), 1, |_| async {
+        ("done".into(), String::new(), 0)
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let mut guard = mgr.lock().unwrap();
+    let purged = guard.purge_completed();
+    assert_eq!(purged, 1);
+    assert!(guard.list().is_empty());
+}
+
+#[tokio::test]
+async fn test_plain_manager_keeps_running_status() {
+    // Managers built with new() (no self-reference) still stream and send
+    // JOB_FINAL, but their local entries stay Running; only new_shared()
+    // managers get completion callbacks.
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(100);
+    let mut mgr = JobManager::new(tx);
+
+    mgr.spawn("plain".into(), 1, |_| async { ("done".into(), String::new(), 0) });
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let jobs = mgr.list();
+    assert_eq!(jobs[0].status, JobStatus::Running);
+
+    let mut saw_final = false;
+    while let Ok(data) = rx.try_recv() {
+        if let Ok(resp) = serde_json::from_slice::<serde_json::Value>(&data) {
+            if let Some(out) = resp.get(1).and_then(|o| o.as_str()) {
+                if out.starts_with("JOB_FINAL:") {
+                    saw_final = true;
+                }
+            }
+        }
+    }
+    assert!(saw_final, "plain manager supervisor still sends JOB_FINAL");
+}
+
+#[tokio::test]
 async fn test_job_list_json() {
     let (tx, _rx) = mpsc::channel::<Vec<u8>>(100);
     let mut mgr = JobManager::new(tx);

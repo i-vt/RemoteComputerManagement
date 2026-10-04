@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_05_webhook.sh — Webhook configuration & SSRF
+# tests/docker/scripts/test_05_webhook.sh - Webhook configuration & SSRF
 source "$(dirname "$0")/lib.sh"
 
 suite "Set a valid webhook URL"

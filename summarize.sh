@@ -20,14 +20,21 @@ fi
 
 echo "Collecting files from $TARGET_DIR into $OUTPUT_FILE..."
 
+# The second find re-matches every file the first one already emitted, so
+# the passes are merged with sort -u to keep each file in the dump once.
+# Build artifacts, runtime state and key material are not source and are
+# excluded from the dump.
 {
     find "$TARGET_DIR/src" "$TARGET_DIR/panel" "$TARGET_DIR/extensions" "$TARGET_DIR/modules" "$TARGET_DIR/traffic_profiles" \
         -type f ! -name "*.mp3" 2>/dev/null
 
     find "$TARGET_DIR" -type f \
         \( -name "*.sh" -o -name "*.json" -o -name "*.rs" -o -name "*.md" -o -name "*.toml" -o -name "*.html" -o -name "*.js" -o -name "*.css" -o -name "*.py" \) \
-        ! -name "*.mp3" ! -name "*.txt"
-} | while read -r filepath; do
+        ! -name "*.mp3" ! -name "*.txt" \
+        ! -path "*/target/*" ! -path "*/tests/results/*" \
+        ! -path "*/dist/*" ! -path "*/downloads/*" ! -path "*/data/*" \
+        ! -path "*/.git/*" ! -path "*/certs/*" 2>/dev/null
+} | sort -u | while read -r filepath; do
 
     echo "// $filepath" >> "$OUTPUT_FILE"
     cat "$filepath" >> "$OUTPUT_FILE"

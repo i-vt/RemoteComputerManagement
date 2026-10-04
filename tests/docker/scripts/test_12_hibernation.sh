@@ -2,17 +2,17 @@
 # tests/docker/scripts/test_12_hibernation.sh
 #
 # Integration tests for the hibernation task queue:
-#   POST /api/hosts/:id/queue        — enqueue a command
-#   GET  /api/hosts/:id/tasks        — list all tasks
-#   GET  /api/hosts/:id/tasks/:id    — fetch one task by UUID
-#   DELETE /api/hosts/:id/tasks/:id  — cancel a pending task
+#   POST /api/hosts/:id/queue        - enqueue a command
+#   GET  /api/hosts/:id/tasks        - list all tasks
+#   GET  /api/hosts/:id/tasks/:id    - fetch one task by UUID
+#   DELETE /api/hosts/:id/tasks/:id  - cancel a pending task
 #
 # Two test tiers:
 #
-#   API contract tests — always run; verify endpoint shapes and error codes
+#   API contract tests - always run; verify endpoint shapes and error codes
 #     against any connected session (persistent or hibernating).
 #
-#   End-to-end task completion — only runs when a hibernating agent from
+#   End-to-end task completion - only runs when a hibernating agent from
 #     test_10 is connected. Queues a command, waits for the agent to
 #     check in, verifies the task reaches 'completed' status.
 #

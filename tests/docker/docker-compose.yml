@@ -143,11 +143,19 @@ services:
       - C2_URL=http://c2-server:8080
       - WEBHOOK_URL=http://webhook-sink:9999/hook
       - TEST_SUITE=${TEST_SUITE:-full}
+      - STAGE_STRICT=${STAGE_STRICT:-0}
+      - GUARD_STRICT=${GUARD_STRICT:-0}
     entrypoint: /bin/sh
     command:
       - -c
       - |
         apk add --no-cache curl jq bash coreutils > /dev/null 2>&1
+        # test_19_imports needs a PE-capable objdump in this container.
+        # Alpine's plain binutils lacks PE BFD targets; mingw-w64-binutils
+        # provides x86_64-w64-mingw32-objdump. Kept on its own line with a
+        # fallback so a package-repo hiccup cannot break the runner.
+        apk add --no-cache mingw-w64-binutils > /dev/null 2>&1 \
+          || apk add --no-cache binutils > /dev/null 2>&1 || true
         echo "=== Waiting for credentials ==="
         for i in $$(seq 1 60); do
           [ -f /shared/admin_creds.json ] && break

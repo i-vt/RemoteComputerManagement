@@ -31,7 +31,7 @@ fi
 # cargo test run (tests/test_*.rs) leaves session rows and command history
 # in the DB, which pollutes test_04_sessions history assertions.
 # We clear only the session-scoped tables so every run starts clean.
-# The builds table MUST be preserved — it holds the build_id metadata
+# The builds table MUST be preserved - it holds the build_id metadata
 # that agents send in ClientHello; wiping it makes the server return
 # decoy_page() to every registration attempt (empty HTTP body error).
 python3 - <<PYEOF 2>/dev/null || true

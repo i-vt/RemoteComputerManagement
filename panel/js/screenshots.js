@@ -129,6 +129,10 @@ window.ScreenshotView = {
 
     // Render every frame of the capture. Each shot.file is the package-
     // relative path (from downloads/) of one Sec-11 screenshot.
+    // Frames are fetched with the API key header and shown via object URLs,
+    // so the key never appears in a URL (browser history, proxy logs).
+    // DOM-built (never innerHTML interpolation): shot.file/monitor are
+    // server/agent-controlled and must not reach HTML or inline handlers.
     async _renderFromFolder(url, sessionId, { ts, files }) {
         const ctr = document.getElementById('screenshot-container');
         if (!ctr) return;
@@ -140,14 +144,10 @@ window.ScreenshotView = {
 
         this._ts    = ts;
         this._imgs  = files;
+        this._objUrls = [];
 
-        // ?key= fallback: /api/downloads requires auth; <img>/<a> can't send headers
-        // DOM-built (never innerHTML interpolation): shot.file/monitor are
-        // server/agent-controlled and must not reach HTML or inline handlers.
-        const key = encodeURIComponent(window.Auth.key);
         ctr.textContent = '';
-        files.forEach(shot => {
-            const src = `${url}/api/downloads/${shot.file}?key=${key}`;
+        for (const shot of files) {
             const mon = (shot.monitor === null || shot.monitor === undefined) ? '?' : shot.monitor;
 
             const box = document.createElement('div');
@@ -157,23 +157,36 @@ window.ScreenshotView = {
             head.className = 'bg-gray-800 px-3 py-2 text-xs text-gray-400 flex justify-between';
             const span = document.createElement('span');
             span.textContent = `Monitor ${mon}`;
-            const a = document.createElement('a');
-            a.href = src;
-            a.setAttribute('download', String(shot.file).split('/').pop());
-            a.className = 'text-green-400 hover:text-white';
-            a.innerHTML = '<i class="fas fa-download"></i> Save';
             head.appendChild(span);
-            head.appendChild(a);
 
             const img = document.createElement('img');
-            img.src = src;
             img.className = 'w-full cursor-zoom-in';
-            img.addEventListener('click', () => this.fullscreen(img.src));
+            img.alt = 'loading…';
 
             box.appendChild(head);
             box.appendChild(img);
             ctr.appendChild(box);
-        });
+
+            try {
+                const r = await window.API.apiFetch(`/api/downloads/${shot.file}`);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const blob = await r.blob();
+                const objUrl = URL.createObjectURL(blob);
+                this._objUrls.push(objUrl);
+                img.src = objUrl;
+                img.addEventListener('click', () => this.fullscreen(objUrl));
+
+                const a = document.createElement('a');
+                a.href = objUrl;
+                a.setAttribute('download', String(shot.file).split('/').pop());
+                a.className = 'text-green-400 hover:text-white';
+                a.innerHTML = '<i class="fas fa-download"></i> Save';
+                head.appendChild(a);
+            } catch (e) {
+                if (e.message === 'unauthorized') return;
+                img.alt = `failed to load: ${e.message}`;
+            }
+        }
     },
 
     fullscreen(src) {
@@ -190,5 +203,8 @@ window.ScreenshotView = {
 
     close() {
         document.getElementById('screenshot-modal')?.classList.add('hidden');
+        // Release object URLs created for the rendered frames
+        (this._objUrls || []).forEach(u => URL.revokeObjectURL(u));
+        this._objUrls = [];
     }
 };

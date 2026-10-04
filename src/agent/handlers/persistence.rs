@@ -41,28 +41,28 @@ fn require_arg<'a>(arg: &'a str, usage: &str) -> Result<&'a str, DispatchResult>
 
 // ── Windows - Run key ─────────────────────────────────────────────────
 
-pub fn handle_run(args: &str) -> DispatchResult {
+pub(crate) fn handle_run(args: &str) -> DispatchResult {
     match split2(args, &aes_str!("persist:run <value-name> <binary-path>")) {
         Ok((name, path)) => wrap_result(persist::install_run(name, path)),
         Err(e) => e,
     }
 }
 
-pub fn handle_run_hklm(args: &str) -> DispatchResult {
+pub(crate) fn handle_run_hklm(args: &str) -> DispatchResult {
     match split2(args, &aes_str!("persist:run_hklm <value-name> <binary-path>")) {
         Ok((name, path)) => wrap_result(persist::install_run_hklm(name, path)),
         Err(e) => e,
     }
 }
 
-pub fn handle_run_remove(args: &str) -> DispatchResult {
+pub(crate) fn handle_run_remove(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:run_remove <value-name>")) {
         Ok(name) => wrap_result(persist::remove_run(name)),
         Err(e)   => e,
     }
 }
 
-pub fn handle_run_hklm_remove(args: &str) -> DispatchResult {
+pub(crate) fn handle_run_hklm_remove(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:run_hklm_remove <value-name>")) {
         Ok(name) => wrap_result(persist::remove_run_hklm(name)),
         Err(e)   => e,
@@ -71,14 +71,14 @@ pub fn handle_run_hklm_remove(args: &str) -> DispatchResult {
 
 // ── Windows - Scheduled Task ──────────────────────────────────────────
 
-pub fn handle_task(args: &str) -> DispatchResult {
+pub(crate) fn handle_task(args: &str) -> DispatchResult {
     match split2(args, &aes_str!("persist:task <task-name> <binary-path>")) {
         Ok((name, path)) => wrap_result(persist::install_task(name, path)),
         Err(e) => e,
     }
 }
 
-pub fn handle_task_remove(args: &str) -> DispatchResult {
+pub(crate) fn handle_task_remove(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:task_remove <task-name>")) {
         Ok(name) => wrap_result(persist::remove_task(name)),
         Err(e)   => e,
@@ -87,14 +87,14 @@ pub fn handle_task_remove(args: &str) -> DispatchResult {
 
 // ── Windows - Startup Folder ──────────────────────────────────────────
 
-pub fn handle_startup(args: &str) -> DispatchResult {
+pub(crate) fn handle_startup(args: &str) -> DispatchResult {
     match split2(args, &aes_str!("persist:startup <filename> <source-path>")) {
         Ok((name, path)) => wrap_result(persist::install_startup(name, path)),
         Err(e) => e,
     }
 }
 
-pub fn handle_startup_remove(args: &str) -> DispatchResult {
+pub(crate) fn handle_startup_remove(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:startup_remove <filename>")) {
         Ok(name) => wrap_result(persist::remove_startup(name)),
         Err(e)   => e,
@@ -103,14 +103,14 @@ pub fn handle_startup_remove(args: &str) -> DispatchResult {
 
 // ── Linux - Cron ──────────────────────────────────────────────────────
 
-pub fn handle_cron_linux(args: &str) -> DispatchResult {
+pub(crate) fn handle_cron_linux(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:cron <binary-path>")) {
         Ok(path) => wrap_result(persist::install_cron_linux(path)),
         Err(e)   => e,
     }
 }
 
-pub fn handle_cron_linux_remove(args: &str) -> DispatchResult {
+pub(crate) fn handle_cron_linux_remove(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:cron_remove <binary-path>")) {
         Ok(path) => wrap_result(persist::remove_cron_linux(path)),
         Err(e)   => e,
@@ -119,14 +119,14 @@ pub fn handle_cron_linux_remove(args: &str) -> DispatchResult {
 
 // ── Linux - Systemd ───────────────────────────────────────────────────
 
-pub fn handle_systemd(args: &str) -> DispatchResult {
+pub(crate) fn handle_systemd(args: &str) -> DispatchResult {
     match split2(args, &aes_str!("persist:systemd <unit-name> <binary-path>")) {
         Ok((name, path)) => wrap_result(persist::install_systemd(name, path)),
         Err(e) => e,
     }
 }
 
-pub fn handle_systemd_remove(args: &str) -> DispatchResult {
+pub(crate) fn handle_systemd_remove(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:systemd_remove <unit-name>")) {
         Ok(name) => wrap_result(persist::remove_systemd(name)),
         Err(e)   => e,
@@ -135,14 +135,14 @@ pub fn handle_systemd_remove(args: &str) -> DispatchResult {
 
 // ── Linux - Shell Profile ─────────────────────────────────────────────
 
-pub fn handle_profile(args: &str) -> DispatchResult {
+pub(crate) fn handle_profile(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:profile <binary-path>")) {
         Ok(path) => wrap_result(persist::install_profile(path)),
         Err(e)   => e,
     }
 }
 
-pub fn handle_profile_remove(args: &str) -> DispatchResult {
+pub(crate) fn handle_profile_remove(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:profile_remove <binary-path>")) {
         Ok(path) => wrap_result(persist::remove_profile(path)),
         Err(e)   => e,
@@ -151,14 +151,14 @@ pub fn handle_profile_remove(args: &str) -> DispatchResult {
 
 // ── macOS - LaunchAgent ───────────────────────────────────────────────
 
-pub fn handle_launchagent(args: &str) -> DispatchResult {
+pub(crate) fn handle_launchagent(args: &str) -> DispatchResult {
     match split2(args, &aes_str!("persist:launchagent <label> <binary-path>")) {
         Ok((label, path)) => wrap_result(persist::install_launchagent(label, path)),
         Err(e) => e,
     }
 }
 
-pub fn handle_launchagent_remove(args: &str) -> DispatchResult {
+pub(crate) fn handle_launchagent_remove(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:launchagent_remove <label>")) {
         Ok(label) => wrap_result(persist::remove_launchagent(label)),
         Err(e)    => e,
@@ -167,14 +167,14 @@ pub fn handle_launchagent_remove(args: &str) -> DispatchResult {
 
 // ── macOS - Cron ─────────────────────────────────────────────────────
 
-pub fn handle_cron_macos(args: &str) -> DispatchResult {
+pub(crate) fn handle_cron_macos(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:cron <binary-path>")) {
         Ok(path) => wrap_result(persist::install_cron_macos(path)),
         Err(e)   => e,
     }
 }
 
-pub fn handle_cron_macos_remove(args: &str) -> DispatchResult {
+pub(crate) fn handle_cron_macos_remove(args: &str) -> DispatchResult {
     match require_arg(args, &aes_str!("persist:cron_remove <binary-path>")) {
         Ok(path) => wrap_result(persist::remove_cron_macos(path)),
         Err(e)   => e,
@@ -183,8 +183,17 @@ pub fn handle_cron_macos_remove(args: &str) -> DispatchResult {
 
 // ── Inventory ─────────────────────────────────────────────────────────
 
-pub fn handle_list() -> DispatchResult {
+pub(crate) fn handle_list() -> DispatchResult {
     DispatchResult::Reply(persist::list(), String::new(), 0, AgentAction::None)
+}
+
+// ── Full cleanup ──────────────────────────────────────────────────────
+
+/// persist:cleanup - remove every persistence artifact this install
+/// created on the current platform and return a structured per-method
+/// report (method: removed/failed/not-present).
+pub(crate) async fn handle_cleanup() -> DispatchResult {
+    DispatchResult::Reply(persist::cleanup_all(), String::new(), 0, AgentAction::None)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────

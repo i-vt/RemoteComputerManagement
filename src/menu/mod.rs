@@ -3,16 +3,15 @@ pub mod proxy;
 pub mod ui;
 
 use rustyline::{DefaultEditor, Result};
+use crate::api::SharedProxies;
 use crate::common::SharedSessions;
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 
-pub fn run(sessions: SharedSessions) -> Result<()> {
+pub fn run(sessions: SharedSessions, proxies: SharedProxies) -> Result<()> {
     let mut rl = DefaultEditor::new()?;
     if rl.load_history("history.txt").is_err() {}
 
-    let proxy_controls: proxy::ProxyMap = Arc::new(Mutex::new(HashMap::new()));
     let mut current_session_id: Option<u32> = None;
+    let mut shutdown_requested = false;
 
     eprintln!("[*] C2 Interactive Menu Ready. Type 'help' for commands.");
 
@@ -39,7 +38,7 @@ pub fn run(sessions: SharedSessions) -> Result<()> {
 
                 // Dispatch
                 if let Some(id) = current_session_id {
-                    handlers::handle_session(line, id, &sessions, proxy_controls.clone());
+                    handlers::handle_session(line, id, &sessions, proxies.clone());
                     
                     // Safety check: if session died during command, drop back to menu
                     let map = &*sessions;
@@ -47,14 +46,20 @@ pub fn run(sessions: SharedSessions) -> Result<()> {
                         eprintln!("[-] Session lost.");
                         current_session_id = None;
                     }
-                } else {
-                    handlers::handle_global(line, &sessions, &mut current_session_id);
+                } else if handlers::handle_global(line, &sessions, &mut current_session_id) {
+                    // exit/quit: unwind the REPL first so history is saved,
+                    // then hand off to the server's graceful-shutdown path.
+                    shutdown_requested = true;
+                    break;
                 }
             },
             Err(_) => break,
         }
     }
-    
+
     let _ = rl.save_history("history.txt");
+    if shutdown_requested {
+        handlers::request_shutdown();
+    }
     Ok(())
 }

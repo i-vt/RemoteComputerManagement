@@ -5,7 +5,7 @@ extern crate litcrypt;
 // Generate the secret key for this compilation unit
 use_litcrypt!();
 
-// [FIX] Re-export the macro so submodules can use `use crate::lc;`
+// Re-export the macro so submodules can use `use crate::lc;`
 pub use litcrypt::lc;
 
 pub mod common;
@@ -25,6 +25,9 @@ pub mod transport;
 pub mod traffic;
 pub mod topology;
 pub mod rdi_stub;
+pub mod pe_stub;
 pub mod shellcode;
+pub mod pipeline;
+pub mod build_validate;
 pub mod rcm;
 pub mod strcrypt_rt;

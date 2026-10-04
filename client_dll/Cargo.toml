@@ -1,0 +1,16 @@
+[package]
+name = "client_dll"
+version = "0.1.0"
+edition = "2021"
+
+# cdylib: cargo links a real PE DLL (proper CRT DllMainCRTStartup entry
+# point and an export table carrying DllMain), so rundll32 and reflective
+# (sRDI / donut) loading both work. Cargo rejects crate-type on [[bin]]
+# targets, which is why this lives in its own workspace member crate
+# instead of src/bin/.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rcm = { path = ".." }
+tokio = { version = "1", features = ["full"] }

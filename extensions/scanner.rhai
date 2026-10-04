@@ -2,7 +2,7 @@ print_log("Starting Internal Network Scan...");
 
 // 1. Validate Arguments
 if args.len() == 0 {
-    return "Error: Missing argument. Usage: extension load scanner http://192.168.1.";
+    return "Error: Missing argument. Usage: extension load scanner <url-prefix> (e.g. http://10.0.0. scans .1-.254)";
 }
 
 let base_url = args[0];

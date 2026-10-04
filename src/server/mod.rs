@@ -25,6 +25,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let sessions: SharedSessions = Arc::new(DashMap::new());
     let results_store: api::SharedResults = Arc::new(Mutex::new(HashMap::new()));
+    api::state::spawn_results_retention(results_store.clone());
     let proxy_store: api::SharedProxies = Arc::new(Mutex::new(HashMap::new()));
 
     // ── Bootstrap default admin operator on first run ──────────────────
@@ -112,8 +113,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Interactive CLI Menu ───────────────────────────────────────────
     let s_cli = sessions.clone();
+    let prox_cli = proxy_store.clone();
     std::thread::spawn(move || {
-        if let Err(e) = menu::run(s_cli) { error!("Menu Error: {:?}", e); }
+        if let Err(e) = menu::run(s_cli, prox_cli) { error!("Menu Error: {:?}", e); }
     });
 
     // ── Graceful shutdown on SIGTERM/SIGINT ────────────────────────────

@@ -32,7 +32,7 @@ use axum::{
 };
 use tower::ServiceExt;  // .oneshot()
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use rcm::api::routes::extensions::{
     list_extensions, get_extension,
@@ -70,10 +70,27 @@ fn mod_router(op: OperatorInfo) -> Router {
         .layer(Extension(op))
 }
 
-/// Unique name: avoids collisions when tests run in parallel.
+/// Unique fixture name: avoids collisions when tests run in parallel, and
+/// the fixture_ prefix lets repo-wide script scanners (e.g.
+/// shipped_scripts_parse in modules.rs) tell fixtures apart from shipped
+/// scripts.
 fn uname(label: &str) -> String {
-    format!("test_{}_{}", label, std::process::id())
+    format!("fixture_{}_{}", label, std::process::id())
 }
+
+/// Absolute path under the crate root, independent of the test CWD.
+fn test_dir(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name)
+}
+
+/// Handlers under test resolve script dirs through the CWD-relative config
+/// defaults, so pin the CWD to the crate root before exercising them. Every
+/// caller sets the same target, keeping this consistent under parallel
+/// test threads.
+fn ensure_cwd() {
+    let _ = std::env::set_current_dir(env!("CARGO_MANIFEST_DIR"));
+}
+
 
 /// Removes a file on drop; silently ignores errors.
 struct DropFile(PathBuf);
@@ -118,6 +135,7 @@ fn empty_request(method: &str, uri: &str) -> Request<Body> {
 
 #[tokio::test]
 async fn list_extensions_returns_ok() {
+    ensure_cwd();
     let app = ext_router(admin());
     let resp = app.oneshot(empty_request("GET", "/api/extensions")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -125,9 +143,10 @@ async fn list_extensions_returns_ok() {
 
 #[tokio::test]
 async fn list_extensions_contains_saved_file() {
+    ensure_cwd();
     let name = uname("list_found");
-    let path = PathBuf::from("extensions").join(format!("{}.rhai", name));
-    let _ = std::fs::create_dir_all("extensions");
+    let path = test_dir("extensions").join(format!("{}.rhai", name));
+    let _ = std::fs::create_dir_all(test_dir("extensions"));
     std::fs::write(&path, "// list test").unwrap();
     let _g = DropFile(path);
 
@@ -141,8 +160,9 @@ async fn list_extensions_contains_saved_file() {
 
 #[tokio::test]
 async fn list_extensions_ignores_non_rhai_files() {
-    let _ = std::fs::create_dir_all("extensions");
-    let txt = PathBuf::from("extensions/not_a_script.txt");
+    ensure_cwd();
+    let _ = std::fs::create_dir_all(test_dir("extensions"));
+    let txt = test_dir("extensions").join("not_a_script.txt");
     std::fs::write(&txt, "ignored").unwrap();
     let _g = DropFile(txt);
 
@@ -158,10 +178,11 @@ async fn list_extensions_ignores_non_rhai_files() {
 
 #[tokio::test]
 async fn get_extension_returns_content() {
+    ensure_cwd();
     let name    = uname("get_ok");
     let content = "let x = 42;";
-    let path    = PathBuf::from("extensions").join(format!("{}.rhai", name));
-    let _ = std::fs::create_dir_all("extensions");
+    let path    = test_dir("extensions").join(format!("{}.rhai", name));
+    let _ = std::fs::create_dir_all(test_dir("extensions"));
     std::fs::write(&path, content).unwrap();
     let _g = DropFile(path);
 
@@ -175,6 +196,7 @@ async fn get_extension_returns_content() {
 
 #[tokio::test]
 async fn get_extension_missing_returns_404() {
+    ensure_cwd();
     let app  = ext_router(admin());
     let resp = app.oneshot(empty_request("GET", "/api/extensions/definitely_does_not_exist")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -182,6 +204,7 @@ async fn get_extension_missing_returns_404() {
 
 #[tokio::test]
 async fn get_extension_traversal_is_blocked() {
+    ensure_cwd();
     // Two distinct paths through traversal blocking:
     //
     // A) URL-encoded slash "..%2Fetc_passwd"  -> router sees one segment,
@@ -211,9 +234,10 @@ async fn get_extension_traversal_is_blocked() {
 
 #[tokio::test]
 async fn put_extension_creates_file() {
+    ensure_cwd();
     let name    = uname("put_create");
     let content = "let created = true;";
-    let path    = PathBuf::from("extensions").join(format!("{}.rhai", name));
+    let path    = test_dir("extensions").join(format!("{}.rhai", name));
     let _g      = DropFile(path.clone());
 
     let app  = ext_router(admin());
@@ -226,10 +250,11 @@ async fn put_extension_creates_file() {
 
 #[tokio::test]
 async fn put_extension_overwrites_existing() {
+    ensure_cwd();
     let name = uname("put_overwrite");
-    let path = PathBuf::from("extensions").join(format!("{}.rhai", name));
+    let path = test_dir("extensions").join(format!("{}.rhai", name));
     let _g   = DropFile(path.clone());
-    let _ = std::fs::create_dir_all("extensions");
+    let _ = std::fs::create_dir_all(test_dir("extensions"));
     std::fs::write(&path, "// original").unwrap();
 
     let app  = ext_router(admin());
@@ -242,6 +267,7 @@ async fn put_extension_overwrites_existing() {
 
 #[tokio::test]
 async fn put_extension_viewer_returns_403() {
+    ensure_cwd();
     let name = uname("put_viewer");
     let app  = ext_router(viewer());
     let resp = app.oneshot(json_put_request(
@@ -249,12 +275,13 @@ async fn put_extension_viewer_returns_403() {
     )).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     // File must NOT have been created
-    assert!(!Path::new("extensions").join(format!("{}.rhai", name)).exists(),
+    assert!(!test_dir("extensions").join(format!("{}.rhai", name)).exists(),
         "viewer write should not create file");
 }
 
 #[tokio::test]
 async fn put_extension_traversal_returns_400() {
+    ensure_cwd();
     let app  = ext_router(admin());
     let resp = app.oneshot(json_put_request(
         "/api/extensions/..%2Fevil", "// evil"
@@ -266,9 +293,10 @@ async fn put_extension_traversal_returns_400() {
 
 #[tokio::test]
 async fn delete_extension_removes_file() {
+    ensure_cwd();
     let name = uname("del_ok");
-    let path = PathBuf::from("extensions").join(format!("{}.rhai", name));
-    let _ = std::fs::create_dir_all("extensions");
+    let path = test_dir("extensions").join(format!("{}.rhai", name));
+    let _ = std::fs::create_dir_all(test_dir("extensions"));
     std::fs::write(&path, "// delete me").unwrap();
 
     let app  = ext_router(admin());
@@ -279,6 +307,7 @@ async fn delete_extension_removes_file() {
 
 #[tokio::test]
 async fn delete_extension_missing_returns_404() {
+    ensure_cwd();
     let app  = ext_router(admin());
     let resp = app.oneshot(empty_request("DELETE", "/api/extensions/no_such_file_xyz")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -286,9 +315,10 @@ async fn delete_extension_missing_returns_404() {
 
 #[tokio::test]
 async fn delete_extension_viewer_returns_403() {
+    ensure_cwd();
     let name = uname("del_viewer");
-    let path = PathBuf::from("extensions").join(format!("{}.rhai", name));
-    let _ = std::fs::create_dir_all("extensions");
+    let path = test_dir("extensions").join(format!("{}.rhai", name));
+    let _ = std::fs::create_dir_all(test_dir("extensions"));
     std::fs::write(&path, "// protected").unwrap();
     let _g = DropFile(path.clone());
 
@@ -300,6 +330,7 @@ async fn delete_extension_viewer_returns_403() {
 
 #[tokio::test]
 async fn delete_extension_traversal_returns_400() {
+    ensure_cwd();
     let app  = ext_router(admin());
     let resp = app.oneshot(empty_request("DELETE", "/api/extensions/..%2Fevil")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -309,10 +340,11 @@ async fn delete_extension_traversal_returns_400() {
 
 #[tokio::test]
 async fn get_module_returns_content() {
+    ensure_cwd();
     let name    = uname("mod_get");
     let content = "fn run(id) { send_c2_command(id, \"shell whoami\"); \"ok\" }";
-    let path    = PathBuf::from("modules").join(format!("{}.rhai", name));
-    let _ = std::fs::create_dir_all("modules");
+    let path    = test_dir("modules").join(format!("{}.rhai", name));
+    let _ = std::fs::create_dir_all(test_dir("modules"));
     std::fs::write(&path, content).unwrap();
     let _g = DropFile(path);
 
@@ -325,6 +357,7 @@ async fn get_module_returns_content() {
 
 #[tokio::test]
 async fn get_module_missing_returns_404() {
+    ensure_cwd();
     let app  = mod_router(admin());
     let resp = app.oneshot(empty_request("GET", "/api/modules/never_exists_xyz")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -332,8 +365,9 @@ async fn get_module_missing_returns_404() {
 
 #[tokio::test]
 async fn put_module_creates_file() {
+    ensure_cwd();
     let name = uname("mod_put");
-    let path = PathBuf::from("modules").join(format!("{}.rhai", name));
+    let path = test_dir("modules").join(format!("{}.rhai", name));
     let _g   = DropFile(path.clone());
 
     let app  = mod_router(admin());
@@ -346,6 +380,7 @@ async fn put_module_creates_file() {
 
 #[tokio::test]
 async fn put_module_viewer_returns_403() {
+    ensure_cwd();
     let name = uname("mod_viewer");
     let app  = mod_router(viewer());
     let resp = app.oneshot(json_put_request(
@@ -356,9 +391,10 @@ async fn put_module_viewer_returns_403() {
 
 #[tokio::test]
 async fn delete_module_removes_file() {
+    ensure_cwd();
     let name = uname("mod_del");
-    let path = PathBuf::from("modules").join(format!("{}.rhai", name));
-    let _ = std::fs::create_dir_all("modules");
+    let path = test_dir("modules").join(format!("{}.rhai", name));
+    let _ = std::fs::create_dir_all(test_dir("modules"));
     std::fs::write(&path, "fn run(id) {}").unwrap();
 
     let app  = mod_router(admin());
@@ -369,6 +405,7 @@ async fn delete_module_removes_file() {
 
 #[tokio::test]
 async fn delete_module_traversal_returns_400() {
+    ensure_cwd();
     let app  = mod_router(admin());
     let resp = app.oneshot(empty_request("DELETE", "/api/modules/..%2Fevil")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
@@ -378,9 +415,10 @@ async fn delete_module_traversal_returns_400() {
 
 #[tokio::test]
 async fn extension_full_round_trip() {
+    ensure_cwd();
     let name    = uname("roundtrip");
     let content = "print_log(\"round trip\");";
-    let path    = PathBuf::from("extensions").join(format!("{}.rhai", name));
+    let path    = test_dir("extensions").join(format!("{}.rhai", name));
     let _g      = DropFile(path.clone());
 
     // CREATE

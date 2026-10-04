@@ -19,6 +19,14 @@ pub struct ExtensionPayload {
     pub args: Vec<String>,
 }
 
+/// Optional body for module execution. Modules that take arguments declare
+/// `run(session_id, args)`; the rest keep `run(session_id)`.
+#[derive(Deserialize)]
+pub struct ModuleExecRequest {
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 #[derive(Serialize)]
 pub struct SessionDto {
     pub id: u32,
@@ -29,6 +37,7 @@ pub struct SessionDto {
     pub has_proxy: bool,
     pub parent_id: Option<u32>,
     pub is_active: bool,
+    pub hibernation_mode: bool,
     pub profile: String,
     pub last_seen_secs: i64,
     pub tags: Vec<String>,

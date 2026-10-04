@@ -361,8 +361,8 @@ fn cli_rejects_shellcode_on_linux_with_clear_error() {
     assert!(!out.status.success(), "shellcode+linux must fail");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("--platform windows"),
-        "error should point at --platform windows, got: {err}"
+        err.contains("platform=windows"),
+        "error should point at platform=windows, got: {err}"
     );
 }
 
@@ -373,7 +373,7 @@ fn cli_rejects_shellcode_on_macos_with_clear_error() {
         .output()
         .expect("run builder");
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("--platform windows"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("platform=windows"));
 }
 
 #[test]

@@ -11,6 +11,9 @@ use std::sync::Arc;
 use crate::api::state::ApiContext;
 use crate::api::middleware::OperatorInfo;
 use crate::database;
+use crate::config::config;
+use std::collections::BTreeSet;
+use std::net::Ipv4Addr;
 
 #[derive(Deserialize)]
 pub struct CreateListenerRequest {
@@ -22,6 +25,125 @@ pub struct CreateListenerRequest {
 }
 
 fn default_transport() -> String { "tls".into() }
+
+/// Directory holding the built-in traffic profiles, relative to the server
+/// working directory (same convention as certs/ and downloads/).
+const TRAFFIC_PROFILES_DIR: &str = "traffic_profiles";
+
+/// Largest profile file served to the panel; shipped profiles are a few KB.
+const MAX_PROFILE_BYTES: u64 = 256 * 1024;
+
+/// Read `dir` and return the traffic profiles it contains as
+/// [{name, content}]. Only regular .json files under the size cap are
+/// returned; symlinks and subdirectories are skipped. Split from the
+/// handler so the listing logic can be tested against a tempdir.
+fn list_traffic_profiles(dir: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| format!("cannot read {}: {}", dir.display(), e))?;
+    let mut profiles = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+        if !meta.is_file() || meta.len() > MAX_PROFILE_BYTES {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(name) = path.file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string()) else { continue };
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            profiles.push(serde_json::json!({ "name": name, "content": content }));
+        }
+    }
+    profiles.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    Ok(profiles)
+}
+
+/// GET /api/listeners/profiles - list the built-in traffic profiles
+/// (operator role or higher). Returns [{name, content}] so the panel no
+/// longer ships static copies of traffic_profiles/.
+///
+/// This is a read-only directory listing: it takes no filename parameter,
+/// so there is no path-traversal surface. Only regular .json files under
+/// the size cap are returned; symlinks and subdirectories are skipped.
+pub async fn profiles(
+    Extension(operator): Extension<OperatorInfo>,
+) -> Response {
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
+
+    match tokio::task::spawn_blocking(|| list_traffic_profiles(std::path::Path::new(TRAFFIC_PROFILES_DIR))).await {
+        Ok(Ok(list)) => (StatusCode::OK, Json(serde_json::json!(list))).into_response(),
+        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
+/// Parse IPv4 SAN entries from `openssl x509 -text` output.
+#[doc(hidden)]
+pub fn parse_ipv4_sans_from_openssl_text(text: &str) -> Vec<Ipv4Addr> {
+    text.split("IP Address:")
+        .skip(1)
+        .filter_map(|part| part.split([',', '\n', '\r']).next()?.trim().parse().ok())
+        .collect()
+}
+
+/// Merge certificate SANs, host interface addresses, and a concrete API bind
+/// address. Interface and bind wildcards/loopbacks are not useful C2 hints.
+#[doc(hidden)]
+pub fn collect_c2_hints(
+    openssl_text: &str,
+    interface_addresses: &[String],
+    api_bind_addr: &str,
+) -> Vec<String> {
+    let mut hints = BTreeSet::new();
+    hints.extend(parse_ipv4_sans_from_openssl_text(openssl_text));
+    for address in interface_addresses {
+        let candidate = address.split('/').next().unwrap_or(address);
+        if let Ok(ip) = candidate.parse::<Ipv4Addr>() {
+            if !ip.is_loopback() && !ip.is_unspecified() {
+                hints.insert(ip);
+            }
+        }
+    }
+    if let Ok(ip) = api_bind_addr.parse::<Ipv4Addr>() {
+        if !ip.is_loopback() && !ip.is_unspecified() {
+            hints.insert(ip);
+        }
+    }
+    hints.into_iter().map(|ip| ip.to_string()).collect()
+}
+
+fn current_c2_hints() -> Vec<String> {
+    let cert_text = std::process::Command::new("openssl")
+        .args(["x509", "-in", "certs/server.crt", "-noout", "-text"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
+    let interface_addresses: Vec<String> = crate::utils::get_network_interfaces()
+        .into_iter()
+        .flat_map(|interface| interface.addresses)
+        .collect();
+    collect_c2_hints(&cert_text, &interface_addresses, &config().server.api_bind_addr)
+}
+
+/// GET /api/server/c2-hints - candidate C2 addresses for the builder.
+pub async fn c2_hints(
+    Extension(operator): Extension<OperatorInfo>,
+) -> Response {
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
+    match tokio::task::spawn_blocking(current_c2_hints).await {
+        Ok(ips) => Json(serde_json::json!({ "ips": ips })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
 
 /// GET /api/listeners - list all listeners (DB + runtime status)
 pub async fn list(
@@ -64,8 +186,22 @@ pub async fn create(
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Admin only"}))).into_response();
     }
 
-    if payload.port == 0 || payload.port == 8080 {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Port 0 and 8080 (API) are reserved"}))).into_response();
+    // Port 0 is invalid and the operator API port must stay free for the
+    // panel/REST service. The guard reads the configured port instead of
+    // assuming the 8080 default.
+    let api_port = crate::config::config().server.api_port;
+    if payload.port == 0 || payload.port == api_port {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("Port 0 and {} (API) are reserved", api_port)}))).into_response();
+    }
+
+    // Reject transports the server cannot bind. Anything unknown would
+    // silently fall through to a TLS listener downstream. https is served
+    // natively (the server terminates TLS for HTTP listeners itself).
+    match payload.transport.as_str() {
+        "tls" | "tcp_plain" | "http" | "https" => {}
+        other => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("Unknown transport '{}': expected tls, tcp_plain, http, or https", other)}))).into_response();
+        }
     }
 
     // Block privileged ports - binding these requires root and is usually
@@ -177,5 +313,46 @@ pub async fn delete(
             (StatusCode::OK, Json(serde_json::json!({"status": msg}))).into_response()
         }
         Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))).into_response(),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::list_traffic_profiles;
+
+    #[test]
+    fn lists_json_profiles_sorted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("b_profile.json"), "{\"b\":1}").unwrap();
+        std::fs::write(dir.path().join("a_profile.json"), "{\"a\":1}").unwrap();
+        // Non-JSON files and subdirectories are not profiles.
+        std::fs::write(dir.path().join("notes.txt"), "hi").unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+
+        let list = list_traffic_profiles(dir.path()).expect("listing works");
+        let names: Vec<&str> = list.iter().filter_map(|p| p["name"].as_str()).collect();
+        assert_eq!(names, vec!["a_profile.json", "b_profile.json"]);
+        assert_eq!(list[0]["content"].as_str().unwrap(), "{\"a\":1}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_symlinks() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+        std::fs::write(outside.path().join("secret.json"), "{}").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.json"),
+            dir.path().join("linked.json"),
+        ).unwrap();
+
+        let list = list_traffic_profiles(dir.path()).expect("listing works");
+        assert!(list.is_empty(), "symlinked profiles must be skipped");
+    }
+
+    #[test]
+    fn missing_dir_is_an_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let missing = dir.path().join("no-such-dir");
+        assert!(list_traffic_profiles(&missing).is_err());
     }
 }

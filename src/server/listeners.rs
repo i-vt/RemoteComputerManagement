@@ -74,15 +74,6 @@ impl ListenerManager {
             return Err(format!("Listener {} already running", lc.id));
         }
 
-        // Rows created before https was rejected would start a cleartext
-        // listener while claiming TLS. Refuse them too (covers start_auto).
-        if lc.transport == "https" {
-            return Err(format!(
-                "Listener '{}': https listeners require a TLS-terminating redirector; create an http listener instead",
-                lc.name
-            ));
-        }
-
         let transport_proto = match lc.transport.as_str() {
             "tcp_plain" => TransportProtocol::TcpPlain,
             "http" => TransportProtocol::Http,
@@ -252,12 +243,6 @@ impl ListenerManager {
         transport: &str,
         profile_json: Option<&str>,
     ) -> Result<ListenerConfig, String> {
-        // The HTTP C2 listener serves plain axum HTTP only; a "https"
-        // listener would silently bind cleartext. Fail loudly instead.
-        // HTTPS agents are expected behind a TLS-terminating redirector.
-        if transport == "https" {
-            return Err("https listeners require a TLS-terminating redirector; create an http listener instead".into());
-        }
         let id = {
             let conn = self.db.get().map_err(|e| e.to_string())?;
             database::create_listener(&conn, name, port, transport, profile_json)
@@ -269,7 +254,15 @@ impl ListenerManager {
             database::get_listener(&conn, id).ok_or("Listener not found after insert")?
         };
 
-        self.start_listener(&lc).await?;
+        if let Err(e) = self.start_listener(&lc).await {
+            // A row left behind for a listener that failed to bind would be
+            // retried (and fail again) at every boot via auto_start, so the
+            // insert is rolled back on start failure.
+            if let Ok(conn) = self.db.get() {
+                let _ = database::delete_listener(&conn, id);
+            }
+            return Err(e);
+        }
         Ok(lc)
     }
 
@@ -301,9 +294,18 @@ impl ListenerManager {
         let cancel_token = tokio_util::sync::CancellationToken::new();
         let task_token = cancel_token.clone();
 
+        let server = http_listener::start(
+            http_state,
+            port,
+            use_tls,
+            &self.cert,
+            &self.key,
+        )
+            .map_err(|e| format!("HTTP listener bind failed on port {}: {}", port, e))?;
+
         let handle: JoinHandle<()> = tokio::spawn(async move {
             tokio::select! {
-                _ = http_listener::start(http_state, port, use_tls) => {}
+                _ = server => {}
                 _ = task_token.cancelled() => {
                     info!(port, "HTTP listener cancelled");
                 }

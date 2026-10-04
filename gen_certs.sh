@@ -1,18 +1,44 @@
 #!/usr/bin/env bash
-# gen_certs.sh — Generate a self-signed CA + server/client certificate bundle.
+# gen_certs.sh - Generate a self-signed CA + server/client certificate bundle.
 # Auto-detects all local and public IPs and includes them in the SAN.
 set -euo pipefail
 
-# ── Error trap — never fail silently ─────────────────────────────────────────
+# ── Error trap - never fail silently ─────────────────────────────────────────
 trap 'echo ""; echo "[!] FAILED at line ${LINENO}: ${BASH_COMMAND}"; echo "[!] Exit code: $?"; exit 1' ERR
 
-CERTS_DIR="${1:-./certs}"
+CERTS_DIR="./certs"
+# RECERT env var is kept for back-compat with existing automation; the
+# --recert flag below is the documented spelling.
+RECERT="${RECERT:-0}"
+
+usage() {
+    cat <<'EOF'
+Usage: gen_certs.sh [CERTS_DIR] [--recert]
+
+  CERTS_DIR   output directory for the certificate bundle (default: ./certs)
+  --recert    force CA/certificate regeneration even if a CA already exists
+              (orphans every deployed agent; same effect as RECERT=1)
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --recert)
+            RECERT=1; shift ;;
+        -h|--help)
+            usage; exit 0 ;;
+        -*)
+            echo "[!] Unknown option: $1" >&2; usage >&2; exit 2 ;;
+        *)
+            CERTS_DIR="$1"; shift ;;
+    esac
+done
+
 mkdir -p "$CERTS_DIR"
 
 # Idempotency guard: agents pin the CA at build time, so regenerating it
-# orphans every deployed agent. Skip when a CA already exists; automation
-# can force rotation with RECERT=1.
-RECERT="${RECERT:-0}"
+# orphans every deployed agent. Skip when a CA already exists; --recert
+# (or RECERT=1) forces rotation.
 if [[ -s "$CERTS_DIR/ca.crt" && "$RECERT" != "1" ]]; then
     echo "[+] Existing CA preserved (agents keep working; use --recert to rotate)"
     exit 0
@@ -82,10 +108,10 @@ echo "[*] All IPs:    ${SAN_IPS[*]}"
 # ── Build SAN string ──────────────────────────────────────────────────────────
 
 # DNS:c2-server is the Docker Compose service hostname. Agents inside Docker
-# connect to c2-server:4443 by name — without this, rustls returns
+# connect to c2-server:4443 by name - without this, rustls returns
 # NotValidForName and the TLS agent never registers.
 # DNS:localhost allows local cert verification on the host.
-# $(hostname) is intentionally excluded — that caused the renjxkwf pollution.
+# $(hostname) is intentionally excluded - that caused the renjxkwf pollution.
 SAN_STRING="DNS:c2-server,DNS:localhost"
 for ip in "${SAN_IPS[@]}"; do
     SAN_STRING+=",IP:${ip}"
@@ -93,7 +119,7 @@ done
 echo "[*] SAN:        $SAN_STRING"
 
 # ── Write extension configs to temp files ─────────────────────────────────────
-# Explicit temp files — process substitution reads /etc/ssl/openssl.cnf on
+# Explicit temp files - process substitution reads /etc/ssl/openssl.cnf on
 # some distros, which injects the machine hostname into the SAN.
 
 EXT_SERVER=$(mktemp /tmp/rcm_ext_server_XXXXXX)

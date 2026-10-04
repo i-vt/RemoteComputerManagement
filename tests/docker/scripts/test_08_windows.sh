@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_08_windows.sh — Windows agent feature tests
+# tests/docker/scripts/test_08_windows.sh - Windows agent feature tests
 #
 # Exercises Windows-specific agent capabilities via the C2 API.
 # Only runs when WINDOWS_AGENT=1 (set by docker-compose.windows.yml).

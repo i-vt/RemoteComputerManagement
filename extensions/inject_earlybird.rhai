@@ -9,5 +9,5 @@ if args.len() < 2 {
 let bin_path = args[0];
 let payload = args[1];
 
-let res = native_inject_spawn(bin_path, payload);
+let res = native_inject_spawn_early_bird(bin_path, payload);
 return res;

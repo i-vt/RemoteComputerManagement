@@ -76,6 +76,10 @@ services:
       - -c
       - |
         apk add --no-cache curl jq bash coreutils > /dev/null 2>&1
+        # Same PE-capable objdump provision as the base compose test-runner
+        # (test_19_imports); kept fault-tolerant on purpose.
+        apk add --no-cache mingw-w64-binutils > /dev/null 2>&1 \
+          || apk add --no-cache binutils > /dev/null 2>&1 || true
         echo "=== Waiting for credentials ==="
         for i in $$(seq 1 60); do
           [ -f /shared/admin_creds.json ] && break

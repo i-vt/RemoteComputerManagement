@@ -3,8 +3,12 @@ linker = "x86_64-w64-mingw32-gcc"
 ar = "x86_64-w64-mingw32-gcc-ar"
 rustflags = ["-C", "link-args=-static -static-libgcc -static-libstdc++"]
 
-[build]
-rustflags = [
-    "--remap-path-prefix", "$CARGO_HOME/registry=/cargo",
-    "--remap-path-prefix", ".=/src"
-]
+# NOTE: The old [build] rustflags block that passed
+#   --remap-path-prefix $CARGO_HOME/registry=/cargo
+# was removed: cargo never expands "$CARGO_HOME" inside config values, so the
+# literal string was passed to rustc and the remap silently did nothing.
+# Source/dependency path stripping is now handled by builder.rs, which injects
+# the real OPSEC flags into RUSTFLAGS at build time:
+#   nightly -> -Zlocation-detail=none -Ztrim-paths   (supersedes remap-path-prefix)
+#   stable  -> --remap-path-prefix with expanded paths (plus a loud warning that
+#              panic file:line strings will still leak; see rust-toolchain.toml)

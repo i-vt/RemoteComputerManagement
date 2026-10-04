@@ -1,5 +1,6 @@
-// modules/recon4.rhai
+// modules/recon_windows.rhai
 // Network-focused recon: interfaces, routes, connections, ARP.
+// Sends both Windows and Linux command sets; the wrong-OS ones error harmlessly.
 fn run(session_id) {
     print("Module 'Recon4' started for Session: " + session_id);
 

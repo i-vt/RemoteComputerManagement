@@ -23,9 +23,32 @@ impl OperatorInfo {
     pub fn can_execute(&self) -> bool { self.role == "admin" || self.role == "operator" }
 }
 
+/// Numeric rank of a role string; unknown roles rank below viewer.
+/// Hierarchy: viewer (0) < operator (1) < admin (2).
+pub fn role_rank(role: &str) -> u8 {
+    match role {
+        "admin" => 2,
+        "operator" => 1,
+        "viewer" => 0,
+        _ => 0,
+    }
+}
+
+/// Returns true when `role` meets or exceeds the minimum role `min`
+/// ("viewer" | "operator" | "admin"). Kept as a pure function so the RBAC
+/// matrix can be tested without standing up the HTTP stack.
+pub fn role_at_least(role: &str, min: &str) -> bool {
+    role_rank(role) >= role_rank(min)
+}
+
 /// Authentication middleware. Resolves the operator from the X-API-KEY header
 /// and injects OperatorInfo into request extensions. Returns 401 if the key
 /// is missing or invalid.
+///
+/// Two key tiers are accepted: per-session keys minted at login (the
+/// operator_sessions table) and the legacy primary key stored on the
+/// operator row (issued at creation, before session keys existed). Session
+/// keys are checked first so a revoked session fails immediately.
 pub async fn auth(
     State(state): State<Arc<ApiContext>>,
     headers: HeaderMap,
@@ -46,33 +69,11 @@ pub async fn auth(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    // Streaming download and <img>/<a href> endpoints cannot send custom
-    // headers. Accept ?key=<api_key> as a fallback so the browser streams
-    // directly (or renders images) without fetch->blob memory buffering.
-    // /api/downloads/ is included so panel image previews keep working now
-    // that the route is authenticated.
-    let download_paths = ["/api/loot/zip", "/api/builder/jobs/", "/api/downloads/"];
-    let is_download_path = download_paths
-        .iter()
-        .any(|p| request.uri().path().starts_with(p));
-
-    let query_key_buf: String;
-    let api_key: &str = if !header_key.is_empty() {
-        header_key
-    } else if is_download_path {
-        query_key_buf = request.uri().query()
-            .unwrap_or("")
-            .split('&')
-            .find_map(|pair| {
-                let mut kv = pair.splitn(2, '=');
-                let k = kv.next()?;
-                if k == "key" { kv.next().map(|v| v.to_owned()) } else { None }
-            })
-            .unwrap_or_default();
-        &query_key_buf
-    } else {
-        ""
-    };
+    // The X-API-KEY header is the only accepted credential carrier. The
+    // former ?key=<api_key> query fallback for download URLs leaked keys
+    // into browser history, screenshots, and logs; clients must send the
+    // header on every request.
+    let api_key: &str = header_key;
 
     if api_key.is_empty() {
         return Err(StatusCode::UNAUTHORIZED);
@@ -80,7 +81,8 @@ pub async fn auth(
 
     let operator = {
         let conn = state.db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        database::get_operator_by_key(&conn, api_key)
+        database::get_operator_by_session_key(&conn, api_key)
+            .or_else(|| database::get_operator_by_key(&conn, api_key))
     };
 
     match operator {
@@ -100,4 +102,32 @@ pub async fn auth(
 /// Helper: extract operator info from request extensions in route handlers.
 pub fn get_operator(extensions: &axum::http::Extensions) -> Option<OperatorInfo> {
     extensions.get::<OperatorInfo>().cloned()
+}
+#[cfg(test)]
+mod tests {
+    use super::{role_at_least, role_rank};
+
+    #[test]
+    fn role_rank_orders_hierarchy() {
+        assert!(role_rank("admin") > role_rank("operator"));
+        assert!(role_rank("operator") > role_rank("viewer"));
+    }
+
+    #[test]
+    fn unknown_roles_rank_as_viewer() {
+        assert_eq!(role_rank("superuser"), 0);
+        assert_eq!(role_rank(""), role_rank("viewer"));
+    }
+
+    #[test]
+    fn role_at_least_matrix() {
+        assert!(role_at_least("admin", "admin"));
+        assert!(role_at_least("admin", "operator"));
+        assert!(role_at_least("operator", "operator"));
+        assert!(role_at_least("operator", "viewer"));
+        assert!(role_at_least("viewer", "viewer"));
+        assert!(!role_at_least("viewer", "operator"));
+        assert!(!role_at_least("operator", "admin"));
+        assert!(!role_at_least("unknown", "operator"));
+    }
 }

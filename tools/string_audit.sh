@@ -14,7 +14,10 @@
 #    and any host-rooted cargo path. /rustc/, library/*, panic-message and
 #    schema field-name entries remain HARD failures.
 #  - RUST_BACKTRACE (bare) is a residual std-backtrace artifact present in
-#    all std builds; rust_begin_unwind/backtrace:: stay denied (TODO: strip).
+#    all std builds and is accepted. rust_begin_unwind and backtrace:: are
+#    hard failures: the agent build rebuilds std with
+#    panic_immediate_abort, which removes the unwind/backtrace machinery
+#    entirely, so a shipped binary must never contain them.
 #  - Agents built with --debug intentionally keep tracing callsites and will
 #    FAIL this audit; ship/audit only non-debug builds (builder suppresses
 #    them via tracing/release_max_level_off).

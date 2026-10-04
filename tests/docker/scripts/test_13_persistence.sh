@@ -125,7 +125,7 @@ assert_contains "output has Crontab section"    "Crontab" "$CMD_OUTPUT"
 assert_contains "output has Systemd section"    "Systemd" "$CMD_OUTPUT"
 assert_contains "output has Profile section"    "Profile" "$CMD_OUTPUT"
 
-# ── persist:systemd — install ─────────────────────────────────────────────────
+# ── persist:systemd - install ─────────────────────────────────────────────────
 
 suite "persist:systemd — install lifecycle"
 
@@ -179,7 +179,7 @@ assert_contains "default.target.wants/ symlink created" "SYMLINK" "$CMD_OUTPUT"
 send_cmd "persist:list"
 assert_contains "persist:list shows installed unit" "$UNIT_NAME" "$CMD_OUTPUT"
 
-# ── persist:systemd — idempotency ─────────────────────────────────────────────
+# ── persist:systemd - idempotency ─────────────────────────────────────────────
 
 suite "persist:systemd — idempotent reinstall"
 
@@ -189,7 +189,7 @@ assert_eq "second install exits 0" "0" "$CMD_EXIT"
 send_cmd "shell ls ${SYSTEMD_USER_DIR} | grep -c ${UNIT_NAME}"
 assert_eq "unit appears exactly once in dir" "1" "$(echo "$CMD_OUTPUT" | tr -d '[:space:]')"
 
-# ── persist:systemd — remove ──────────────────────────────────────────────────
+# ── persist:systemd - remove ──────────────────────────────────────────────────
 
 suite "persist:systemd_remove — cleanup"
 
@@ -203,12 +203,12 @@ assert_contains "unit file is deleted after remove"  "GONE" "$CMD_OUTPUT"
 send_cmd "shell test -L ${WANTS_LINK} && echo EXISTS || echo GONE"
 assert_contains "wants symlink is deleted after remove" "GONE" "$CMD_OUTPUT"
 
-# Remove a non-existent unit — must not error
+# Remove a non-existent unit - must not error
 send_cmd "persist:systemd_remove definitely-not-installed"
 assert_eq   "remove of non-existent unit exits 0"   "0"   "$CMD_EXIT"
 assert_contains "output signals nothing was found"   "[~]" "$CMD_OUTPUT"
 
-# ── persist:profile — install ─────────────────────────────────────────────────
+# ── persist:profile - install ─────────────────────────────────────────────────
 
 suite "persist:profile — install lifecycle"
 
@@ -257,7 +257,7 @@ assert_contains ".bashrc entry includes pgrep guard" "pgrep" "$CMD_OUTPUT"
 send_cmd "shell grep ' &$' /root/.bashrc"
 assert_contains ".bashrc entry runs agent in background" "&" "$CMD_OUTPUT"
 
-# ── persist:profile — idempotency ────────────────────────────────────────────
+# ── persist:profile - idempotency ────────────────────────────────────────────
 
 suite "persist:profile — idempotent reinstall"
 
@@ -268,7 +268,7 @@ send_cmd "shell grep -c 'rcm-persist-start' /root/.bashrc || echo 0"
 assert_eq "sentinel still appears exactly once after second install" \
     "1" "$(echo "$CMD_OUTPUT" | tr -d '[:space:]')"
 
-# ── persist:profile — remove ──────────────────────────────────────────────────
+# ── persist:profile - remove ──────────────────────────────────────────────────
 
 suite "persist:profile_remove — cleanup"
 
@@ -298,7 +298,7 @@ else
     FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# Remove when nothing is installed — must not error
+# Remove when nothing is installed - must not error
 send_cmd "persist:profile_remove /no/such/binary"
 assert_eq   "remove-nonexistent exits 0" "0"   "$CMD_EXIT"
 assert_contains "output signals nothing found" "[~]" "$CMD_OUTPUT"
@@ -337,7 +337,7 @@ assert_contains "surviving stable copy is still executable" "EXEC" "$CMD_OUTPUT"
 send_cmd "persist:systemd_remove ${SURV_UNIT}"
 assert_eq "cleanup of survival test unit exits 0" "0" "$CMD_EXIT"
 
-# ── persist:cron — conditional on crontab availability ───────────────────────
+# ── persist:cron - conditional on crontab availability ───────────────────────
 
 suite "persist:cron — install and remove"
 
@@ -376,13 +376,67 @@ else
     assert_eq "crontab entry removed" \
         "0" "$(echo "$CMD_OUTPUT" | tr -d '[:space:]')"
 
-    # Remove again — must be graceful
+    # Remove again - must be graceful
     send_cmd "persist:cron_remove /no/such/entry"
     assert_eq   "remove nonexistent cron exits 0" "0"   "$CMD_EXIT"
     assert_contains "nonexistent cron remove is graceful" "[~]" "$CMD_OUTPUT"
 fi
 
-# ── persist:list — reflects installed state ───────────────────────────────────
+# ── persist:cleanup - full artifact removal ──────────────────────────────────
+#
+# persist:cleanup must remove EVERY artifact this install created, keyed by
+# the stable-drop path (not the operator-chosen unit/label name), and return
+# a structured per-method report.
+
+suite "persist:cleanup — full artifact removal"
+
+CLEAN_UNIT="rcm-cleanup-svc"
+CLEAN_UNIT_FILE="${SYSTEMD_USER_DIR}/${CLEAN_UNIT}.service"
+CLEAN_WANTS="${SYSTEMD_WANTS_DIR}/${CLEAN_UNIT}.service"
+
+send_cmd "persist:systemd ${CLEAN_UNIT} ${AGENT_BINARY}"
+assert_eq "systemd install for cleanup test exits 0" "0" "$CMD_EXIT"
+
+send_cmd "persist:profile ${AGENT_BINARY}"
+assert_eq "profile install for cleanup test exits 0" "0" "$CMD_EXIT"
+
+send_cmd "shell test -f ${CLEAN_UNIT_FILE} && echo EXISTS || echo MISSING"
+assert_contains "setup: unit file present before cleanup" "EXISTS" "$CMD_OUTPUT"
+
+send_cmd "shell grep -c 'rcm-persist-start' /root/.bashrc || echo 0"
+assert_eq "setup: sentinel present before cleanup" \
+    "1" "$(echo "$CMD_OUTPUT" | tr -d '[:space:]')"
+
+send_cmd "persist:cleanup"
+assert_eq "persist:cleanup exits 0" "0" "$CMD_EXIT"
+assert_contains "cleanup report mentions systemd"  "systemd" "$CMD_OUTPUT"
+assert_contains "cleanup report mentions profile"  "profile" "$CMD_OUTPUT"
+assert_contains "cleanup report shows systemd removed" "systemd: removed" "$CMD_OUTPUT"
+assert_contains "cleanup report shows profile removed" "profile: removed" "$CMD_OUTPUT"
+
+send_cmd "shell test -f ${CLEAN_UNIT_FILE} && echo EXISTS || echo GONE"
+assert_contains "unit file gone after persist:cleanup" "GONE" "$CMD_OUTPUT"
+
+send_cmd "shell test -L ${CLEAN_WANTS} && echo EXISTS || echo GONE"
+assert_contains "wants symlink gone after persist:cleanup" "GONE" "$CMD_OUTPUT"
+
+send_cmd "shell bash -c 'c=\$(grep -c rcm-persist-start /root/.bashrc 2>/dev/null); echo \${c:-0}'"
+assert_eq "sentinel gone from .bashrc after cleanup" \
+    "0" "$(echo "$CMD_OUTPUT" | tr -d '[:space:]')"
+
+send_cmd "shell bash -c 'c=\$(grep -c rcm-persist-start /root/.profile 2>/dev/null); echo \${c:-0}'"
+assert_eq "sentinel gone from .profile after cleanup" \
+    "0" "$(echo "$CMD_OUTPUT" | tr -d '[:space:]')"
+
+# Idempotency: a second cleanup on a clean system reports not-present
+send_cmd "persist:cleanup"
+assert_eq "second persist:cleanup exits 0" "0" "$CMD_EXIT"
+assert_contains "second cleanup reports systemd not-present" \
+    "systemd: not-present" "$CMD_OUTPUT"
+assert_contains "second cleanup reports profile not-present" \
+    "profile: not-present" "$CMD_OUTPUT"
+
+# ── persist:list - reflects installed state ───────────────────────────────────
 #
 # Install something, verify list shows it, remove it, verify list clears.
 
@@ -410,7 +464,7 @@ fi
 # ── Platform-guard errors over the wire ───────────────────────────────────────
 #
 # On a Linux agent, Windows-only commands must return a non-zero exit code
-# with a message that contains "Windows" — not an unhandled panic.
+# with a message that contains "Windows" - not an unhandled panic.
 
 suite "persist:* — platform guard errors (Linux agent)"
 

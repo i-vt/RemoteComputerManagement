@@ -14,7 +14,11 @@ window.IocTracker = {
     async init() {
         this._hosts = window.API?.hosts || [];
         await this.refresh();
-        this._bindFilters();
+        this._populateSessionFilter();
+        if (!this._filtersBound) {
+            this._bindFilters();
+            this._filtersBound = true;
+        }
     },
 
     async refresh() {
@@ -113,31 +117,46 @@ window.IocTracker = {
 
         if (cleanupCmd) {
             const msg = `Dispatch cleanup command to session #${sessionId}?\n\n${cleanupCmd}`;
-            if (!confirm(msg)) return;
+            if (!await window.Modal.confirm(msg)) return;
             // Send the cleanup command to the agent
-            await fetch(`${url}/api/hosts/${sessionId}/command`, {
+            const cmdRes = await fetch(`${url}/api/hosts/${sessionId}/command`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-API-KEY': window.Auth.key },
                 body: JSON.stringify({ command: cleanupCmd }),
             });
+            if (cmdRes.status === 401) return window.Auth.logout();
+            if (!cmdRes.ok) {
+                window.Notify?.toast('Cleanup command was not queued - record left unchanged', 'error');
+                return;
+            }
         }
 
         // Mark as cleaned in the DB
-        await fetch(`${url}/api/iocs/${id}/clean`, {
+        const res = await fetch(`${url}/api/iocs/${id}/clean`, {
             method: 'POST',
             headers: { 'X-API-KEY': window.Auth.key },
         });
+        if (res.status === 401) return window.Auth.logout();
+        if (!res.ok) {
+            window.Notify?.toast(`Failed to mark cleaned (HTTP ${res.status})`, 'error');
+            return;
+        }
         await this.refresh();
         window.Notify?.toast('Marked as cleaned', 'success', 2000);
     },
 
     async deleteEntry(id) {
-        if (!confirm('Remove this IOC record? This does not clean the artifact.')) return;
+        if (!await window.Modal.confirm('Remove this IOC record? This does not clean the artifact.')) return;
         const url = window.Auth.url.replace(/\/$/, '');
-        await fetch(`${url}/api/iocs/${id}`, {
+        const res = await fetch(`${url}/api/iocs/${id}`, {
             method: 'DELETE',
             headers: { 'X-API-KEY': window.Auth.key },
         });
+        if (res.status === 401) return window.Auth.logout();
+        if (!res.ok) {
+            window.Notify?.toast(`Failed to delete record (HTTP ${res.status})`, 'error');
+            return;
+        }
         await this.refresh();
     },
 
@@ -237,13 +256,19 @@ window.IocTracker = {
             document.getElementById(id)?.addEventListener('input', () => this._render());
             document.getElementById(id)?.addEventListener('change', () => this._render());
         });
-        // Populate session filter with current hosts
+    },
+
+    // Populate session filter with current hosts (re-run on each init so
+    // the dropdown tracks the live host list)
+    _populateSessionFilter() {
         const sel = document.getElementById('ioc-filter-session');
         if (sel && window.API?.hosts?.length) {
+            const prev = sel.value;
             sel.innerHTML = '<option value="">All sessions</option>' +
                 window.API.hosts.map(h =>
                     `<option value="${h.id}">${h.hostname} (#${h.id})</option>`
                 ).join('');
+            sel.value = prev;
         }
     },
 };

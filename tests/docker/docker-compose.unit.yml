@@ -2,17 +2,20 @@
 #
 # Unit test runner for RCM feature modules.
 #
-# ┌─────────────────────────────────────────────────────────────────────┐
-# │  Service        What runs                                           │
-# │  ───────────    ──────────────────────────────────────────────────  │
-# │  unit-all       cargo test --lib (NO FILTER — every test)          │
-# │  unit-topology  cargo test --lib topology::tests                    │
-# │  unit-transport cargo test --lib transport::tests                   │
-# │  unit-database  cargo test --lib queued_task_tests                  │
-# │  unit-hibernation cargo test --lib hibernation::tests               │
-# │  unit-interface  cargo test --lib interface_tests                   │
-# │  unit-extension  cargo test --test test_extensions                  │
-# └─────────────────────────────────────────────────────────────────────┘
+# ┌──────────────────────────────────────────────────────────────────────┐
+# │  Service          What runs                                          │
+# │  ───────────      ─────────────────────────────────────────────────  │
+# │  unit-all         cargo test (NO FILTER - lib + every tests/*.rs)    │
+# │  unit-topology    cargo test --lib topology::tests                   │
+# │  unit-transport   cargo test --lib transport::tests                  │
+# │  unit-database    cargo test --lib queued_task_tests                 │
+# │  unit-hibernation cargo test --lib hibernation::tests                │
+# │  unit-interface   cargo test --test test_utils network_interfaces    │
+# │  unit-extension   cargo test --test test_extension                   │
+# │  unit-dga         cargo test --test test_dga                         │
+# │  unit-fallback    cargo test --test test_fallback                    │
+# │  unit-shellcode   cargo test --test test_shellcode                   │
+# └──────────────────────────────────────────────────────────────────────┘
 #
 # Usage:
 #
@@ -46,8 +49,9 @@ x-env: &env
 services:
 
   # ── Full suite — NO FILTER ─────────────────────────────────────────────────
-  # Runs every #[test] in the library. Command is set explicitly here so the
-  # result is the same regardless of what the Dockerfile CMD says.
+  # Runs every test in the crate: all inline #[cfg(test)] tests in the library
+  # plus every tests/*.rs integration binary. Command is set explicitly here
+  # so the result is the same regardless of what the Dockerfile CMD says.
   unit-all:
     build: *build
     environment: *env
@@ -81,17 +85,20 @@ services:
     command: >
       cargo test --lib hibernation::tests -- --nocapture --test-threads=1
 
+  # Network interface enumeration (utils::get_network_interfaces) is covered
+  # by the network_interfaces_* tests in tests/test_utils.rs.
   unit-interface:
     build: *build
+    image: rcm-unit-tests-unit-all   # reuse the pre-built unit-all image
     environment: *env
     command: >
-      cargo test --lib interface_tests -- --nocapture --test-threads=1
+      cargo test --test test_utils network_interfaces -- --nocapture --test-threads=1
 
   unit-extension:
     build: *build
     image: rcm-unit-tests-unit-all   # reuse the pre-built unit-all image
     environment: *env
-    command: cargo test --test test_extensions -- --nocapture --test-threads=1
+    command: cargo test --test test_extension -- --nocapture --test-threads=1
 
   # Integration test suites (run specific test files)
   unit-dga:

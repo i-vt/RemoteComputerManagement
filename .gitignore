@@ -1,66 +1,32 @@
-# ── Rust build artifacts ───────────────────────────────────────────────
-/target/
-**/*.rs.bk
-*.pdb
+# Pre-public-push hygiene: keep key material, runtime state, operator data
+# and build artifacts out of version control.
 
-# ── Compiled agent binaries ────────────────────────────────────────────
-/dist/exe_*
-/dist/dll_*
-/dist/service_*
-/dist/stager_*
-/dist/*.exe
-# Keep server_keys.json out of git — contains private signing keys
-/dist/server_keys.json
+# TLS / signing key material
+certs/*.key
+*.der
 
-# ── TLS certificates and keys ──────────────────────────────────────────
-# Generated at runtime by start_docker.sh — never commit certs or keys
-/certs/ca.key
-/certs/ca.crt
-/certs/ca.srl
-/certs/server.key
-/certs/server.key.der
-/certs/server.crt
-/certs/server.csr
-/certs/client.key
-/certs/client.key.der
-/certs/client.crt
-/certs/client.csr
+# Per-build and legacy server key files (ed25519 private keys, plaintext)
+server_keys.json
+server_keys_*.json
 
-# ── Runtime database ───────────────────────────────────────────────────
-# Contains operator credentials, session data, build keys, audit log
-c2_audit.db
-c2_audit.db-shm
-c2_audit.db-wal
-
-# ── Operator data ──────────────────────────────────────────────────────
-/downloads/
-/data/
-/logs/
-/history.txt
-
-# ── Docker ─────────────────────────────────────────────────────────────
-# Ignore local override files but keep the main compose file
-docker-compose.override.yml
-docker-compose.local.yml
-
-# ── IDE and editor ─────────────────────────────────────────────────────
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-
-# ── Environment and secrets ────────────────────────────────────────────
+# Operator credentials and environment
 .env
-.env.local
-.env.*.local
-secrets/
+admin_creds.json
 
-# ── Test artifacts ─────────────────────────────────────────────────────
-/tests/docker/tmp/
-*.test.log
+# Runtime state
+data/
+downloads/
+dist/
+*.db
+nohup.out
 
-# ── Summary / generated docs ───────────────────────────────────────────
+# Build and test artifacts
+target/
+tests/results/
+
+# Local build outputs and editor junk
+device_helper*
 summary.txt
+*.swp
+Dockerfile.bak*
+logs/

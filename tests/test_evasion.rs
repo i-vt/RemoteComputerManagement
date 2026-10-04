@@ -93,12 +93,14 @@ fn patching_errors_contain_windows_only_message() {
 
 #[cfg(not(target_os = "windows"))]
 #[test]
-fn heap_stubs_return_ok_zero_on_non_windows() {
-    assert_eq!(evasion::encrypt_heap(&[0u8; 16]).unwrap(),              0);
-    assert_eq!(evasion::decrypt_heap(&[0u8; 16]).unwrap(),              0);
-    assert_eq!(evasion::encrypt_heap_aes256gcm(&[0u8; 32], &[0u8; 12]).unwrap(), 0);
-    assert_eq!(evasion::decrypt_heap_aes256gcm(&[0u8; 32], &[0u8; 12]).unwrap(), 0);
+fn heap_aes_stubs_fail_loudly_on_non_windows() {
+    // Non-Windows stubs must not report success: Ok(0) surfaced as
+    // "0 blocks encrypted" with exit code 0, implying masking happened.
+    assert!(evasion::encrypt_heap_aes256gcm(&[0u8; 32], &[0u8; 12]).is_err());
+    assert!(evasion::decrypt_heap_aes256gcm(&[0u8; 32], &[0u8; 12]).is_err());
 }
+
+
 
 #[cfg(not(target_os = "windows"))]
 #[test]

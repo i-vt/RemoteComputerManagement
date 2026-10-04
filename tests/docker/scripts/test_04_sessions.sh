@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_04_sessions.sh — Agent sessions & commands
+# tests/docker/scripts/test_04_sessions.sh - Agent sessions & commands
 source "$(dirname "$0")/lib.sh"
 
 suite "Agents have checked in"
@@ -13,7 +13,7 @@ if [ "$HOST_COUNT" -eq 0 ]; then
     return 0 2>/dev/null || exit 0
 fi
 
-# Prefer the TLS agent for command tests — HTTP sessions queue commands
+# Prefer the TLS agent for command tests - HTTP sessions queue commands
 # through HttpC2State in-memory, which doesn't write to the history DB
 # the same way TLS sessions do.
 SESSION_ID=$(echo "$RESP" | jq -r '[.[] | select(.hostname=="agent-tls")][0].id // .[0].id')
@@ -43,7 +43,7 @@ else
 fi
 
 suite "Command appears in session history"
-# Poll instead of fixed sleep — HTTP transport writes history asynchronously
+# Poll instead of fixed sleep - HTTP transport writes history asynchronously
 # and can lag several seconds behind the output response.
 HIST=""
 for i in $(seq 1 15); do

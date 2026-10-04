@@ -304,6 +304,34 @@ window.NetworkManager = {
         `;
         el.style.left = `${x}px`;
         el.style.top = `${y}px`;
+
+        // Quick actions on the host detail tooltip. Buttons are built with
+        // listeners (no inline handlers) since tooltip data is agent-derived.
+        const sessionId = String(data.id).replace(/^s/, '');
+        const hostname = String(data.full_hostname || '');
+        const actions = document.createElement('div');
+        actions.className = 'mt-2 flex gap-2';
+        const mkBtn = (icon, title, cb) => {
+            const b = document.createElement('button');
+            b.className = 'flex-1 text-xs border border-gray-600 hover:border-green-500 hover:text-green-400 text-gray-300 px-2 py-1 rounded';
+            b.title = title;
+            b.innerHTML = `<i class="fas ${icon}"></i>`;
+            b.addEventListener('click', (ev) => { ev.stopPropagation(); cb(); });
+            return b;
+        };
+        actions.appendChild(mkBtn('fa-terminal', 'Shell', () => {
+            this.clearAllTooltips();
+            window.Terminal?.open(parseInt(sessionId, 10), hostname);
+        }));
+        actions.appendChild(mkBtn('fa-camera', 'Screenshot', () => {
+            this.clearAllTooltips();
+            window.ScreenshotView?.capture(parseInt(sessionId, 10));
+        }));
+        actions.appendChild(mkBtn('fa-list', 'Processes', () => {
+            this.clearAllTooltips();
+            window.ProcView?.load(parseInt(sessionId, 10));
+        }));
+        el.appendChild(actions);
         document.body.appendChild(el);
         this.tooltips[id] = { el: el, timeout: null };
         el.style.transition = 'opacity 0.3s ease-in-out';
@@ -335,5 +363,92 @@ window.NetworkManager = {
             if (entry.el && entry.el.parentNode) { entry.el.parentNode.removeChild(entry.el); }
         });
         this.tooltips = {};
+    },
+
+    // ── Route planner (GET /api/topology/plan + /snapshot) ───────────────
+
+    _esc(s) {
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    },
+
+    _candidateRows(candidates) {
+        const esc = this._esc.bind(this);
+        if (!candidates.length) {
+            return '<p class="text-gray-500 text-xs italic">No session can reach that target.</p>';
+        }
+        return `<table class="data-table" style="margin-top:8px;">
+            <thead><tr>
+                <th>#</th><th>Entry agent</th><th>Network</th>
+                <th class="hide-mobile">Interface</th>
+                <th class="hide-mobile">Source addr</th><th>Score</th>
+            </tr></thead>
+            <tbody>${candidates.map((c, i) => `<tr class="border-b border-gray-700">
+                <td class="p-2 text-xs text-gray-500">${i + 1}</td>
+                <td class="p-2 text-sm text-white">#${esc(c.session_id)} ${esc(c.hostname)}</td>
+                <td class="p-2 font-mono text-xs text-green-400">${esc(c.cidr)}</td>
+                <td class="p-2 text-xs text-gray-400 hide-mobile">${esc(c.interface)}</td>
+                <td class="p-2 font-mono text-xs text-gray-400 hide-mobile">${esc(c.source_addr)}</td>
+                <td class="p-2 text-xs font-bold text-yellow-400">${esc(c.score)}</td>
+            </tr>`).join('')}</tbody>
+        </table>`;
+    },
+
+    async planRoute() {
+        const target = document.getElementById('topology-target')?.value.trim();
+        const out = document.getElementById('topology-results');
+        if (!out) return;
+        if (!target) { window.Notify?.toast('Enter a target IP or CIDR.', 'warning'); return; }
+        out.innerHTML = '<p class="text-gray-400 text-xs">Planning…</p>';
+        try {
+            const res = await window.API.apiFetch(`/api/topology/plan?target=${encodeURIComponent(target)}`);
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+            let html = this._candidateRows(data.candidates || []);
+            if (data.rendered) {
+                html += `<details style="margin-top:8px;"><summary class="text-xs text-gray-500" style="cursor:pointer;">Server-rendered plan</summary>
+                    <pre class="text-xs text-green-300 font-mono" style="white-space:pre-wrap;margin-top:6px;">${this._esc(data.rendered)}</pre></details>`;
+            }
+            out.innerHTML = html;
+        } catch (e) {
+            if (e.message === 'unauthorized') return;
+            out.innerHTML = `<p class="text-red-400 text-xs">Plan failed: ${this._esc(e.message)}</p>`;
+        }
+    },
+
+    async loadSnapshot() {
+        const out = document.getElementById('topology-results');
+        if (!out) return;
+        out.innerHTML = '<p class="text-gray-400 text-xs">Loading snapshot…</p>';
+        try {
+            const res = await window.API.apiFetch('/api/topology/snapshot');
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+            const esc = this._esc.bind(this);
+
+            let html = `<p class="text-xs text-gray-400" style="margin-bottom:8px;">
+                ${esc(data.session_count)} session(s) reporting interfaces.</p>`;
+
+            html += '<div class="text-xs font-bold text-gray-300" style="margin:8px 0 4px;">Reachable networks per session</div>';
+            html += this._candidateRows(data.candidates || []);
+
+            const shared = data.shared_networks || [];
+            html += '<div class="text-xs font-bold text-gray-300" style="margin:12px 0 4px;">Shared networks (possible lateral hops)</div>';
+            html += shared.length
+                ? shared.map(n => `<div class="text-xs font-mono text-gray-300" style="padding:2px 0;">
+                    <span class="text-green-400">${esc(n.cidr)}</span> - sessions ${n.sessions.map(s => '#' + esc(s)).join(', ')}</div>`).join('')
+                : '<p class="text-gray-500 text-xs italic">No shared networks.</p>';
+
+            const conflicts = data.conflicts || [];
+            html += '<div class="text-xs font-bold text-gray-300" style="margin:12px 0 4px;">Overlapping CIDR conflicts</div>';
+            html += conflicts.length
+                ? conflicts.map(c => `<div class="text-xs font-mono text-yellow-300" style="padding:2px 0;">
+                    ${esc(c.cidr_a)} (#${esc(c.session_a)}) overlaps ${esc(c.cidr_b)} (#${esc(c.session_b)})</div>`).join('')
+                : '<p class="text-gray-500 text-xs italic">No conflicts.</p>';
+
+            out.innerHTML = html;
+        } catch (e) {
+            if (e.message === 'unauthorized') return;
+            out.innerHTML = `<p class="text-red-400 text-xs">Snapshot failed: ${this._esc(e.message)}</p>`;
+        }
     }
 };

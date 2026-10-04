@@ -9,7 +9,11 @@ window.AuditView = {
             const res = await fetch(`${url}/api/audit`, {
                 headers: { 'X-API-KEY': window.Auth.key }
             });
-            if(!res.ok) return;
+            if(res.status === 401) return window.Auth.logout();
+            if(!res.ok) {
+                tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-red-400">Failed to load audit log (HTTP ${res.status})</td></tr>`;
+                return;
+            }
             const entries = await res.json();
 
             if(entries.length === 0) {
@@ -40,6 +44,9 @@ window.AuditView = {
                     <td class="p-3 text-gray-300 text-xs truncate max-w-[300px]" title="${esc(e.details || '')}">${esc(e.details) || '-'}</td>
                 </tr>`;
             }).join('');
-        } catch(e) { console.error('Audit fetch error:', e); }
+        } catch(e) {
+            console.error('Audit fetch error:', e);
+            tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-red-400">Failed to load audit log (server unreachable)</td></tr>';
+        }
     }
 };

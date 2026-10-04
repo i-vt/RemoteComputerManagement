@@ -41,7 +41,7 @@ window.Router = {
         });
 
         // If the page is in the "more" sheet, also activate the "more" nav button
-        const morePages = ['network','files','proxies','tasks','history','jobs','audit'];
+        const morePages = ['network','files','proxies','tasks','history','jobs','queue','audit'];
         const moreBtn = document.getElementById('mobile-more-btn');
         if (moreBtn) {
             moreBtn.classList.toggle('active', morePages.includes(pageId));
@@ -51,20 +51,23 @@ window.Router = {
 
         // Page-specific refresh
         const refreshMap = {
-            'proxies':   () => window.ProxyManager?.refreshList(),
+            'proxies':   () => { window.ProxyManager?.refreshList(); window.Rportfwd?.init(); },
             'control':   () => { window.API?.refreshHosts(); window.Router.syncMobileCards(); },
             'tasks':     () => {
                 window.TaskManager?.renderTable();
+                window.TaskManager?.loadHistory();
                 window.TaskManager?.loadModules();   // retry after auth is established
             },
             'history':   () => window.HistoryManager?.refresh(),
             'network':   () => window.NetworkManager?.init(),
             'listeners': () => { window.ListenerManager?.refresh(); window.ReconConfig?.init(); },
             'jobs':      () => window.JobView?.refresh(),
+            'queue':     () => window.TaskQueue?.init(),
             'audit':     () => window.AuditView?.refresh(),
-            'iocs':      () => window.IocTracker?.refresh(),
+            'iocs':      () => window.IocTracker?.init(),
+            'extensions': () => window.ExtManager?.init(),
             'builder':   () => window.BuilderManager?.refreshJobList(),
-            'loot':  () => window.LootBrowser?.init(),
+            'loot':  () => { window.LootBrowser?.init(); window.RcmPackages?.refresh(); },
             'users': () => window.UserManager?.init(),
             'files': () => {
                 if (window.API && window.FileManager) {
@@ -75,6 +78,28 @@ window.Router = {
             },
         };
         if (refreshMap[pageId]) refreshMap[pageId]();
+
+        // Keep the visible page fresh. Only /api/hosts polls on its own;
+        // every other page was manual-refresh only and went stale
+        // indefinitely. Re-run a lightweight refresh on an interval while
+        // the page is visible. Pages with editable forms (recon config,
+        // loot browser, scripts editor) are excluded so in-progress edits
+        // are not clobbered.
+        if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
+        const pollMap = {
+            'network':   () => window.NetworkManager?.init(),
+            'proxies':   () => { window.ProxyManager?.refreshList(); window.Rportfwd?.refresh(); },
+            'jobs':      () => window.JobView?.refresh(),
+            'queue':     () => window.TaskQueue?.refresh(),
+            'iocs':      () => window.IocTracker?.refresh(),
+            'listeners': () => window.ListenerManager?.refresh(),
+        };
+        if (pollMap[pageId]) {
+            this._pollTimer = setInterval(() => {
+                if (document.hidden) return;
+                pollMap[pageId]();
+            }, 10000);
+        }
     },
 
     // Sync mobile session cards from the hosts table data
@@ -107,11 +132,18 @@ window.Router = {
             const hostname = cells[1]?.textContent?.trim() || '';
             const ip       = cells[2]?.textContent?.trim() || '';
             const os       = cells[3]?.textContent?.trim()?.toLowerCase() || '';
-            const actionCell = cells[6];
+            // The actions cell is always the last one; column count shifts
+            // when optional columns (e.g. Evasion) are inserted.
+            const actionCell = cells[cells.length - 1];
 
             const isWindows = os.includes('win');
             const iconClass = isWindows ? 'windows' : 'linux';
             const osIcon    = isWindows ? 'fab fa-windows' : 'fab fa-linux';
+
+            // Carry the hibernation chip from the hostname cell onto the card
+            const hibChip = cells[1]?.querySelector('.fa-moon')
+                ? ' <span class="px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-300" style="font-size:10px;"><i class="fas fa-moon"></i> hibernating</span>'
+                : '';
 
             const card = document.createElement('div');
             card.className = 'session-card';
@@ -120,7 +152,7 @@ window.Router = {
                     <i class="${osIcon}"></i>
                 </div>
                 <div class="session-info">
-                    <div class="session-hostname">${escHtml(hostname)}</div>
+                    <div class="session-hostname">${escHtml(hostname)}${hibChip}</div>
                     <div class="session-meta">${escHtml(ip)} · #${escHtml(id)}</div>
                 </div>
                 <i class="fas fa-chevron-right session-chevron"></i>

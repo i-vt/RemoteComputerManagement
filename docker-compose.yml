@@ -34,7 +34,7 @@ services:
 
     volumes:
       # ── Persistent runtime data (host-mounted) ─────────────────────
-      - ./certs:/app/certs:ro
+      - ./certs:/app/certs
       - ./logs:/app/logs
       - ./downloads:/app/downloads
       - ./data:/app/data

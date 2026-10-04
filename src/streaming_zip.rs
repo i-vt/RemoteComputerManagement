@@ -312,6 +312,9 @@ fn write_central_directory<W: Write>(
 /// number or size of files. The central directory is kept in a `Vec<CdEntry>`
 /// which grows to O(num_files × ~100 bytes) - for a million files that is
 /// roughly 100 MB, which is acceptable.
+///
+/// Symlinks are never followed: they are excluded from the archive so the
+/// walk cannot escape `root`.
 pub fn write_zip_directory<W: Write>(
     out:  &mut W,
     base: &Path,
@@ -337,10 +340,17 @@ pub fn write_zip_directory<W: Write>(
                 Err(_) => continue,
             };
 
-            let meta = match std::fs::metadata(&path) {
+            let meta = match std::fs::symlink_metadata(&path) {
                 Ok(m) => m,
                 Err(_) => continue,
             };
+
+            // Symlinks are skipped outright: a planted link inside the loot
+            // tree would otherwise make the archive escape the storage base
+            // and exfiltrate arbitrary server files.
+            if meta.file_type().is_symlink() {
+                continue;
+            }
 
             let unix_secs = meta.modified()
                 .ok()
@@ -349,13 +359,13 @@ pub fn write_zip_directory<W: Write>(
                 .unwrap_or(0);
             let mt = to_dos(unix_secs);
 
-            if path.is_dir() {
+            if meta.is_dir() {
                 // Directory entries end with '/' per ZIP convention
                 let dir_name = format!("{}/", rel);
                 let e = write_dir_entry(out, dir_name.as_bytes(), mt, &mut pos)?;
                 entries.push(e);
                 stack.push(path);
-            } else if path.is_file() {
+            } else if meta.is_file() {
                 let mut f = std::fs::File::open(&path)?;
                 let e = write_file_entry(out, &mut f, rel.as_bytes(), mt, &mut pos)?;
                 entries.push(e);

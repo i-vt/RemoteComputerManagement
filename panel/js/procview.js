@@ -106,14 +106,25 @@ window.ProcView = {
             </tr>`).join('');
     },
 
-    inject(pid) {
+    async inject(pid) {
         if (!pid) return;
-        const sc = prompt(`Base64 shellcode to inject into PID ${pid}:`);
-        if (!sc) return;
         const sessionId = document.getElementById('proc-title')?.textContent?.match(/#(\d+)/)?.[1];
         if (!sessionId) return;
+
+        const sc = (await window.Modal.prompt(
+            `Base64 shellcode to inject into PID ${pid}:`,
+            { placeholder: 'Base64-encoded shellcode', multiline: true }
+        ))?.trim();
+        if (!sc) return;
+
+        if (!/^[A-Za-z0-9+/=\s]+$/.test(sc)) {
+            window.Modal.alert('That does not look like base64 - check the input.', 'error');
+            return;
+        }
+        const compact = sc.replace(/\s+/g, '');
+
         window.Terminal.open(parseInt(sessionId), `Session #${sessionId}`);
-        setTimeout(() => window.Terminal.sendCommand(`proc:inject ${pid} ${sc}`), 500);
+        window.Terminal.sendCommand(`proc:inject ${pid} ${compact}`);
     },
 
     close() {

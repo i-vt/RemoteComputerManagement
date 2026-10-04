@@ -1,8 +1,7 @@
 // src/server/session.rs
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use std::net::SocketAddr;
-use std::sync::atomic::{Ordering, AtomicU32};
 use ed25519_dalek::{SigningKey, Signer};
 use chrono::{DateTime, Utc};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -12,7 +11,11 @@ use std::future::Future;
 use tracing::{info, warn, error};
 
 use rhai;
-use crate::common::{ClientHello, Session, SecuredCommand, CommandResponse, SharedSessions, PivotFrame, MalleableProfile};
+use crate::common::{
+    ClientHello, Session, SessionTransport, SecuredCommand, CommandResponse, SharedSessions,
+    PivotFrame, MalleableProfile, SessionCommandSender, SessionCommandReceiver,
+    session_command_channel, try_send_session_command,
+};
 use crate::config::config;
 use crate::database::{self, DbPool};
 use crate::api::SharedResults;
@@ -203,19 +206,123 @@ pub(crate) fn seed_rcm_fingerprint(hostname: &str, computer_id: &str, os: &str) 
     });
 }
 
-/// Check if a host string is in the private 172.16.0.0/12 range (172.16-31.x.x).
-/// The old `starts_with("172.")` incorrectly blocked public IPs like Google's
-/// 172.217.x.x range.
-fn is_private_172(host: &str) -> bool {
-    if !host.starts_with("172.") { return false; }
-    // Parse the second octet
-    let rest = &host[4..];
-    if let Some(dot_pos) = rest.find('.') {
-        if let Ok(second_octet) = rest[..dot_pos].parse::<u8>() {
-            return (16..=31).contains(&second_octet); // 172.16.0.0/12
+fn new_session_webhook_payload(sess_id: u32, hostname: &str, ip: &str, os: &str) -> serde_json::Value {
+    serde_json::json!({
+        "event": "new_session",
+        "session_id": sess_id,
+        "hostname": hostname,
+        "ip": ip,
+        "os": os,
+        "text": format!("New session #{}: {} ({}) [{}]", sess_id, hostname, ip, os),
+    })
+}
+
+/// Fire the new-session webhook for either transport. Delivery and SSRF
+/// validation live here so TLS and HTTP registrations cannot drift apart.
+pub(crate) fn notify_new_session_webhook(
+    db: DbPool,
+    sess_id: u32,
+    hostname: String,
+    ip: String,
+    os: String,
+) {
+    tokio::spawn(async move {
+        let conn = match db.get() {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(session_id = sess_id, error = %e, "Webhook lookup failed: database pool unavailable");
+                return;
+            }
+        };
+        let Some(webhook_url) = database::get_webhook_url(&conn) else { return; };
+
+        // SSRF protection: validate that the webhook URL doesn't target
+        // internal/private addresses. A compromised or malicious operator
+        // could otherwise scan the C2 server's internal network or hit cloud
+        // metadata endpoints.
+        let url = match url::Url::parse(&webhook_url) {
+            Ok(u) => u,
+            Err(e) => {
+                warn!("Blocked malformed webhook URL {}: {}", webhook_url, e);
+                return;
+            }
+        };
+        let Some(host) = url.host_str() else { return; };
+
+        // Phase 1: hostname string check (catches obvious cases)
+        let is_suspicious = host == "localhost"
+            || host.ends_with(".internal")
+            || host.ends_with(".local")
+            || host == "metadata.google.internal";
+        if is_suspicious {
+            warn!("Blocked SSRF webhook to suspicious host: {}", webhook_url);
+            return;
         }
-    }
-    false
+
+        // Phase 2: DNS resolution check. Resolves the hostname and validates
+        // every resolved IP against private ranges. This catches DNS rebinding,
+        // alt IP encodings, and IPv6-mapped IPv4 values that bypass string checks.
+        let port = url.port().unwrap_or(if url.scheme() == "https" { 443 } else { 80 });
+        let lookup_host = format!("{}:{}", host, port);
+        let validated_addr = match tokio::net::lookup_host(&lookup_host).await {
+            Ok(addrs) => {
+                let mut first_valid: Option<std::net::SocketAddr> = None;
+                for addr in addrs {
+                    let ip = addr.ip();
+                    let is_private_ip = match ip {
+                        std::net::IpAddr::V4(v4) => {
+                            v4.is_loopback()
+                            || v4.is_private()
+                            || v4.is_link_local()
+                            || v4.is_broadcast()
+                            || v4.is_unspecified()
+                            || v4.octets()[0] == 169 && v4.octets()[1] == 254
+                        }
+                        std::net::IpAddr::V6(v6) => {
+                            v6.is_loopback()
+                            || v6.is_unspecified()
+                            || v6.to_ipv4_mapped().map(|v4| {
+                                v4.is_loopback() || v4.is_private() || v4.is_link_local()
+                            }).unwrap_or(false)
+                        }
+                    };
+                    if is_private_ip {
+                        warn!("Blocked SSRF webhook: {} resolves to private IP {}", webhook_url, ip);
+                        return;
+                    }
+                    if first_valid.is_none() {
+                        first_valid = Some(addr);
+                    }
+                }
+                match first_valid {
+                    Some(addr) => addr,
+                    None => { warn!("Webhook DNS returned no addresses for {}", host); return; }
+                }
+            }
+            Err(e) => {
+                warn!("Webhook DNS resolution failed for {}: {}", host, e);
+                return;
+            }
+        };
+
+        // Pin the HTTP client to the validated IP address so a DNS change
+        // between validation and connect cannot redirect the request.
+        let host_owned = host.to_string();
+        let client = match reqwest::Client::builder()
+            .resolve(&host_owned, validated_addr)
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Failed to build webhook client: {}", e);
+                return;
+            }
+        };
+
+        let payload = new_session_webhook_payload(sess_id, &hostname, &ip, &os);
+        let _ = client.post(&webhook_url).json(&payload).send().await;
+    });
 }
 
 /// Strip ANSI escape sequences and dangerous control characters from agent
@@ -267,24 +374,264 @@ fn sanitize_terminal_output(s: &str) -> String {
 }
 use crate::traffic::DataMolder;
 
-/// Allocate session IDs from the database to survive server restarts.
-fn next_session_id(db: &DbPool) -> u32 {
-    // Fallback IDs start high so they never collide with DB-allocated ids.
-    // The seed comes from typed config (0 = not yet seeded; the DB path is
-    // the norm and the fallback only fires when the DB is unreachable).
-    static FALLBACK_ID: AtomicU32 = AtomicU32::new(0);
-    if let Ok(conn) = db.get() {
-        if let Ok(id) = database::allocate_session_id(&conn) {
-            return id;
+/// Execute one server-side auto-recon module against a session. Kept separate
+/// from spawn_auto_recon so tests can point it at a temporary modules dir.
+fn run_auto_recon_module(
+    sess_id: u32,
+    modules_dir: &str,
+    module_name: &str,
+    tx_mod: SessionCommandSender,
+) {
+    use crate::api::routes::modules as module_rt;
+
+    let mod_path = module_rt::resolve_script_path(modules_dir, module_name);
+    match mod_path {
+        Some(mod_path) => {
+            let mut engine = rhai::Engine::new();
+            engine.set_max_operations(module_rt::MODULE_MAX_OPERATIONS);
+            engine.set_max_string_size(module_rt::MODULE_MAX_STRING_SIZE);
+            engine.set_max_call_levels(module_rt::MODULE_MAX_CALL_LEVELS);
+            let tx_cmd = tx_mod.clone();
+            engine.register_fn("send_c2_command",
+                move |_sid: i64, cmd: &str| {
+                    if try_send_session_command(sess_id, &tx_cmd, cmd.to_string(), None) {
+                        "Queued".to_string()
+                    } else {
+                        "Command queue full".to_string()
+                    }
+                }
+            );
+            engine.register_fn("send_c2_extension",
+                move |_sid: i64, ext_name: &str, args: Vec<rhai::Dynamic>| {
+                    let string_args: Vec<String> =
+                        args.iter().map(|d| d.to_string()).collect();
+                    match module_rt::build_ext_load_command(ext_name, &string_args) {
+                        Ok(cmd) => {
+                            if try_send_session_command(sess_id, &tx_mod, cmd, None) {
+                                format!("Queued extension '{}'", ext_name)
+                            } else {
+                                "Command queue full".to_string()
+                            }
+                        }
+                        Err(e) => e,
+                    }
+                }
+            );
+            engine.register_fn("random_hex_key", module_rt::random_hex_key);
+            engine.register_fn("print", |s: &str| {
+                tracing::debug!("module: {}", s);
+            });
+            match engine.compile_file(mod_path.into()) {
+                Ok(ast) => {
+                    let mut scope = rhai::Scope::new();
+                    let _: Result<rhai::Dynamic, _> = engine
+                        .call_fn(&mut scope, &ast, "run", (sess_id as i64,));
+                }
+                Err(e) => warn!(sess_id, error = %e,
+                    "Auto-recon module failed to parse"),
+            }
+        }
+        None => warn!(sess_id, module = %module_name,
+                      "Auto-recon module not found"),
+    }
+}
+
+const VIRTUAL_SESSION_IDLE_SECS: i64 = 60 * 60;
+const VIRTUAL_SESSION_PRUNE_INTERVAL_SECS: u64 = 60;
+
+struct VirtualPivotSession {
+    tx: mpsc::UnboundedSender<Vec<u8>>,
+    last_seen: Arc<std::sync::atomic::AtomicI64>,
+    bridge_task: tokio::task::JoinHandle<()>,
+    peer_addr: SocketAddr,
+}
+
+#[doc(hidden)]
+pub fn parse_pivot_close_frame(frame: &PivotFrame) -> Option<u32> {
+    if frame.metadata == "CLOSE"
+        && frame.data.is_empty()
+        && frame.destination == 0
+        && frame.source != 0
+        && frame.stream_id == frame.source
+    {
+        Some(frame.source)
+    } else {
+        None
+    }
+}
+
+fn remove_virtual_pivot(
+    virtual_sessions: &mut HashMap<u32, VirtualPivotSession>,
+    child_id: u32,
+) -> bool {
+    if let Some(session) = virtual_sessions.remove(&child_id) {
+        session.bridge_task.abort();
+        true
+    } else {
+        false
+    }
+}
+
+fn prune_stale_virtual_pivots(
+    virtual_sessions: &mut HashMap<u32, VirtualPivotSession>,
+    max_idle_secs: i64,
+) -> usize {
+    let now = Utc::now().timestamp();
+    let stale: Vec<u32> = virtual_sessions
+        .iter()
+        .filter(|(_, session)| {
+            now - session.last_seen.load(std::sync::atomic::Ordering::Relaxed) > max_idle_secs
+        })
+        .map(|(child_id, _)| *child_id)
+        .collect();
+    let removed = stale.len();
+    for child_id in stale {
+        remove_virtual_pivot(virtual_sessions, child_id);
+    }
+    removed
+}
+
+/// Fire saved auto-recon entries for either transport. `module:` entries run
+/// as server-side Rhai modules; every other entry goes to the agent unchanged.
+pub(crate) fn spawn_auto_recon(sess_id: u32, db: DbPool, tx_recon: SessionCommandSender) {
+    tokio::spawn(async move {
+        // Small delay so the agent's command loop is ready
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(conn) = db.get() {
+            let commands = database::get_auto_recon(&conn);
+            for cmd in commands {
+                if let Some(module_name) = cmd.strip_prefix("module:") {
+                    let module_name = module_name.trim().to_string();
+                    let tx_mod = tx_recon.clone();
+                    let modules_dir = config().server.modules_dir.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        run_auto_recon_module(sess_id, &modules_dir, &module_name, tx_mod);
+                    }).await;
+                } else {
+                    // Regular command or ext:load - send directly to agent
+                    let _ = try_send_session_command(sess_id, &tx_recon, cmd, None);
+                }
+                // Stagger entries slightly
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    });
+}
+
+/// Keep an offline hibernation session's command channel open and turn direct
+/// sends into queued tasks for the next check-in. Commands with request-id
+/// callbacks require the live response pipeline and are rejected by dropping
+/// their callback; proxy and tunnel starts use fire-and-forget sends.
+fn spawn_hibernation_command_forwarder(
+    sess_id: u32,
+    db: DbPool,
+    mut rx: SessionCommandReceiver,
+) {
+    tokio::spawn(async move {
+        while let Some((command, callback)) = rx.recv().await {
+            let queued = match db.get() {
+                Ok(conn) => database::queue_task(&conn, i64::from(sess_id), &command).is_ok(),
+                Err(e) => {
+                    error!(session_id = sess_id, error = %e, "Hibernation queue unavailable");
+                    false
+                }
+            };
+            if queued {
+                info!(session_id = sess_id, "Queued command for next hibernation check-in");
+            }
+            if callback.is_some() {
+                warn!(session_id = sess_id,
+                    "Dropped request-id callback for offline hibernation command");
+            }
+        }
+    });
+}
+
+async fn run_hibernation_tasks(
+    sess_id: u32,
+    db: &DbPool,
+    batch_size: usize,
+    signing_key: &SigningKey,
+    counter: &mut u64,
+    reader: &mut tokio::io::ReadHalf<C2Stream>,
+    writer: &mut tokio::io::WriteHalf<C2Stream>,
+    active_profile: &MalleableProfile,
+    results: &SharedResults,
+) {
+    let tasks = match db.get() {
+        Ok(conn) => {
+            database::fail_stale_running_tasks(&conn, 3600);
+            database::poll_and_claim_tasks(&conn, i64::from(sess_id), batch_size.max(1))
+        }
+        Err(_) => Vec::new(),
+    };
+    if tasks.is_empty() { return; }
+
+    let mut task_iter = tasks.into_iter();
+    while let Some(task) = task_iter.next() {
+        let request_id = *counter;
+        *counter += 1;
+        let mut secured = SecuredCommand {
+            session_id: "sess".to_string(), counter: request_id,
+            nonce: rand::random(), timestamp: Utc::now(),
+            command: task.command.clone(), signature: String::new(),
+        };
+        secured.signature = BASE64.encode(signing_key.sign(&secured.get_signable_bytes()).to_bytes());
+        let payload = serde_json::to_vec(&secured).unwrap();
+        if let Ok(conn) = db.get() { database::log_command(&conn, sess_id, request_id, &task.command); }
+
+        if let Err(e) = DataMolder::send(writer, &payload, active_profile).await {
+            warn!(session_id = sess_id, task_id = %task.task_id, error = %e,
+                "Hibernation task not delivered; returning it to pending");
+            if let Ok(conn) = db.get() {
+                database::requeue_task(&conn, &task.task_id);
+                for pending in task_iter { database::requeue_task(&conn, &pending.task_id); }
+            }
+            return;
+        }
+
+        let delivery = match tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            DataMolder::recv(reader, active_profile)
+        ).await {
+            Ok(Ok(bytes)) => serde_json::from_slice::<CommandResponse>(&bytes)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "hibernation response timeout",
+            )),
+        };
+
+        match delivery {
+            Ok(response) if response.request_id == request_id => {
+                process_response(sess_id, response.clone(), results, db).await;
+                if let Ok(conn) = db.get() {
+                    if response.exit_code == 0 && response.error.is_empty() {
+                        database::complete_task(&conn, &task.task_id, &response.output);
+                    } else {
+                        database::fail_task(&conn, &task.task_id, &response.error);
+                    }
+                }
+            }
+            Ok(response) => {
+                if let Ok(conn) = db.get() {
+                    database::fail_task(&conn, &task.task_id, &format!("mismatched response id {}", response.request_id));
+                }
+            }
+            Err(e) => {
+                // The command was delivered on this same-connection protocol.
+                // Keep it running until the stale-response deadline because the
+                // agent may have executed it and lost only the response.
+                warn!(session_id = sess_id, task_id = %task.task_id, error = %e,
+                    "Hibernation response not received before disconnect");
+                if let Ok(conn) = db.get() {
+                    for pending in task_iter { database::requeue_task(&conn, &pending.task_id); }
+                }
+                return;
+            }
         }
     }
-    if FALLBACK_ID.load(Ordering::Relaxed) == 0 {
-        FALLBACK_ID.store(
-            crate::config::config().server.session_fallback_id_start,
-            Ordering::Relaxed,
-        );
-    }
-    FALLBACK_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 pub fn handle_connection(
@@ -297,7 +644,11 @@ pub fn handle_connection(
 ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
     Box::pin(async move {
         let (mut reader, mut writer) = tokio::io::split(stream);
-        let mut virtual_sessions: HashMap<u32, mpsc::UnboundedSender<Vec<u8>>> = HashMap::new();
+        let mut virtual_sessions: HashMap<u32, VirtualPivotSession> = HashMap::new();
+        let (virtual_dead_tx, mut virtual_dead_rx) = mpsc::unbounded_channel::<u32>();
+        let mut virtual_prune = tokio::time::interval(std::time::Duration::from_secs(
+            VIRTUAL_SESSION_PRUNE_INTERVAL_SECS,
+        ));
 
         // 1. Handshake: Detect Profile & Read Hello
         // Timeout the initial read to prevent Slowloris-style attacks where an
@@ -391,7 +742,7 @@ pub fn handle_connection(
             }
 
             // Read agent's HMAC response
-            let resp_buf = match DataMolder::recv(&mut reader, &MalleableProfile::default()).await {
+            let resp_buf = match DataMolder::recv(&mut reader, &active_profile).await {
                 Ok(b) => b,
                 Err(_) => { warn!("No challenge response from {}", addr); return; }
             };
@@ -427,14 +778,55 @@ pub fn handle_connection(
             info!("Challenge-response verified for {} from {}", hello.build_id, addr);
         }
 
-        // 3. Register Session
-        let sess_id = next_session_id(&db);
-        {
-            if let Ok(conn) = db.get() {
-                database::log_new_session(
+        // 3. Register Session. The database sequence is the only session-id
+        // allocator; fail closed rather than exposing an id that cannot own
+        // FK-joined history rows.
+        let sess_id = {
+            let conn = match db.get() {
+                Ok(c) => c,
+                Err(e) => {
+                    error!(ip = %addr.ip(), error = %e, "Session registration failed: database pool unavailable");
+                    return;
+                }
+            };
+            let reusable_id = if hello.hibernation_mode {
+                database::find_machine_session_ids(&conn, &hello.computer_id, &hello.hostname)
+                    .into_iter()
+                    .find(|id| {
+                        sessions.get(id).map(|session| {
+                            session.transport == SessionTransport::Tls && session.hibernation_mode
+                        }).unwrap_or(false)
+                    })
+            } else {
+                None
+            };
+
+            match reusable_id {
+                Some(id) => match database::reregister_session(
+                    &conn, id, &hello.exe_id, &hello.computer_id, &hello.hostname, &hello.os,
+                    &addr.ip().to_string(), &hello.build_id, &profile_name
+                ) {
+                    Ok(()) => id,
+                    Err(e) => {
+                        error!(ip = %addr.ip(), error = %e, "Hibernation re-registration failed");
+                        return;
+                    }
+                },
+                None => match database::register_session(
                     &conn, &hello.exe_id, &hello.computer_id, &hello.hostname, &hello.os,
                     &addr.ip().to_string(), &hello.build_id, &profile_name
-                );
+                ) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        error!(ip = %addr.ip(), error = %e, "Session registration failed: session id allocation/insert");
+                        return;
+                    }
+                },
+            }
+        };
+        if hello.hibernation_mode {
+            if let Ok(conn) = db.get() {
+                database::set_session_active(&conn, sess_id, true);
             }
         }
 
@@ -447,123 +839,17 @@ pub fn handle_connection(
         println!("\n[+] New Session {}: {} ({}) [{}] via {}", sess_id, addr.ip(), hello.build_id, conn_type, profile_name);
 
         // Fire webhook notification for new session
-        {
-            let db_wh = db.clone();
-            let hostname = hello.hostname.clone();
-            let ip = addr.ip().to_string();
-            let os = hello.os.clone();
-            tokio::spawn(async move {
-                if let Ok(conn) = db_wh.get() {
-                    if let Some(webhook_url) = database::get_webhook_url(&conn) {
-                        // SSRF protection: validate that the webhook URL doesn't
-                        // target internal/private addresses. A compromised or
-                        // malicious operator could change the webhook to scan the
-                        // C2 server's internal network or hit cloud metadata endpoints.
-                        if let Ok(url) = url::Url::parse(&webhook_url) {
-                            if let Some(host) = url.host_str() {
-                                // Phase 1: hostname string check (catches obvious cases)
-                                let is_suspicious = host == "localhost"
-                                    || host.ends_with(".internal")
-                                    || host.ends_with(".local")
-                                    || host == "metadata.google.internal";
-                                if is_suspicious {
-                                    warn!("Blocked SSRF webhook to suspicious host: {}", webhook_url);
-                                    return;
-                                }
+        notify_new_session_webhook(
+            db.clone(),
+            sess_id,
+            hello.hostname.clone(),
+            addr.ip().to_string(),
+            hello.os.clone(),
+        );
 
-                                // Phase 2: DNS resolution check. Resolves the hostname
-                                // and validates every resolved IP against private ranges.
-                                // This catches DNS rebinding (attacker.com -> 127.0.0.1),
-                                // alt IP encodings (0x7f000001, 2130706433), and IPv6
-                                // mapped IPv4 (::ffff:127.0.0.1) that bypass string checks.
-                                //
-                                // To prevent TOCTOU / DNS rebinding, we pin the reqwest
-                                // client to the validated IP via .resolve() so the HTTP
-                                // connection uses exactly the address we checked.
-                                let port = url.port().unwrap_or(if url.scheme() == "https" { 443 } else { 80 });
-                                let lookup_host = format!("{}:{}", host, port);
-                                let validated_addr = match tokio::net::lookup_host(&lookup_host).await {
-                                    Ok(addrs) => {
-                                        let mut first_valid: Option<std::net::SocketAddr> = None;
-                                        for addr in addrs {
-                                            let ip = addr.ip();
-                                            let is_private_ip = match ip {
-                                                std::net::IpAddr::V4(v4) => {
-                                                    v4.is_loopback()
-                                                    || v4.is_private()
-                                                    || v4.is_link_local()
-                                                    || v4.is_broadcast()
-                                                    || v4.is_unspecified()
-                                                    || v4.octets()[0] == 169 && v4.octets()[1] == 254 // link-local
-                                                }
-                                                std::net::IpAddr::V6(v6) => {
-                                                    v6.is_loopback()
-                                                    || v6.is_unspecified()
-                                                    // Check for IPv6-mapped IPv4 private addresses
-                                                    || v6.to_ipv4_mapped().map(|v4| {
-                                                        v4.is_loopback() || v4.is_private() || v4.is_link_local()
-                                                    }).unwrap_or(false)
-                                                }
-                                            };
-                                            if is_private_ip {
-                                                warn!("Blocked SSRF webhook: {} resolves to private IP {}", webhook_url, ip);
-                                                return;
-                                            }
-                                            if first_valid.is_none() {
-                                                first_valid = Some(addr);
-                                            }
-                                        }
-                                        match first_valid {
-                                            Some(addr) => addr,
-                                            None => { warn!("Webhook DNS returned no addresses for {}", host); return; }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!("Webhook DNS resolution failed for {}: {}", host, e);
-                                        return;
-                                    }
-                                };
-
-                                // Pin the HTTP client to the validated IP address.
-                                // reqwest::resolve() overrides DNS for the given host,
-                                // so even if the domain's DNS changes between our check
-                                // and the TCP connect, we use the address we validated.
-                                let host_owned = host.to_string();
-                                let client = match reqwest::Client::builder()
-                                    .resolve(&host_owned, validated_addr)
-                                    .timeout(std::time::Duration::from_secs(5))
-                                    .build()
-                                {
-                                    Ok(c) => c,
-                                    Err(e) => {
-                                        warn!("Failed to build webhook client: {}", e);
-                                        return;
-                                    }
-                                };
-
-                                let payload = serde_json::json!({
-                                    "event": "new_session",
-                                    "session_id": sess_id,
-                                    "hostname": hostname,
-                                    "ip": ip,
-                                    "os": os,
-                                    "text": format!("New session #{}: {} ({}) [{}]", sess_id, hostname, ip, os),
-                                });
-                                let _ = client
-                                    .post(&webhook_url)
-                                    .json(&payload)
-                                    .send()
-                                    .await;
-                            }  // if let Some(host)
-                        }  // if let Ok(url)
-                    }  // if let Some(webhook_url)
-                }  // if let Ok(conn)
-            });
-        }
-
-        // Command channel: unbounded because callers span many async contexts.
-        // Backpressure is applied at the HTTP layer via MAX_QUEUED_COMMANDS.
-        let (tx, mut rx) = mpsc::unbounded_channel::<(String, Option<oneshot::Sender<u64>>)>();
+        // Command channel: bounded by configuration so one slow session cannot
+        // grow its pending queue without limit.
+        let (tx, mut rx) = session_command_channel(config().server.session_command_channel);
         // Data channel: bounded to prevent OOM from slow consumers or
         // Slowloris-style attacks that trickle data while the server pushes.
         let (v_tx, mut v_rx) = mpsc::channel::<(u32, Vec<u8>)>(64);
@@ -572,64 +858,36 @@ pub fn handle_connection(
         
         let tx_recon = tx.clone(); // Clone before move into Session
         
+        let mut counter = if hello.hibernation_mode {
+            db.get()
+                .map(|conn| database::max_command_request_id(&conn, sess_id).saturating_add(1))
+                .unwrap_or(1)
+        } else {
+            1
+        };
         sessions.insert(sess_id, Session {
-            id: sess_id, computer_id: hello.computer_id, addr, hostname: hello.hostname,
+            id: sess_id, transport: SessionTransport::Tls,
+            computer_id: hello.computer_id, addr, hostname: hello.hostname,
             os: hello.os, tx, signing_key: signing_key.clone(), parent_id,
             last_seen: last_seen.clone(),
             interfaces: hello.interfaces.clone(),
             hibernation_mode: hello.hibernation_mode,
         });
 
-        // 3b. Auto-recon: fire saved commands on new session
-        {
-            let db_recon = db.clone();
-            tokio::spawn(async move {
-                // Small delay so the agent's command loop is ready
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if let Ok(conn) = db_recon.get() {
-                    let commands = database::get_auto_recon(&conn);
-                    for cmd in commands {
-                        if let Some(module_name) = cmd.strip_prefix("module:") {
-                            // Run a server-side Rhai module, wiring send_c2_command
-                            // to tx_recon so the module's commands reach this session.
-                            let tx_mod  = tx_recon.clone();
-                            let mod_path = format!("./modules/{}.rhai", module_name.trim());
-                            let mod_sess = sess_id;
-                            if let Ok(script) = std::fs::read_to_string(&mod_path) {
-                                let _ = tokio::task::spawn_blocking(move || {
-                                    let mut engine = rhai::Engine::new();
-                                    engine.register_fn("send_c2_command",
-                                        move |_sid: i64, cmd: &str| {
-                                            let _ = tx_mod.send((cmd.to_string(), None));
-                                            "Queued".to_string()
-                                        }
-                                    );
-                                    engine.register_fn("print", |s: &str| {
-                                        tracing::debug!("module: {}", s);
-                                    });
-                                    if let Ok(ast) = engine.compile(&script) {
-                                        let mut scope = rhai::Scope::new();
-                                        let _: Result<rhai::Dynamic, _> = engine
-                                            .call_fn(&mut scope, &ast, "run",
-                                                     (mod_sess as i64,));
-                                    }
-                                }).await;
-                            } else {
-                                warn!(sess_id, module = %module_name,
-                                      "Auto-recon module not found");
-                            }
-                        } else {
-                            // Regular command or ext:load - send directly to agent
-                            let _ = tx_recon.send((cmd, None));
-                        }
-                        // Stagger entries slightly
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
-                }
-            });
+        if hello.hibernation_mode {
+            run_hibernation_tasks(
+                sess_id, &db, hello.task_batch_size, &signing_key, &mut counter,
+                &mut reader, &mut writer, &active_profile, &results,
+            ).await;
+            if let Ok(conn) = db.get() { database::set_session_active(&conn, sess_id, false); }
+            // Keep the offline session visible and its command channel open;
+            // direct sends become queued tasks for the next check-in.
+            spawn_hibernation_command_forwarder(sess_id, db.clone(), rx);
+            return;
         }
 
-        let mut counter = 1u64;
+        // 3b. Auto-recon: fire saved commands on new session
+        spawn_auto_recon(sess_id, db.clone(), tx_recon);
 
         // 4. Main Loop
         loop {
@@ -677,8 +935,32 @@ pub fn handle_connection(
                             last_seen.store(chrono::Utc::now().timestamp(), std::sync::atomic::Ordering::Relaxed);
                             if let Ok(frame) = serde_json::from_slice::<PivotFrame>(&b) {
                                 let child_id = frame.source;
-                                if let Some(v_sender) = virtual_sessions.get(&child_id) {
-                                    if !frame.data.is_empty() { let _ = v_sender.send(frame.data); }
+                                if let Some(stop_id) = parse_pivot_close_frame(&frame) {
+                                    let peer_addr = virtual_sessions
+                                        .get(&stop_id)
+                                        .map(|session| session.peer_addr);
+                                    remove_virtual_pivot(&mut virtual_sessions, stop_id);
+                                    let child_session_id = peer_addr.and_then(|peer_addr| sessions
+                                        .iter()
+                                        .find(|entry| {
+                                            entry.value().parent_id == Some(sess_id)
+                                                && entry.value().addr == peer_addr
+                                        })
+                                        .map(|entry| *entry.key()));
+                                    if let Some(child_session_id) = child_session_id {
+                                        sessions.remove(&child_session_id);
+                                    }
+                                    info!(parent = sess_id, pivot_id = stop_id, "Pivot listener stopped by agent");
+                                    continue;
+                                }
+                                if let Some(v_session) = virtual_sessions.get(&child_id) {
+                                    v_session.last_seen.store(
+                                        chrono::Utc::now().timestamp(),
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                    if !frame.data.is_empty() && v_session.tx.send(frame.data).is_err() {
+                                        remove_virtual_pivot(&mut virtual_sessions, child_id);
+                                    }
                                 } else {
                                     // New Pivot Logic - cap to prevent resource exhaustion
                                     // from a compromised agent flooding with fake child_ids.
@@ -697,12 +979,15 @@ pub fn handle_connection(
                                     
                                     let (server_half, bridge_half) = tokio::io::duplex(4096);
                                     let (child_tx, mut child_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                                    virtual_sessions.insert(child_id, child_tx.clone());
+                                    let child_last_seen = Arc::new(std::sync::atomic::AtomicI64::new(
+                                        chrono::Utc::now().timestamp(),
+                                    ));
                                     
                                     if !frame.data.is_empty() { let _ = child_tx.send(frame.data); }
                                     let v_tx_clone = v_tx.clone();
+                                    let virtual_dead = virtual_dead_tx.clone();
                                     
-                                    tokio::spawn(async move {
+                                    let bridge_task = tokio::spawn(async move {
                                         let (mut b_read, mut b_write) = tokio::io::split(bridge_half);
                                         let mut buf = [0u8; 4096];
                                         loop {
@@ -711,9 +996,20 @@ pub fn handle_connection(
                                                     Ok(n) if n > 0 => { let _ = v_tx_clone.send((child_id, buf[..n].to_vec())).await; },
                                                     _ => break,
                                                 },
-                                                Some(d) = child_rx.recv() => { if b_write.write_all(&d).await.is_err() { break; } }
+                                                message = child_rx.recv() => match message {
+                                                    Some(d) => if b_write.write_all(&d).await.is_err() { break; },
+                                                    None => break,
+                                                }
                                             }
                                         }
+                                        let _ = virtual_dead.send(child_id);
+                                    });
+
+                                    virtual_sessions.insert(child_id, VirtualPivotSession {
+                                        tx: child_tx,
+                                        last_seen: child_last_seen,
+                                        bridge_task,
+                                        peer_addr: real_addr,
                                     });
 
                                     let (s_c, d_c, r_c) = (sessions.clone(), db.clone(), results.clone());
@@ -733,12 +1029,37 @@ pub fn handle_connection(
                 
                 // C. Pivot Write
                 Some((target, data)) = v_rx.recv() => {
+                    if let Some(v_session) = virtual_sessions.get(&target) {
+                        v_session.last_seen.store(
+                            chrono::Utc::now().timestamp(),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
                     let frame = PivotFrame { stream_id: 0, destination: target, source: 0, data, metadata: String::new() };
                     if let Ok(j) = serde_json::to_vec(&frame) {
                         if DataMolder::send(&mut writer, &j, &active_profile).await.is_err() { break; }
                     }
                 }
+
+                // D. Pivot bridge cleanup
+                Some(child_id) = virtual_dead_rx.recv() => {
+                    remove_virtual_pivot(&mut virtual_sessions, child_id);
+                }
+
+                // E. Pivot idle safety net
+                _ = virtual_prune.tick() => {
+                    let removed = prune_stale_virtual_pivots(
+                        &mut virtual_sessions,
+                        VIRTUAL_SESSION_IDLE_SECS,
+                    );
+                    if removed > 0 {
+                        info!(parent = sess_id, removed, "Pruned idle pivot sessions");
+                    }
+                }
             }
+        }
+        for (_, virtual_session) in virtual_sessions.drain() {
+            virtual_session.bridge_task.abort();
         }
         sessions.remove(&sess_id);
         info!(session_id = sess_id, "Session Disconnected");
@@ -1185,7 +1506,7 @@ pub async fn process_response(sess_id: u32, mut r: CommandResponse, results: &Sh
         modified_response.output = msg;
         let log_error = modified_response.error.clone();
 
-        results.lock().unwrap_or_else(|e| e.into_inner()).insert((sess_id, r.request_id), modified_response);
+        crate::api::state::insert_result(results, sess_id, r.request_id, modified_response);
         let db_inner = db.clone();
         tokio::task::spawn_blocking(move || {
             if let Ok(conn) = db_inner.get() {
@@ -1274,7 +1595,7 @@ pub async fn process_response(sess_id: u32, mut r: CommandResponse, results: &Sh
         modified_response.output = msg;
         let log_error = modified_response.error.clone();
 
-        results.lock().unwrap_or_else(|e| e.into_inner()).insert((sess_id, r.request_id), modified_response);
+        crate::api::state::insert_result(results, sess_id, r.request_id, modified_response);
         let db_inner = db.clone();
         tokio::task::spawn_blocking(move || {
             if let Ok(conn) = db_inner.get() {
@@ -1346,7 +1667,7 @@ pub async fn process_response(sess_id: u32, mut r: CommandResponse, results: &Sh
                 // Store the final output with the cleaned output (no prefix)
                 let mut clean_response = r.clone();
                 clean_response.output = output.to_string();
-                results.lock().unwrap_or_else(|e| e.into_inner()).insert((sess_id, r.request_id), clean_response.clone());
+                crate::api::state::insert_result(results, sess_id, r.request_id, clean_response.clone());
                 let db_inner = db.clone();
                 tokio::task::spawn_blocking(move || {
                     match db_inner.get() {
@@ -1359,7 +1680,7 @@ pub async fn process_response(sess_id: u32, mut r: CommandResponse, results: &Sh
         return;
     }
 
-    results.lock().unwrap_or_else(|e| e.into_inner()).insert((sess_id, r.request_id), r.clone());
+    crate::api::state::insert_result(results, sess_id, r.request_id, r.clone());
 
     let db_inner = db.clone();
     let r_clone = r.clone();
@@ -1382,7 +1703,108 @@ pub async fn process_response(sess_id: u32, mut r: CommandResponse, results: &Sh
 
 #[cfg(test)]
 mod tests {
-    use super::{partition_wire_lines, extract_dump_payload, os_fingerprint_entry};
+    use super::{
+        extract_dump_payload, new_session_webhook_payload, os_fingerprint_entry,
+        partition_wire_lines, prune_stale_virtual_pivots, remove_virtual_pivot,
+        run_auto_recon_module, spawn_hibernation_command_forwarder, DbPool, VirtualPivotSession,
+    };
+    use crate::common::session_command_channel;
+
+    #[test]
+    fn new_session_webhook_payload_matches_transport_shared_shape() {
+        let payload = new_session_webhook_payload(42, "host-a", "10.0.0.8", "windows");
+        assert_eq!(payload["event"], "new_session");
+        assert_eq!(payload["session_id"], 42);
+        assert_eq!(payload["hostname"], "host-a");
+        assert_eq!(payload["ip"], "10.0.0.8");
+        assert_eq!(payload["os"], "windows");
+        assert_eq!(payload["text"], "New session #42: host-a (10.0.0.8) [windows]");
+    }
+
+    #[test]
+    fn auto_recon_module_runs_script_instead_of_queueing_module_string() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("recon_test.rhai"),
+            r#"fn run(session_id) {
+                send_c2_command(session_id, "whoami");
+            }"#,
+        ).unwrap();
+
+        let (tx, mut rx) = session_command_channel(2);
+        run_auto_recon_module(7, dir.path().to_str().unwrap(), "recon_test", tx);
+
+        let (command, callback) = rx.try_recv().unwrap();
+        assert_eq!(command, "whoami");
+        assert!(callback.is_none());
+        assert!(rx.try_recv().is_err(), "raw module: entry must not reach the agent");
+    }
+
+    #[tokio::test]
+    async fn offline_hibernation_channel_accepts_and_queues_direct_send() {
+        let path = format!("/tmp/rcm_hib_forward_{}.db", uuid::Uuid::new_v4());
+        let manager = r2d2_sqlite::SqliteConnectionManager::file(&path);
+        let pool: DbPool = r2d2::Pool::builder().max_size(2).build(manager).unwrap();
+        pool.get().unwrap().execute_batch(
+            "CREATE TABLE queued_tasks (
+                task_id TEXT PRIMARY KEY, session_id INTEGER NOT NULL, command TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL,
+                claimed_at INTEGER, result TEXT, error TEXT, finished_at INTEGER
+            );"
+        ).unwrap();
+
+        let (tx, rx) = session_command_channel(2);
+        spawn_hibernation_command_forwarder(9, pool.clone(), rx);
+        assert!(crate::common::try_send_session_command(
+            9, &tx, "rportfwd:start 10000 token host 80".into(), None
+        ));
+
+        let conn = pool.get().unwrap();
+        let mut queued_command = String::new();
+        for _ in 0..20 {
+            queued_command = conn.query_row(
+                "SELECT command FROM queued_tasks WHERE session_id = 9 AND status = 'pending'",
+                [], |row| row.get(0)
+            ).unwrap_or_default();
+            if !queued_command.is_empty() { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert_eq!(queued_command, "rportfwd:start 10000 token host 80");
+    }
+
+    fn virtual_pivot_for_test(last_seen: i64) -> VirtualPivotSession {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        VirtualPivotSession {
+            tx,
+            last_seen: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(last_seen)),
+            bridge_task: tokio::spawn(async {
+                std::future::pending::<()>().await;
+            }),
+            peer_addr: "127.0.0.1:4444".parse().unwrap(),
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_virtual_pivots_are_pruned_and_bridges_aborted() {
+        let mut sessions = std::collections::HashMap::new();
+        sessions.insert(7, virtual_pivot_for_test(chrono::Utc::now().timestamp() - 7200));
+        sessions.insert(8, virtual_pivot_for_test(chrono::Utc::now().timestamp()));
+
+        assert_eq!(prune_stale_virtual_pivots(&mut sessions, 3600), 1);
+        assert!(!sessions.contains_key(&7));
+        assert!(sessions.contains_key(&8));
+
+        tokio::task::yield_now().await;
+    }
+
+    #[tokio::test]
+    async fn virtual_pivot_removal_aborts_bridge_task() {
+        let mut sessions = std::collections::HashMap::new();
+        sessions.insert(9, virtual_pivot_for_test(chrono::Utc::now().timestamp()));
+        assert!(remove_virtual_pivot(&mut sessions, 9));
+        assert!(!remove_virtual_pivot(&mut sessions, 9));
+        assert!(sessions.is_empty());
+    }
 
     #[test]
     fn dump_payload_accepted_at_output_start() {

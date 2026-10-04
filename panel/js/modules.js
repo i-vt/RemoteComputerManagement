@@ -13,6 +13,7 @@ window.ModuleManager = {
                 headers: { 'X-API-KEY': window.Auth.key }
             });
 
+            if (res.status === 401) return window.Auth.logout();
             if (res.ok) {
                 const newModules = await res.json();
                 // Only re-render if the list actually changed

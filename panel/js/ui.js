@@ -197,33 +197,6 @@ window.UI = {
         while (box.children.length > 80) box.removeChild(box.lastChild);
     },
 
-    addTaskLog(cmd, targets) {
-        const el = document.getElementById('task-list');
-        if (!el) return;
-        el.innerHTML = `
-            <div style="background:var(--bg-elevated);padding:10px 12px;border-radius:6px;border-left:3px solid var(--red);margin-bottom:6px;">
-              <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);">
-                <span>BROADCAST</span><span>${new Date().toLocaleTimeString()}</span>
-              </div>
-              <div style="font-family:monospace;color:var(--text-primary);margin-top:4px;font-size:12px;">${escHtml(cmd)}</div>
-              <div style="font-size:11px;color:var(--accent);margin-top:3px;">Targets: ${targets}</div>
-            </div>` + el.innerHTML;
-    },
-
-    updateConnectionStatus(isConnected) {
-        const el = document.getElementById('connection-status');
-        if (!el) return;
-        if (isConnected) {
-            el.innerHTML = '<div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div> Connected';
-            el.classList.remove('text-red-400');
-            el.classList.add('text-green-400');
-        } else {
-            el.innerHTML = '<div class="w-2 h-2 rounded-full bg-red-500"></div> Connection Error';
-            el.classList.remove('text-green-400');
-            el.classList.add('text-red-400');
-        }
-    },
-
     // ── Host table (Network page) ─────────────────────────────────────
     updateHostTable(hosts) {
         const tbody = document.getElementById('hosts-table');
@@ -261,9 +234,12 @@ window.UI = {
             const seenText  = secs < 60 ? `${secs}s` : secs < 3600 ? `${Math.floor(secs/60)}m` : `${Math.floor(secs/3600)}h`;
             const staleClass = secs > 120 ? 'text-yellow-500' : 'text-green-500';
             const tagsHtml   = (h.tags||[]).map(t => `<span class="px-1.5 py-0.5 rounded text-[10px] bg-green-900/60 text-green-300 mr-1">${escHtml(t)}</span>`).join('');
+            const hibHtml    = h.hibernation_mode
+                ? '<span class="px-1.5 py-0.5 rounded text-[10px] bg-purple-900/60 text-purple-300 mr-1" title="Hibernation mode: claims queued tasks on check-in, no persistent connection"><i class="fas fa-moon"></i> hibernating</span>'
+                : '';
 
             const nameEl = row.querySelector('.host-name');
-            nameEl.innerHTML = `${safe} <span class="text-xs font-normal ${staleClass}">${seenText} ago</span>${tagsHtml ? '<br>'+tagsHtml : ''}`;
+            nameEl.innerHTML = `${safe} <span class="text-xs font-normal ${staleClass}">${seenText} ago</span>${(hibHtml || tagsHtml) ? '<br>'+hibHtml+tagsHtml : ''}`;
 
             const ipEl = row.querySelector('.host-ip');
             if (ipEl.innerText !== h.ip) ipEl.innerText = h.ip;
@@ -344,7 +320,7 @@ window.EvasionFlags = {
         'evasion:patch_etw':     'etw',
         'evasion:unhook_ntdll':  'ntdll',
         'evasion:patch_all':     ['amsi', 'etw', 'ntdll'],
-        'evasion:encrypt_heap':  'mask',
+        'evasion:encrypt_heap_aes':  'mask',
     },
 
     _key(sessionId) { return `rcm_ev_${sessionId}`; },

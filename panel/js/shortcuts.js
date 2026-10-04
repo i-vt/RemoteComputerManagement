@@ -18,11 +18,22 @@ window.Shortcuts = {
                 return;
             }
 
-            // Escape - Close modals
+            // Escape - Close any open modal
             if(e.key === 'Escape') {
-                document.getElementById('terminal-modal')?.classList.add('hidden');
-                document.getElementById('proc-modal')?.classList.add('hidden');
-                document.getElementById('screenshot-modal')?.classList.add('hidden');
+                ['terminal-modal','proc-modal','loot-preview-modal','fm-modal','fm-preview-modal']
+                    .forEach(id => document.getElementById(id)?.classList.add('hidden'));
+                // ScreenshotView.close() also releases frame object URLs
+                window.ScreenshotView?.close();
+                // Dynamically-created modals are removed outright
+                document.getElementById('notes-modal')?.remove();
+                document.getElementById('ioc-add-modal')?.remove();
+                document.getElementById('fm-context-menu')?.classList.add('hidden');
+                // Shared app modal resolves as "cancelled"
+                const appModal = document.getElementById('app-modal');
+                if (appModal && !appModal.classList.contains('hidden')) {
+                    window.Modal?._resolve(false);
+                }
+                window.MobileMore?.close();
                 return;
             }
 
@@ -39,8 +50,9 @@ window.Shortcuts = {
             // ? - Show shortcut help
             if(e.key === '?') {
                 window.Notify?.toast(
-                    '1-9: Navigate pages | Esc: Close modals | Ctrl+K: Focus terminal | T: Toggle theme | ?: Help',
-                    'info', 8000
+                    '1-9: Stats, Network, Sessions, Files, Proxies, Broadcast, History, Listeners, Jobs | ' +
+                    'Esc: Close modals | Ctrl+K: Focus terminal | T: Toggle theme | R: Refresh | ?: Help',
+                    'info', 10000
                 );
                 return;
             }

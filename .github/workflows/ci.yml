@@ -1,0 +1,34 @@
+# CI - unit test suite.
+#
+# Runs the docker-based unit path (tests/docker/Dockerfile.unit) on every
+# push and pull request. The image is pinned to the same toolchain as the
+# workspace (rustlang/rust:nightly-2026-08-22, see rust-toolchain.toml),
+# compiles the library plus every tests/*.rs harness with --locked, and
+# runs the full suite unfiltered.
+#
+# Deliberately NOT included:
+#   - cargo fmt --check: the tree is not verified fmt-clean; enabling the
+#     gate without that verification would fail every run.
+#   - Integration tests (tests/docker/docker-compose.yml): they need the
+#     full server binary and live-agent phases; too heavy for per-push CI.
+#     Run them manually with ./run_tests.sh --all.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit-tests:
+    name: Unit tests (nightly-2026-08-22, docker)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build unit test image
+        run: docker build -f tests/docker/Dockerfile.unit -t rcm-unit-tests .
+
+      - name: Run unit tests
+        run: docker run --rm rcm-unit-tests

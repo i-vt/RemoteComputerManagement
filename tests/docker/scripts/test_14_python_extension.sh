@@ -217,7 +217,7 @@ else
 
     # pip_freeze: requirements.txt format.
     OUT=$(run_script "$SESSION" "internal_pip_freeze(\"${PIP_VENV}\")")
-    # An empty venv might have no output from freeze — just verify no Error.
+    # An empty venv might have no output from freeze - just verify no Error.
     assert_ne "pip_freeze does not return Error" "Error" \
         "$(echo "$OUT" | head -c5)"
 

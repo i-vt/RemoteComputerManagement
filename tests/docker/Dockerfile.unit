@@ -13,13 +13,13 @@
 # └──────────────────────────────────────────────────────────────────────┘
 #
 # Usage:
-#   # Run all unit tests for the new features
-#   docker compose -f tests/docker/docker-compose.unit.yml up --build \
-#     --abort-on-container-exit --exit-code-from unit-tests
-#
-#   # Run a single module
+#   # Run the full test suite (lib inline tests + every tests/*.rs binary)
 #   docker compose -f tests/docker/docker-compose.unit.yml \
-#     run --rm unit-tests cargo test topology::tests -- --nocapture
+#     run --rm unit-all
+#
+#   # Run a single module (see the service table in docker-compose.unit.yml)
+#   docker compose -f tests/docker/docker-compose.unit.yml \
+#     run --rm unit-topology
 #
 # CI shorthand (no compose):
 #   docker build -f tests/docker/Dockerfile.unit \
@@ -28,7 +28,7 @@
 # ── Stage 1: dependency cache ──────────────────────────────────────────
 # Locked to the same Rust version used by the main Dockerfile so crate
 # features and MSRV requirements are identical.
-FROM rustlang/rust:nightly-bookworm AS deps
+FROM rustlang/rust:nightly-2026-08-22 AS deps
 
 # System libraries required by some crates at link time.
 # libssl-dev   → reqwest / native-tls (indirect dep)
@@ -44,21 +44,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 
 # Copy manifests first. Docker caches this layer until Cargo.toml/lock changes.
-COPY Cargo.toml Cargo.lock* ./
+COPY Cargo.toml Cargo.lock* rust-toolchain.toml ./
 COPY build.rs ./
 COPY strcrypt/Cargo.toml ./strcrypt/Cargo.toml
+COPY client_dll/Cargo.toml ./client_dll/Cargo.toml
 
 # Stub out every [[bin]] source so `cargo fetch` resolves the full dep graph
 # without needing the real source files. The stubs are replaced in stage 2.
 RUN mkdir -p src/bin src/server src/agent/handlers src/agent/injection \
              src/api/routes src/api \
     && echo 'fn main() {}' > src/main.rs \
-    && for b in server client builder client_dll client_service stager; do \
+    && for b in server client builder client_service stager; do \
            echo 'fn main() {}' > "src/bin/${b}.rs"; \
        done \
     && echo 'pub fn _placeholder() {}' > src/lib.rs \
-    && mkdir -p strcrypt/src \
-    && echo 'pub fn _placeholder() {}' > strcrypt/src/lib.rs
+    && mkdir -p strcrypt/src client_dll/src \
+    && echo 'pub fn _placeholder() {}' > strcrypt/src/lib.rs \
+    && echo 'pub fn _placeholder() {}' > client_dll/src/lib.rs
 
 RUN cargo fetch
 
@@ -74,8 +76,12 @@ RUN bash gen_certs.sh ./certs
 # Replace stubs with the real source tree.
 COPY src/ ./src/
 COPY strcrypt/ ./strcrypt/
+COPY client_dll/ ./client_dll/
 COPY config.example.toml ./
 COPY tests/ ./tests/
+COPY extensions/ ./extensions/
+COPY modules/ ./modules/
+COPY examples/ ./examples/
 
 # Unit tests don't use modules/ or extensions/ at runtime, but some crate
 # build scripts expect the directories to exist. Create empty placeholders.
@@ -101,8 +107,9 @@ FROM build AS test
 ENV RUST_TEST_NOCAPTURE=1
 ENV RUST_BACKTRACE=1
 
-# Default CMD: run ALL tests with no filter.
-# The individual docker-compose services override this CMD with a specific
-# filter (e.g. `topology::tests`) for targeted debugging only.
+# Default CMD: run ALL tests with no filter (lib inline tests plus every
+# tests/*.rs integration binary). The individual docker-compose services
+# override this CMD with a specific filter (e.g. `topology::tests`) for
+# targeted debugging only.
 # Never use a filter here — that's how tests get silently excluded.
-CMD ["cargo", "test", "--lib", "--", "--nocapture", "--test-threads=1"]
+CMD ["cargo", "test", "--", "--nocapture", "--test-threads=1"]

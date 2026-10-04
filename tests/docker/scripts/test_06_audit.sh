@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_06_audit.sh — Audit log & auto-recon config
+# tests/docker/scripts/test_06_audit.sh - Audit log & auto-recon config
 source "$(dirname "$0")/lib.sh"
 
 suite "Audit log is populated"

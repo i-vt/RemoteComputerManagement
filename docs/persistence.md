@@ -2,6 +2,50 @@
 
 Native `persist:*` commands backed by direct OS API calls. No `exec_os` wrappers, no Rhai scripts, no child-process spawning (exception: `persist:cron` on Linux and macOS, where writing the crontab file directly requires root).
 
+## The `auto_persist` Playbook
+
+`extensions/auto_persist.rhai` is the one-shot option: it mirrors the native
+handlers' behavior, tries methods in lowest-forensic-noise-first order, and
+stops on the first verified success.
+
+Deploy it from the Scripts page (Deploy button) or the CLI menu:
+
+```
+extension load auto_persist [label] [binary_path]
+```
+
+- **Stable drop first** - the binary is copied to a hidden platform path and
+  renamed to the label, so persistence points at a stable location instead of
+  wherever the agent was first launched: `%APPDATA%\Microsoft\<LABEL>.exe`
+  (Windows), `~/.local/bin/<LABEL>` (Linux, chmod 755),
+  `~/Library/Application Support/<LABEL>/<LABEL>` (macOS, chmod 755).
+  Pass a second argument with the real agent path when the agent runs
+  in-memory (auto-detection would return the host process).
+- **Read-back validation** - every method verifies its artifact (registry
+  value, task XML, plist, crontab line) before claiming success; command
+  output text is localized on Windows, artifacts are not.
+- **Privilege-adaptive** - user-level methods are tried first; the elevated
+  Windows methods are attempted only when running elevated AND every
+  user-level method failed. When skipped, they are listed in the output's
+  `skipped_elevated` field.
+
+Method order:
+
+| Platform | User level | Elevated only |
+|----------|-----------|---------------|
+| Windows | HKCU Run (T1547.001) -> Scheduled Task onlogon (T1053.005) -> Startup `.lnk` (T1547.001) | HKLM Run (T1547.001) -> Windows Service, created but not started (T1543.003) -> WMI event subscription (T1546.003) -> IFEO debugger (T1546.012) |
+| Linux | User crontab `@reboot` (T1053.003) -> shell profile (T1546.004) -> systemd user unit (T1543.002) | systemd system unit (T1543.002, root) |
+| macOS | LaunchAgent plist (T1543.001) -> crontab `@reboot` (T1053.003) -> zsh/profile (T1546.004) | - |
+
+The return value is structured JSON (`result`, `platform`, `privilege`,
+`stable_binary`, `method`, `attempts[]`, and an `ioc` record on success)
+suitable for the IOC tracker.
+
+`extensions/persistence_windows.rhai` and `extensions/persistence_linux.rhai`
+are **deprecated** - superseded by `auto_persist` and the native `persist:*`
+commands, which cover Windows, Linux, and macOS. They are kept for
+compatibility only.
+
 ## Quick Reference
 
 | Command | Platform | ATT&CK | Admin? |
@@ -15,8 +59,9 @@ Native `persist:*` commands backed by direct OS API calls. No `exec_os` wrappers
 | `persist:profile <path>` | Linux | T1546.004 | No |
 | `persist:launchagent <label> <path>` | macOS | T1543.001 | No |
 | `persist:list` | All | - | No |
+| `persist:cleanup` | All | - | No |
 
-All install commands have a corresponding `_remove` variant (e.g. `persist:run_remove <name>`).
+All install commands have a corresponding `_remove` variant (e.g. `persist:run_remove <name>`). `persist:cleanup` removes every RCM-installed entry in one pass.
 
 ---
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_02_rbac.sh — Role-based access control
+# tests/docker/scripts/test_02_rbac.sh - Role-based access control
 source "$(dirname "$0")/lib.sh"
 
 # Get keys for each role
@@ -40,9 +40,13 @@ suite "Viewer can read host list (read-only is allowed)"
 api_get "/api/hosts" "$VW_KEY"
 assert_http "viewer can list hosts" "200"
 
-suite "Viewer can read audit log"
+suite "Viewer cannot read audit log"
 api_get "/api/audit" "$VW_KEY"
-assert_http "viewer can read audit" "200"
+assert_http "viewer gets 403 on audit" "403"
+
+suite "Operator can read audit log"
+api_get "/api/audit" "$OP_KEY"
+assert_http "operator can read audit" "200"
 
 # ── Operator permissions ────────────────────────────────────────────────
 
@@ -52,7 +56,7 @@ assert_http "operator gets 403 on create operator" "403"
 
 suite "Operator can broadcast commands"
 api_post "/api/broadcast" "$OP_KEY" '{"command":"echo test"}'
-# Should succeed (200) — operators can execute
+# Should succeed (200) - operators can execute
 assert_http "operator can broadcast" "200"
 
 suite "Operator can list listeners"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_11_builder_evasion_guardrails.sh
+# tests/docker/scripts/test_16_builder_evasion_guardrails.sh
 #
 # Integration tests for the evasion technique selection and execution
 # guardrail builder fields:
 #
 #   Evasion:
-#     sleep_mask        "none" | "ekko" | "foliage"
+#     sleep_mask        "none" | "ekko" | "spoofed-stack"
 #     indirect_syscalls bool
 #     stack_spoof       bool
 #     patch_amsi_etw    bool
@@ -18,7 +18,7 @@
 #     guard_hour_end    0-23
 #     guard_no_system   bool
 #
-# Test design (rewritten for decisiveness — see notes at bottom):
+# Test design (rewritten for decisiveness - see notes at bottom):
 #
 #   Phase 0  Pre-flight: wait until no builds are RUNNING (leftovers from
 #            earlier suites would otherwise starve the awaited build).
@@ -38,8 +38,8 @@
 #            is reported as a skip, not a failure.
 #
 # Depends on: c2-server healthy, admin credentials in environment
-# Uses: BUILD_TIMEOUT (default 300 s — budget for the single awaited build)
-#       DRAIN_TIMEOUT (default 600 s — budget for phases 0 and 4)
+# Uses: BUILD_TIMEOUT (default 300 s - budget for the single awaited build)
+#       DRAIN_TIMEOUT (default 600 s - budget for phases 0 and 4)
 
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -90,7 +90,7 @@ wait_for_build() {
             success)
                 echo "success"; return 0 ;;
             running)
-                ;; # expected while compiling — keep polling
+                ;; # expected while compiling - keep polling
             failed)
                 echo "--- builder log for $job_id (last 40 lines) ---" >&2
                 echo "$status_resp" | jq -r '.log[-40:][]? // empty' 2>/dev/null >&2
@@ -125,14 +125,14 @@ wait_for_quiescence() {
     echo "busy"; return 0
 }
 
-# Minimal valid payload — used by rejection tests that only change one field.
+# Minimal valid payload - used by rejection tests that only change one field.
 BASE_JSON='{"host":"c2-server","port":"4443","platform":"linux","transport":"tls","sleep":5,"jitter_min":0,"jitter_max":0,"debug":true}'
 
-# Full combined payload — the single end-to-end build that is awaited.
+# Full combined payload - the single end-to-end build that is awaited.
 FULL_JSON='{
     "host":"c2-server","port":"4443","platform":"linux","transport":"tls",
     "sleep":5,"jitter_min":0,"jitter_max":0,"debug":true,
-    "sleep_mask":"foliage",
+    "sleep_mask":"spoofed-stack",
     "indirect_syscalls":true,
     "stack_spoof":true,
     "patch_amsi_etw":true,
@@ -210,11 +210,14 @@ assert_http "sleep_mask empty string returns 400" "400"
 start_build "$(echo "$BASE_JSON" | jq '. + {sleep_mask:"EKKO"}')" > /dev/null
 assert_http "sleep_mask wrong case returns 400" "400"
 
+start_build "$(echo "$BASE_JSON" | jq '. + {sleep_mask:"foliage"}')" > /dev/null
+assert_http "sleep_mask foliage removed returns 400" "400"
+
 # ══════════════════════════════════════════════════════════════════════
 suite "Phase 2 — validation: sleep mask variants accepted"
 # ══════════════════════════════════════════════════════════════════════
 
-for MASK in ekko foliage none; do
+for MASK in ekko spoofed-stack none; do
     RESP=$(start_build "$(echo "$BASE_JSON" | jq --arg m "$MASK" '. + {sleep_mask:$m}')")
     assert_http "sleep_mask=$MASK accepted" "202"
     JID=$(echo "$RESP" | jq -r '.job_id // empty' 2>/dev/null || true)
@@ -274,15 +277,15 @@ assert_ne "job_id returned" "" "$(echo "$RESP" | jq -r '.job_id // empty' 2>/dev
 RESP=$(start_build "$(echo "$BASE_JSON" | jq '. + {guard_hour_start:8,guard_hour_end:18}')")
 assert_http "guard_hours 8-18 accepted" "202"
 
-# Only start set — end defaults to 0
+# Only start set - end defaults to 0
 RESP=$(start_build "$(echo "$BASE_JSON" | jq '. + {guard_hour_start:9}')")
 assert_http "guard_hour_start only accepted" "202"
 
-# Only end set — start defaults to 0
+# Only end set - start defaults to 0
 RESP=$(start_build "$(echo "$BASE_JSON" | jq '. + {guard_hour_end:17}')")
 assert_http "guard_hour_end only accepted" "202"
 
-# Both zero — treated as all-day (no restriction), should accept
+# Both zero - treated as all-day (no restriction), should accept
 RESP=$(start_build "$(echo "$BASE_JSON" | jq '. + {guard_hour_start:0,guard_hour_end:0}')")
 assert_http "guard_hours 0-0 (all-day) accepted" "202"
 
@@ -347,7 +350,7 @@ suite "Phase 4 — drain fire-and-forget builds"
 # Phase 2 spawned builds that we deliberately did not await (their
 # configs duplicate Phase 1 coverage). Drain them so the cargo load
 # does not bleed into test_12+. A drain timeout is environmental, not
-# a contract violation — report it as a skip.
+# a contract violation - report it as a skip.
 
 if [ "$(wait_for_quiescence "$DRAIN_TIMEOUT")" = "idle" ]; then
     assert_eq "background builds drained" "true" "true"
@@ -366,20 +369,20 @@ print_summary
 #    no_system=false) spawned REAL cargo release builds that competed
 #    with the nine awaited builds for the shared target/ directory
 #    lock. Whether an awaited build finished within BUILD_TIMEOUT
-#    depended on how many builds happened to queue ahead of it —
+#    depended on how many builds happened to queue ahead of it -
 #    machine-speed-dependent, i.e. flaky. Now exactly one build is
 #    awaited, and it runs while the queue is provably idle.
 #
 # 2. `RESULT=$(wait_for_build "$JOB_FULL")` inherited wait_for_build's
 #    non-zero exit code under the `set -e` that lib.sh enables, so a
 #    failed/timed-out build in the combined suite aborted the whole
-#    script with no summary — a different failure mode than the same
+#    script with no summary - a different failure mode than the same
 #    condition produced in other suites. wait_for_build now always
 #    returns 0 and communicates via its stdout token.
 #
 # 3. wait_for_build accepted completed|done|success while the server
 #    only ever emits success (BuildStatus::{Running,Success,Failed}),
-#    and a later assertion required exactly "success" — an
+#    and a later assertion required exactly "success" - an
 #    inconsistency that could pass one check and fail another for the
 #    same job. The waiter now matches the server's exact vocabulary
 #    and treats anything else as immediate failure (API drift), not

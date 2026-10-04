@@ -7,8 +7,8 @@
 // GET /api/downloads/*path
 //   Serves any file under the server-side `downloads/` directory.
 //   Path traversal is blocked by rejecting `..` components.
-//   Requires X-API-KEY auth (enforced by the router's middleware layer;
-//   ?key=<api_key> is accepted as a fallback for <img>/<a href> uses).
+//   Requires X-API-KEY auth (enforced by the router's middleware layer)
+//   plus an operator-or-admin role; query-string keys are not accepted.
 //   NOTE: this route must never be registered in public_routes - it serves
 //   screenshots, keylog dumps, and exfiltrated files.
 
@@ -18,9 +18,11 @@ use axum::{
     http::{StatusCode, header},
     Json,
     body::StreamBody,
+    Extension,
 };
 use std::{path::PathBuf, sync::Arc};
 use crate::api::state::ApiContext;
+use crate::api::middleware::OperatorInfo;
 use crate::config::config;
 
 // ── Screenshot listing (RCM Sec-11 layout) ────────────────────────────────────
@@ -83,7 +85,13 @@ fn parse_shot_name(name: &str, root_name: &str) -> Option<ShotEntry> {
 pub async fn list_screenshots(
     Path(session_id): Path<u32>,
     State(state): State<Arc<ApiContext>>,
+    Extension(operator): Extension<OperatorInfo>,
 ) -> impl IntoResponse {
+    // Screenshots are exfiltrated evidence; read-only viewers are excluded.
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
+
     let (folders, shots) = tokio::task::spawn_blocking(move || {
         let (hostname, computer_id) = state
             .db
@@ -137,14 +145,36 @@ pub async fn list_screenshots(
     .await
     .unwrap_or_default();
 
-    Json(serde_json::json!({ "folders": folders, "shots": shots }))
+    Json(serde_json::json!({ "folders": folders, "shots": shots })).into_response()
 }
 
 // ── File serving ──────────────────────────────────────────────────────────────
-// The "downloads" storage root below matches rcm::registry()'s base; see the
-// note there on why it is not yet read from config.rcm.storage_base.
+// Files are served from config.rcm.storage_base (default "downloads/"), the
+// same root rcm::registry() uses for packages.
 
-pub async fn serve_download(Path(path): Path<String>) -> Response {
+/// Resolve `base.join(rel)` and confirm the result stays under `base` after
+/// symlink resolution. Returns None when the path escapes the base or does
+/// not exist (callers report not-found either way).
+fn resolve_under_base(base: &std::path::Path, rel: &std::path::Path) -> Option<PathBuf> {
+    let canon_base = base.canonicalize().ok()?;
+    let canon_full = canon_base.join(rel).canonicalize().ok()?;
+    if canon_full.starts_with(&canon_base) {
+        Some(canon_full)
+    } else {
+        None
+    }
+}
+
+pub async fn serve_download(
+    Path(path): Path<String>,
+    Extension(operator): Extension<OperatorInfo>,
+) -> Response {
+    // Served files are loot (screenshots, keylog dumps, exfil); viewers
+    // have no download rights under the RBAC model.
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
+
     // Block path traversal: reject any component that is or contains ".."
     let safe: PathBuf = path
         .split('/')
@@ -155,7 +185,11 @@ pub async fn serve_download(Path(path): Path<String>) -> Response {
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let full = PathBuf::from(crate::config::config().rcm.storage_base.as_str()).join(&safe);
+    let base = PathBuf::from(crate::config::config().rcm.storage_base.as_str());
+    // A symlink inside the tree must not let reads escape the storage base.
+    let Some(full) = resolve_under_base(&base, &safe) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
 
     match tokio::fs::read(&full).await {
         Ok(bytes) => {
@@ -257,7 +291,13 @@ pub async fn list_loot(
 /// session's loot folder in one click from the panel.
 pub async fn zip_loot(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Extension(operator): Extension<OperatorInfo>,
 ) -> Response {
+    // Bulk archive of loot; restricted to operator/admin like other downloads.
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
+
     let subpath = match params.get("path") {
         Some(p) if !p.is_empty() => p.clone(),
         _ => return (StatusCode::BAD_REQUEST, "path required").into_response(),
@@ -271,7 +311,11 @@ pub async fn zip_loot(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let full      = PathBuf::from("downloads").join(&safe);
+    let base = PathBuf::from(crate::config::config().rcm.storage_base.as_str());
+    // Same base as every other loot route, with symlink-escape protection.
+    let Some(full) = resolve_under_base(&base, &safe) else {
+        return (StatusCode::NOT_FOUND, "Not a directory").into_response();
+    };
     let zip_name  = format!(
         "{}.zip",
         safe.file_name().and_then(|n| n.to_str()).unwrap_or("loot")
@@ -371,13 +415,24 @@ pub async fn zip_loot(
 /// Removes a single file or an empty directory from downloads/.
 pub async fn delete_loot(
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Extension(operator): Extension<OperatorInfo>,
 ) -> impl IntoResponse {
+    // Destroys forensic evidence; operator/admin only.
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
+
     let subpath = match params.get("path") {
         Some(p) if !p.is_empty() => p.clone(),
         _ => return StatusCode::BAD_REQUEST.into_response(),
     };
     let safe: std::path::PathBuf = subpath.split('/').filter(|s| !s.is_empty() && !s.contains("..")).collect();
-    let full = std::path::PathBuf::from(crate::config::config().rcm.storage_base.as_str()).join(safe);
+    // Resolve symlinks before deleting so a planted link inside the tree
+    // cannot turn delete_loot into an arbitrary server-file delete.
+    let base = std::path::PathBuf::from(crate::config::config().rcm.storage_base.as_str());
+    let Some(full) = resolve_under_base(&base, &safe) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
 
     let result = tokio::task::spawn_blocking(move || {
         if full.is_dir() { std::fs::remove_dir_all(&full) } else { std::fs::remove_file(&full) }
@@ -392,7 +447,7 @@ pub async fn delete_loot(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_shot_name;
+    use super::{parse_shot_name, resolve_under_base};
 
     #[test]
     fn parse_shot_name_accepts_valid_sec11_name() {
@@ -419,5 +474,40 @@ mod tests {
         let name = "screenshot.ééééé12345.monitor0.png";
         assert_eq!(name.split('.').nth(1).unwrap().len(), 15);
         assert!(parse_shot_name(name, "H").is_none());
+    }
+
+    #[test]
+    fn resolve_under_base_accepts_regular_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("ok.txt"), b"data").unwrap();
+        let got = resolve_under_base(dir.path(), std::path::Path::new("ok.txt"))
+            .expect("regular file inside base resolves");
+        assert_eq!(got, dir.path().join("ok.txt").canonicalize().unwrap());
+    }
+
+    #[test]
+    fn resolve_under_base_rejects_missing_path() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert!(resolve_under_base(dir.path(), std::path::Path::new("nope.txt")).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_under_base_rejects_symlink_escape() {
+        let base = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), b"classified").unwrap();
+        // Direct file symlink: base/link.txt -> outside/secret.txt
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            base.path().join("link.txt"),
+        ).unwrap();
+        assert!(resolve_under_base(base.path(), std::path::Path::new("link.txt")).is_none());
+        // Directory symlink one level up: base/evil -> outside, then a file below it
+        std::os::unix::fs::symlink(outside.path(), base.path().join("evil")).unwrap();
+        assert!(resolve_under_base(base.path(), std::path::Path::new("evil/secret.txt")).is_none());
+        // A real sibling inside the base still resolves.
+        std::fs::write(base.path().join("real.txt"), b"fine").unwrap();
+        assert!(resolve_under_base(base.path(), std::path::Path::new("real.txt")).is_some());
     }
 }

@@ -23,11 +23,11 @@ use axum::{
     extract::State,
     response::{IntoResponse, Response},
     http::StatusCode,
-    Json,
+    Json, Extension,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
+use crate::api::middleware::OperatorInfo;
 use crate::api::state::ApiContext;
 use crate::rcm::PackageManager;
 
@@ -97,8 +97,8 @@ pub struct PackageRequest {
 /// on-disk package so seal/verify take the same write lock as in-flight
 /// stores from the session path - a private manager here would race them.
 fn open_package(name: &str) -> Result<Arc<PackageManager>, Response> {
-    // Base matches rcm::registry()'s base; see the note there on why it is
-    // not yet read from config.rcm.storage_base.
+    // Base matches rcm::registry()'s base and comes from
+    // config.rcm.storage_base.
     let base = Path::new(crate::config::config().rcm.storage_base.as_str());
     let root = base.join(name);
     let exists = root
@@ -155,7 +155,14 @@ pub async fn list_packages(State(_state): State<Arc<ApiContext>>) -> impl IntoRe
 }
 
 /// POST /api/rcm/seal
-pub async fn seal_package(Json(body): Json<PackageRequest>) -> Response {
+pub async fn seal_package(
+    Extension(operator): Extension<OperatorInfo>,
+    Json(body): Json<PackageRequest>,
+) -> Response {
+    // Sealing rewrites the evidence manifest; operator/admin only.
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
     let result = tokio::task::spawn_blocking(move || {
         let pkg = open_package(&body.name)?;
         pkg.seal()
@@ -182,7 +189,14 @@ pub async fn seal_package(Json(body): Json<PackageRequest>) -> Response {
 }
 
 /// POST /api/rcm/verify
-pub async fn verify_package(Json(body): Json<PackageRequest>) -> Response {
+pub async fn verify_package(
+    Extension(operator): Extension<OperatorInfo>,
+    Json(body): Json<PackageRequest>,
+) -> Response {
+    // Evidence-package operations are gated together; operator/admin only.
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
     let result = tokio::task::spawn_blocking(move || {
         let pkg = open_package(&body.name)?;
         pkg.verify()

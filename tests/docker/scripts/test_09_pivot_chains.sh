@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_09_pivot_chains.sh — Pivot chain & stress tests
+# tests/docker/scripts/test_09_pivot_chains.sh - Pivot chain & stress tests
 #
 # Orchestrates multi-hop pivot chains, then tests EVERY hop individually:
 #   - Command execution at each depth

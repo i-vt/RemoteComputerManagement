@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_07_proxy.sh — SOCKS proxy & reverse port forwarding
+# tests/docker/scripts/test_07_proxy.sh - SOCKS proxy & reverse port forwarding
 source "$(dirname "$0")/lib.sh"
 
 # These tests require live agents

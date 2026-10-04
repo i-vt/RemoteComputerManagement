@@ -95,6 +95,15 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
             last_login TEXT
          );
 
+         CREATE TABLE IF NOT EXISTS operator_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            operator_id INTEGER NOT NULL,
+            key_hash TEXT UNIQUE NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(operator_id) REFERENCES operators(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_operator_sessions_op ON operator_sessions(operator_id);
+
          CREATE TABLE IF NOT EXISTS audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             operator_id INTEGER,
@@ -183,6 +192,17 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
         }
     }
 
+    // Migration: keep the session-id allocator ahead of any rows written by
+    // older versions that used SQLite rowids for sessions.id. Without this,
+    // a reused id would violate the sessions primary key and orphan the
+    // session's command/output history behind FK constraints.
+    if let Err(e) = conn.execute(
+        "UPDATE session_id_seq SET next_id = MAX(next_id, (SELECT COALESCE(MAX(id), 0) + 1 FROM sessions)) WHERE id = 1",
+        [],
+    ) {
+        warn!("Migration session_id_seq resync: {}", e);
+    }
+
     // Migration: queued_tasks table (for older DBs that pre-date hibernation mode)
     let task_count: i32 = conn.query_row(
         "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='queued_tasks'",
@@ -206,10 +226,18 @@ pub fn init() -> Result<DbPool, Box<dyn std::error::Error>> {
     Ok(pool)
 }
 
+/// Allocate the next runtime session id. This is the ONLY session-id
+/// allocator in the server: every listener and transport draws from this
+/// sequence, and the same value is used as the sessions table primary key,
+/// so runtime ids and FK-joined history stay in lockstep.
+///
+/// The UPDATE ... RETURNING runs as a single SQLite statement, so pooled
+/// connections can never observe a half-incremented counter the way the
+/// old UPDATE-then-SELECT pair could under concurrency.
 pub fn allocate_session_id(conn: &Connection) -> Result<u32, rusqlite::Error> {
-    conn.execute("UPDATE session_id_seq SET next_id = next_id + 1 WHERE id = 1", [])?;
     let id: u32 = conn.query_row(
-        "SELECT next_id - 1 FROM session_id_seq WHERE id = 1", [], |r| r.get(0)
+        "UPDATE session_id_seq SET next_id = next_id + 1 WHERE id = 1 RETURNING next_id - 1",
+        [], |r| r.get(0)
     )?;
     Ok(id)
 }
@@ -243,7 +271,10 @@ pub fn get_build_info(conn: &Connection, build_id: &str) -> Option<(Vec<u8>, Str
     ).optional().unwrap_or(None)
 }
 
-pub fn log_new_session(
+/// Register a session row and return its runtime id. Allocation and row
+/// creation both happen here so every transport stores history under the
+/// same id that identifies the live session in SharedSessions.
+pub fn register_session(
     conn: &Connection,
     exe_id: &str,
     computer_id: &str,
@@ -252,14 +283,59 @@ pub fn log_new_session(
     ip: &str,
     build_id: &str,
     profile: &str,
-) {
-    if let Err(e) = conn.execute(
-        "INSERT INTO sessions (exe_id, computer_id, hostname, os, ip_address, build_id, connected_at, is_active, profile)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)",
-        params![exe_id, computer_id, hostname, os, ip, build_id, Utc::now().to_rfc3339(), profile]
-    ) {
-        error!("Failed to log new session for {}: {}", hostname, e);
-    }
+) -> Result<u32, rusqlite::Error> {
+    let session_id = allocate_session_id(conn)?;
+    conn.execute(
+        "INSERT INTO sessions (id, exe_id, computer_id, hostname, os, ip_address, build_id, connected_at, is_active, profile)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
+        params![session_id, exe_id, computer_id, hostname, os, ip, build_id, Utc::now().to_rfc3339(), profile]
+    )?;
+    Ok(session_id)
+}
+
+/// Find prior sessions for the machine identity supplied by a registration.
+/// computer_id is preferred because it survives hostname changes.
+pub fn find_machine_session_ids(
+    conn: &Connection,
+    computer_id: &str,
+    hostname: &str,
+) -> Vec<u32> {
+    let (sql, value) = if !computer_id.is_empty() {
+        ("SELECT id FROM sessions WHERE computer_id = ?1 ORDER BY id DESC", computer_id)
+    } else if !hostname.is_empty() {
+        ("SELECT id FROM sessions WHERE hostname = ?1 ORDER BY id DESC", hostname)
+    } else {
+        return Vec::new();
+    };
+    let mut stmt = match conn.prepare(sql) {
+        Ok(stmt) => stmt,
+        Err(_) => return Vec::new(),
+    };
+    stmt.query_map(params![value], |row| row.get(0))
+        .map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_default()
+}
+
+/// Refresh a prior sessions row for idempotent HTTP re-registration. Reusing
+/// the primary key preserves command/output history behind existing FKs.
+pub fn reregister_session(
+    conn: &Connection,
+    session_id: u32,
+    exe_id: &str,
+    computer_id: &str,
+    hostname: &str,
+    os: &str,
+    ip: &str,
+    build_id: &str,
+    profile: &str,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE sessions SET exe_id = ?2, computer_id = ?3, hostname = ?4, os = ?5,
+         ip_address = ?6, build_id = ?7, connected_at = ?8, is_active = 0, profile = ?9
+         WHERE id = ?1",
+        params![session_id, exe_id, computer_id, hostname, os, ip, build_id, Utc::now().to_rfc3339(), profile]
+    )?;
+    Ok(())
 }
 
 pub fn set_session_active(conn: &Connection, session_id: u32, active: bool) {
@@ -280,7 +356,24 @@ pub fn get_session_profile(conn: &Connection, session_id: u32) -> String {
         .unwrap_or_else(|_| "default".to_string())
 }
 
+pub fn redact_command_for_history(command: &str) -> String {
+    let command = command.trim();
+    if command.starts_with("ext:load") {
+        return "ext:load <args redacted>".to_string();
+    }
+    if command.starts_with("module:") {
+        let mut parts = command.split_whitespace();
+        let name = parts.next().unwrap_or("module:");
+        if parts.next().is_some() {
+            return format!("{} <args redacted>", name);
+        }
+        return name.to_string();
+    }
+    command.to_string()
+}
+
 pub fn log_command(conn: &Connection, session_id: u32, request_id: u64, command: &str) {
+    let command = redact_command_for_history(command);
     if let Err(e) = conn.execute(
         "INSERT INTO command_history (session_id, request_id, command, timestamp) VALUES (?1, ?2, ?3, ?4)",
         params![session_id, request_id as i64, command, Utc::now().to_rfc3339()]
@@ -478,6 +571,73 @@ pub fn get_operator_by_key(conn: &Connection, api_key: &str) -> Option<Operator>
             role: r.get(3)?, api_key: r.get(4)?, created_at: r.get(5)?, last_login: r.get(6)?,
         })
     ).optional().unwrap_or(None)
+}
+
+// ── Per-session API keys ─────────────────────────────────────────────────────
+// Every login mints a row in operator_sessions, so concurrent sessions of the
+// same operator no longer kick each other out. The legacy operators.api_key
+// column (the primary key issued at operator creation) keeps working through
+// get_operator_by_key for backward compatibility with keys already handed out.
+
+/// Issue a new session-scoped API key. The raw key is returned once; only
+/// its HMAC is stored. Other sessions of the operator are unaffected.
+pub fn create_operator_session(conn: &Connection, operator_id: i64) -> Option<String> {
+    let raw_key = uuid::Uuid::new_v4().to_string();
+    let key_hash = hash_api_key(&raw_key);
+    match conn.execute(
+        "INSERT INTO operator_sessions (operator_id, key_hash, created_at) VALUES (?1, ?2, ?3)",
+        params![operator_id, key_hash, Utc::now().to_rfc3339()],
+    ) {
+        Ok(_) => Some(raw_key),
+        Err(e) => {
+            warn!("Failed to create operator session for {}: {}", operator_id, e);
+            None
+        }
+    }
+}
+
+/// Resolve an operator through a session key. Returns None when the key is
+/// not a live session key (the caller then tries the legacy primary key).
+pub fn get_operator_by_session_key(conn: &Connection, api_key: &str) -> Option<Operator> {
+    let key_hash = hash_api_key(api_key);
+    conn.query_row(
+        "SELECT o.id, o.username, o.password_hash, o.role, o.api_key, o.created_at, o.last_login
+         FROM operators o JOIN operator_sessions s ON s.operator_id = o.id
+         WHERE s.key_hash = ?1",
+        [&key_hash],
+        |r| Ok(Operator {
+            id: r.get(0)?, username: r.get(1)?, password_hash: r.get(2)?,
+            role: r.get(3)?, api_key: r.get(4)?, created_at: r.get(5)?, last_login: r.get(6)?,
+        })
+    ).optional().unwrap_or(None)
+}
+
+/// Delete the single session row for a key hash (logout of one session).
+pub fn delete_operator_session_by_hash(conn: &Connection, key_hash: &str) -> bool {
+    conn.execute("DELETE FROM operator_sessions WHERE key_hash = ?1", [key_hash])
+        .unwrap_or(0) > 0
+}
+
+/// Delete every session row for an operator (admin revoke, admin reset).
+pub fn delete_operator_sessions(conn: &Connection, operator_id: i64) -> usize {
+    conn.execute("DELETE FROM operator_sessions WHERE operator_id = ?1", [operator_id])
+        .unwrap_or(0)
+}
+
+/// Delete every session row except the caller's own (self password change
+/// revokes the operator's other sessions but keeps the current one alive).
+pub fn delete_other_operator_sessions(conn: &Connection, operator_id: i64, keep_hash: &str) -> usize {
+    conn.execute(
+        "DELETE FROM operator_sessions WHERE operator_id = ?1 AND key_hash != ?2",
+        params![operator_id, keep_hash],
+    ).unwrap_or(0)
+}
+
+pub fn count_operator_sessions(conn: &Connection, operator_id: i64) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM operator_sessions WHERE operator_id = ?1",
+        [operator_id], |r| r.get(0),
+    ).unwrap_or(0)
 }
 
 pub fn get_operator_by_username(conn: &Connection, username: &str) -> Option<Operator> {
@@ -831,6 +991,31 @@ pub fn poll_and_claim_tasks(conn: &Connection, session_id: i64, limit: usize) ->
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(_) => vec![],
     }; x
+}
+
+pub fn requeue_task(conn: &Connection, task_id: &str) {
+    if let Err(e) = conn.execute(
+        "UPDATE queued_tasks SET status = 'pending', claimed_at = NULL
+         WHERE task_id = ?1 AND status = 'running'",
+        params![task_id],
+    ) { error!("requeue_task {}: {}", task_id, e); }
+}
+
+pub fn fail_stale_running_tasks(conn: &Connection, max_running_secs: i64) -> usize {
+    let cutoff = chrono::Utc::now().timestamp() - max_running_secs;
+    conn.execute(
+        "UPDATE queued_tasks SET status = 'failed', error = 'hibernation response deadline expired',
+         finished_at = ?1 WHERE status = 'running' AND claimed_at < ?2",
+        params![chrono::Utc::now().timestamp(), cutoff],
+    ).unwrap_or(0)
+}
+
+pub fn max_command_request_id(conn: &Connection, session_id: u32) -> u64 {
+    conn.query_row(
+        "SELECT COALESCE(MAX(request_id), 0) FROM command_history WHERE session_id = ?1",
+        params![session_id],
+        |row| row.get::<_, i64>(0),
+    ).ok().and_then(|v| u64::try_from(v).ok()).unwrap_or(0)
 }
 
 pub fn complete_task(conn: &Connection, task_id: &str, result: &str) {

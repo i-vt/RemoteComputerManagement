@@ -16,14 +16,14 @@ window.LootBrowser = {
         ctr.innerHTML = '<div class="p-10 text-center text-gray-500">' +
             '<i class="fas fa-circle-notch fa-spin text-2xl"></i></div>';
 
-        const url   = window.Auth.url.replace(/\/$/, '');
         const query = subpath ? `?path=${encodeURIComponent(subpath)}` : '';
         try {
-            const r = await fetch(`${url}/api/loot${query}`,
-                { headers: { 'X-API-KEY': window.Auth.key } });
+            const r = await window.API.apiFetch(`/api/loot${query}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const { entries } = await r.json();
             this.render(entries || []);
         } catch (e) {
+            if (e.message === 'unauthorized') return;
             ctr.textContent = '';
             const p = document.createElement('p');
             p.className = 'text-red-400 p-6';
@@ -135,9 +135,9 @@ window.LootBrowser = {
 
     // Preview in modal
     async preview(path, name) {
-        const url   = window.Auth.url.replace(/\/$/, '');
-        // ?key= fallback: /api/downloads requires auth; <img> can't send headers
-        const src   = `${url}/api/downloads/${path}?key=${encodeURIComponent(window.Auth.key)}`;
+        // Authenticated fetch + object URL: keeps the API key out of URLs
+        // (browser history, proxy logs). <img> alone cannot send headers.
+        const src   = `/api/downloads/${path}`;
         const ext   = name.split('.').pop().toLowerCase();
         const modal = document.getElementById('loot-preview-modal');
         const title = document.getElementById('loot-preview-title');
@@ -146,17 +146,34 @@ window.LootBrowser = {
         title.textContent = name;
         modal.classList.remove('hidden');
 
-        if (['png','jpg','jpeg','gif','bmp','webp'].includes(ext)) {
+        const showError = (msg) => {
             body.textContent = '';
-            const img = document.createElement('img');
-            img.src = src;
-            img.className = 'max-w-full max-h-full object-contain mx-auto';
-            img.style.maxHeight = '70vh';
-            body.appendChild(img);
+            const p = document.createElement('p');
+            p.className = 'text-red-400 p-4';
+            p.textContent = msg;
+            body.appendChild(p);
+        };
+
+        if (['png','jpg','jpeg','gif','bmp','webp'].includes(ext)) {
+            body.innerHTML = '<div class="text-gray-400 p-4">Loading…</div>';
+            try {
+                const r = await window.API.apiFetch(src);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const blob = await r.blob();
+                const img = document.createElement('img');
+                img.src = URL.createObjectURL(blob);
+                img.className = 'max-w-full max-h-full object-contain mx-auto';
+                img.style.maxHeight = '70vh';
+                body.textContent = '';
+                body.appendChild(img);
+            } catch (e) {
+                if (e.message !== 'unauthorized') showError(e.message);
+            }
         } else if (['txt','log','json','xml','md','sh','bat','ps1','ini','cfg','csv'].includes(ext)) {
             body.innerHTML = '<div class="text-gray-400 p-4">Loading…</div>';
             try {
-                const r = await fetch(src, { headers: { 'X-API-KEY': window.Auth.key } });
+                const r = await window.API.apiFetch(src);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
                 const text = await r.text();
                 const pre = document.createElement('pre');
                 pre.className = 'text-xs text-green-300 font-mono whitespace-pre-wrap ' +
@@ -166,11 +183,7 @@ window.LootBrowser = {
                 body.textContent = '';
                 body.appendChild(pre);
             } catch (e) {
-                body.textContent = '';
-                const p = document.createElement('p');
-                p.className = 'text-red-400 p-4';
-                p.textContent = e.message;
-                body.appendChild(p);
+                if (e.message !== 'unauthorized') showError(e.message);
             }
         } else {
             body.textContent = '';
@@ -187,47 +200,67 @@ window.LootBrowser = {
     },
 
     download(path, name) {
-        const url  = window.Auth.url.replace(/\/$/, '');
         const link = document.createElement('a');
-        link.href     = `${url}/api/downloads/${path}`;
         link.download = name;
-        fetch(link.href, { headers: { 'X-API-KEY': window.Auth.key } })
-            .then(r => r.blob())
+        window.API.apiFetch(`/api/downloads/${path}`)
+            .then(r => {
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                return r.blob();
+            })
             .then(blob => {
                 const burl = URL.createObjectURL(blob);
                 link.href  = burl;
                 link.click();
                 setTimeout(() => URL.revokeObjectURL(burl), 1000);
+            })
+            .catch(e => {
+                if (e.message !== 'unauthorized') window.Notify?.toast(`Download failed: ${e.message}`, 'error');
             });
     },
 
     // Download an entire folder as a single zip file.
     // The server zips it on-the-fly via GET /api/loot/zip?path=...
-    // Download an entire folder as a single zip file.
-    // Direct <a href> with ?key= streams straight to disk - no fetch+blob
-    // buffering that would OOM the browser for large loot folders.
-    downloadFolder(path, name) {
-        const url  = window.Auth.url.replace(/\/+$/, '');
-        const href = `${url}/api/loot/zip?path=${encodeURIComponent(path)}&key=${encodeURIComponent(window.Auth.key)}`;
-        const link = document.createElement('a');
-        link.href     = href;
-        link.download = `${name}.zip`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    // fetch+blob keeps the API key out of the URL (browser history, proxy
+    // logs) at the cost of buffering the zip in memory first.
+    async downloadFolder(path, name) {
+        try {
+            const r = await window.API.apiFetch(`/api/loot/zip?path=${encodeURIComponent(path)}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const blob = await r.blob();
+            const burl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href     = burl;
+            link.download = `${name}.zip`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(burl), 1000);
+        } catch (e) {
+            if (e.message !== 'unauthorized') window.Notify?.toast(`Zip download failed: ${e.message}`, 'error');
+        }
     },
 
-    confirmDelete(path, name) {
-        if (!confirm(`Delete "${name}" from loot? This cannot be undone.`)) return;
+    async confirmDelete(path, name) {
+        if (!await window.Modal.confirm(`Delete "${name}" from loot? This cannot be undone.`, 'error')) return;
         this.deletePath(path);
     },
 
     async deletePath(path) {
         const url = window.Auth.url.replace(/\/$/, '');
-        await fetch(`${url}/api/loot?path=${encodeURIComponent(path)}`, {
-            method: 'DELETE',
-            headers: { 'X-API-KEY': window.Auth.key }
-        });
+        try {
+            const res = await fetch(`${url}/api/loot?path=${encodeURIComponent(path)}`, {
+                method: 'DELETE',
+                headers: { 'X-API-KEY': window.Auth.key }
+            });
+            if (res.status === 401) return window.Auth.logout();
+            if (!res.ok) {
+                window.Notify?.toast(`Delete failed (HTTP ${res.status})`, 'error');
+                return;
+            }
+        } catch (e) {
+            window.Notify?.toast('Delete failed: server unreachable', 'error');
+            return;
+        }
         this.load(this.currentPath);
     },
 

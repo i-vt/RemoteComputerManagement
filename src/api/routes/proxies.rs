@@ -14,6 +14,40 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, FuturesAsyncReadCompatExt};
 use crate::api::state::{ApiContext, ProxyHandle, RportfwdServerHandle};
 use crate::api::models::{ProxyDto, RportfwdRequest, RportfwdDto, IpWhoIsResponse, GeoIpResult};
 use crate::api::middleware::OperatorInfo;
+use crate::common::try_send_session_command;
+
+use rand::{rngs::OsRng, RngCore};
+use subtle::ConstantTimeEq;
+use tokio::net::TcpStream;
+
+/// Seconds an unauthenticated tunnel connection gets to present its token
+/// before the server drops it and keeps listening for the real agent.
+const TUNNEL_AUTH_TIMEOUT_SECS: u64 = 10;
+
+/// Random per-tunnel auth token: 32 lowercase hex chars (128 bits, OsRng).
+/// Sent to the agent inside the proxy:start / rportfwd:start command and
+/// required from the connecting peer before yamux starts, so a tunnel port
+/// (ephemeral, bound on 0.0.0.0) cannot be claimed by whoever connects first.
+pub(crate) fn new_tunnel_token() -> String {
+    let mut b = [0u8; 16];
+    OsRng.fill_bytes(&mut b);
+    b.iter().map(|x| format!("{:02x}", x)).collect()
+}
+
+/// Read exactly one token from a freshly accepted tunnel connection and
+/// compare it in constant time. False on timeout, short read, or mismatch;
+/// the caller drops unauthenticated peers and keeps listening.
+pub(crate) async fn tunnel_token_matches(stream: &mut TcpStream, expected: &str) -> bool {
+    let mut buf = vec![0u8; expected.len()];
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(TUNNEL_AUTH_TIMEOUT_SECS),
+        tokio::io::AsyncReadExt::read_exact(stream, &mut buf),
+    ).await;
+    match read {
+        Ok(Ok(_)) => buf.as_slice().ct_eq(expected.as_bytes()).into(),
+        _ => false,
+    }
+}
 
 pub async fn list_proxies(State(state): State<Arc<ApiContext>>) -> Json<Vec<ProxyDto>> {
     let proxies = state.proxies.lock().unwrap_or_else(|e| e.into_inner());
@@ -42,7 +76,8 @@ pub async fn start_proxy(
         let mut chain_log = Vec::new();
         while let Some(curr_id) = current_node {
             if let Some(sess) = sessions.get(&curr_id) {
-                let _ = sess.tx.send(("sleep 0 0".to_string(), None));
+                // handle_sleep expects 3 args: <seconds> <jitter_min> <jitter_max>.
+                let _ = try_send_session_command(id, &sess.tx, "sleep 0 0 0".to_string(), None);
                 chain_log.push(curr_id);
                 current_node = sess.parent_id;
             } else {
@@ -94,16 +129,30 @@ pub async fn start_proxy(
         proxies.insert(id, ProxyHandle { session_id: id, tunnel_port, socks_port, stop_tx });
     }
 
-    let _ = session_tx.send((format!("proxy:start {}", tunnel_port), None));
+    let tunnel_token = new_tunnel_token();
+    if !try_send_session_command(id, &session_tx, format!("proxy:start {} {}", tunnel_port, tunnel_token), None) {
+        state.proxies.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
+            "error": "Session command queue is full or closed"
+        }))).into_response();
+    }
     let proxies_clone = state.proxies.clone();
 
     tokio::spawn(async move {
         eprintln!("[Proxy] Started for Session {} (Tunnel: {}, SOCKS: {})", id, tunnel_port, socks_port);
 
-        // Wait for the agent to connect back on the tunnel port.
-        let (stream, _) = tokio::select! {
-            res = tunnel_listener.accept() => match res { Ok(r) => r, Err(_) => return },
-            _ = &mut stop_rx => return,
+        // Wait for the agent to connect back on the tunnel port. The peer
+        // must present the token from the proxy:start command before yamux
+        // starts; wrong or slow peers are dropped and the loop keeps
+        // listening for the real agent.
+        let stream = loop {
+            let (mut s, _peer) = tokio::select! {
+                res = tunnel_listener.accept() => match res { Ok(r) => r, Err(_) => return },
+                _ = &mut stop_rx => return,
+            };
+            if tunnel_token_matches(&mut s, &tunnel_token).await {
+                break s;
+            }
         };
 
         // Wrap in yamux (server mode - we open streams, agent accepts them).
@@ -191,12 +240,17 @@ pub async fn start_proxy(
 pub async fn stop_proxy(
     State(state): State<Arc<ApiContext>>,
     Path(id): Path<u32>,
+    Extension(operator): Extension<OperatorInfo>,
 ) -> Response {
+    // Killing another operator's proxy disrupts live ops; operator/admin only.
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
     let mut proxies = state.proxies.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(handle) = proxies.remove(&id) {
         let _ = handle.stop_tx.send(());
         if let Some(session) = state.sessions.get(&id) {
-            let _ = session.tx.send(("proxy:stop".to_string(), None));
+            let _ = try_send_session_command(id, &session.tx, "proxy:stop".to_string(), None);
         }
         (StatusCode::OK, Json(serde_json::json!({"status": "stopped"}))).into_response()
     } else {
@@ -207,7 +261,12 @@ pub async fn stop_proxy(
 pub async fn check_proxy_ip(
     State(state): State<Arc<ApiContext>>,
     Path(id): Path<u32>,
+    Extension(operator): Extension<OperatorInfo>,
 ) -> Response {
+    // Drives traffic through the agent's proxy; operator/admin only.
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
     let socks_port = {
         let proxies = state.proxies.lock().unwrap_or_else(|e| e.into_inner());
         match proxies.get(&id) {
@@ -328,10 +387,17 @@ pub async fn start_rportfwd(
         });
     }
 
-    let _ = session_tx.send((
-        format!("rportfwd:start {} {} {}", tunnel_port, payload.target_host, payload.target_port),
-        None,
-    ));
+    let tunnel_token = new_tunnel_token();
+    let command = format!(
+        "rportfwd:start {} {} {} {}",
+        tunnel_port, tunnel_token, payload.target_host, payload.target_port
+    );
+    if !try_send_session_command(id, &session_tx, command, None) {
+        state.rportfwds.lock().unwrap_or_else(|e| e.into_inner()).remove(&(id, payload.bind_port));
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({
+            "error": "Session command queue is full or closed"
+        }))).into_response();
+    }
 
     let rportfwds_clone = state.rportfwds.clone();
     let bind_port = payload.bind_port;
@@ -345,9 +411,16 @@ pub async fn start_rportfwd(
         eprintln!("[rportfwd] Started for Session {} (bind:{}, tunnel:{}, target:{})",
             id, bind_port, tunnel_port, target_desc);
 
-        let (stream, _) = tokio::select! {
-            res = tunnel_listener.accept() => match res { Ok(r) => r, Err(_) => return },
-            _ = &mut stop_rx => return,
+        // Same token gate as the proxy tunnel: the connecting peer must
+        // prove it received the rportfwd:start command before yamux starts.
+        let stream = loop {
+            let (mut s, _peer) = tokio::select! {
+                res = tunnel_listener.accept() => match res { Ok(r) => r, Err(_) => return },
+                _ = &mut stop_rx => return,
+            };
+            if tunnel_token_matches(&mut s, &tunnel_token).await {
+                break s;
+            }
         };
 
         let stream = Box::pin(TokioAsyncReadCompatExt::compat(stream));
@@ -410,8 +483,13 @@ pub async fn start_rportfwd(
 pub async fn stop_rportfwd(
     State(state): State<Arc<ApiContext>>,
     Path(id): Path<u32>,
+    Extension(operator): Extension<OperatorInfo>,
     Json(payload): Json<serde_json::Value>,
 ) -> Response {
+    // Tearing down a live forward disrupts ops; operator/admin only.
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
     let bind_port = payload.get("bind_port")
         .and_then(|v| v.as_u64())
         .map(|v| v as u16)
@@ -425,7 +503,7 @@ pub async fn stop_rportfwd(
     if let Some(handle) = rportfwds.remove(&(id, bind_port)) {
         let _ = handle.stop_tx.send(());
         if let Some(session) = state.sessions.get(&id) {
-            let _ = session.tx.send((format!("rportfwd:stop {}", handle.tunnel_port), None));
+            let _ = try_send_session_command(id, &session.tx, format!("rportfwd:stop {}", handle.tunnel_port), None);
         }
         (StatusCode::OK, Json(serde_json::json!({"status": "stopped"}))).into_response()
     } else {

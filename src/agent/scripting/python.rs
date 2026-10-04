@@ -643,7 +643,11 @@ print(json.dumps(result))
 
     // logging
     engine.register_fn(&aes_str!("print_python_log"), |msg: &str| {
-        eprintln!("{}{}", aes_str!("[Python] "), msg);
+        // try_load: script fns also run in unit-test binaries where no
+        // embedded config exists and load() would exit the process.
+        if crate::agent::config::try_load().map(|c| c.debug).unwrap_or(false) {
+            eprintln!("{}{}", aes_str!("[Python] "), msg);
+        }
     });
 
     // Install helpers registered separately (defined below in this file).
@@ -750,7 +754,9 @@ fn install_portable_python(install_dir: &str) -> Result<String, String> {
     let url = fetch_pbs_url()?;
     let tarball = std::env::temp_dir().join(format!("{}{}{}", aes_str!("rcm_pbs_"), Uuid::new_v4(), aes_str!(".tar.gz")));
     let bytes = download_to_file(&url, &tarball)?;
-    let _ = eprintln!("{}{}{}{}", aes_str!("[python-install] downloaded "), bytes, aes_str!(" bytes from "), url);
+    if crate::agent::config::load().debug {
+        eprintln!("{}{}{}{}", aes_str!("[python-install] downloaded "), bytes, aes_str!(" bytes from "), url);
+    }
     extract_tarball(&tarball, install_dir)?;
     let _ = fs::remove_file(&tarball);
     // Verify the interpreter actually runs.

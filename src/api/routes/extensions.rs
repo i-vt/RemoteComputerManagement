@@ -23,10 +23,29 @@ use serde::Deserialize;
 
 use crate::api::middleware::OperatorInfo;
 
-// Script directories. The typed config has no fields for these paths yet,
-// so they stay consts (reported as a config gap).
+// Script directories come from the typed config
+// (server.extensions_dir / server.modules_dir, defaults ./extensions and ./modules).
 fn ext_dir() -> &'static str { crate::config::config().server.extensions_dir.as_str() }
 fn mod_dir() -> &'static str { crate::config::config().server.modules_dir.as_str() }
+
+/// Upper bound on a single uploaded script (bytes).
+const MAX_SCRIPT_BYTES: usize = 256 * 1024;
+
+/// Parse-check a script body before accepting it. Empty bodies and scripts
+/// that do not parse as Rhai are rejected so broken uploads fail here
+/// instead of at task time.
+fn script_body_error(content: &str) -> Option<String> {
+    if content.trim().is_empty() {
+        return Some("script body is empty".to_string());
+    }
+    if content.len() > MAX_SCRIPT_BYTES {
+        return Some(format!("script exceeds {} byte limit", MAX_SCRIPT_BYTES));
+    }
+    if let Err(e) = rhai::Engine::new().compile(content) {
+        return Some(format!("script does not parse: {}", e));
+    }
+    None
+}
 
 /// Reject names with path-traversal characters.
 fn safe_name(name: &str) -> bool {
@@ -132,6 +151,10 @@ async fn write_script(op: OperatorInfo, dir: &str, name: &str, content: String) 
     if !safe_name(name) {
         return (StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({"error":"invalid name"}))).into_response();
+    }
+    if let Some(err) = script_body_error(&content) {
+        return (StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({"error": err}))).into_response();
     }
     let _ = tokio::fs::create_dir_all(dir).await;
     let path = format!("{}/{}.rhai", dir, name);

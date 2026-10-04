@@ -1,3 +1,5 @@
+// Deprecated: superseded by auto_persist.rhai and the native persist:*
+// commands, which cover Windows, Linux, and macOS. Kept for compatibility.
 print_log("Starting Linux Persistence Routine...");
 
 // 1. Locate Self

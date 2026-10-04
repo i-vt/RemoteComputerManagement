@@ -1,5 +1,6 @@
-// modules/recon2.rhai
+// modules/recon_linux.rhai
 // Extended recon: process list, environment, local users.
+// Sends both Windows and Linux command sets; the wrong-OS ones error harmlessly.
 fn run(session_id) {
     print("Module 'Recon2' started for Session: " + session_id);
 

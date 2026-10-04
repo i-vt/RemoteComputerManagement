@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_01_auth.sh — Authentication & rate limiting
+# tests/docker/scripts/test_01_auth.sh - Authentication & rate limiting
 source "$(dirname "$0")/lib.sh"
 
 suite "Login with valid credentials"

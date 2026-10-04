@@ -88,7 +88,7 @@ async fn substring_marker_mention_is_not_hijacked() {
 
     let stored = results.lock().unwrap().get(&(42, 7)).cloned()
         .expect("results entry must exist");
-    assert_eq!(stored.output, original, "ordinary output must pass through untouched");
+    assert_eq!(stored.response.output, original, "ordinary output must pass through untouched");
 
     let db_out = wait_db_output(&pool, 42, 7).expect("DB row must exist");
     assert_eq!(db_out, original);
@@ -104,7 +104,7 @@ async fn job_final_without_marker_is_not_hijacked() {
     let stored = results.lock().unwrap().get(&(42, 8)).cloned()
         .expect("results entry must exist");
     // The JOB_FINAL branch stores the unwrapped payload, unchanged.
-    assert_eq!(stored.output, "see KEYLOG_DUMP: docs");
+    assert_eq!(stored.response.output, "see KEYLOG_DUMP: docs");
 }
 
 #[tokio::test]
@@ -115,8 +115,8 @@ async fn empty_keylog_dump_completes_instead_of_hanging() {
 
     let stored = results.lock().unwrap().get(&(42, 9)).cloned()
         .expect("empty dump must still complete the request");
-    assert!(stored.output.contains("nothing captured"),
-        "unexpected output: {}", stored.output);
+    assert!(stored.response.output.contains("nothing captured"),
+        "unexpected output: {}", stored.response.output);
 
     let db_out = wait_db_output(&pool, 42, 9).expect("DB row must exist for empty dump");
     assert!(db_out.contains("nothing captured"));
@@ -130,8 +130,8 @@ async fn empty_keylog_dump_inside_job_final_completes() {
 
     let stored = results.lock().unwrap().get(&(42, 10)).cloned()
         .expect("empty wrapped dump must still complete the request");
-    assert!(stored.output.contains("nothing captured"),
-        "unexpected output: {}", stored.output);
+    assert!(stored.response.output.contains("nothing captured"),
+        "unexpected output: {}", stored.response.output);
 }
 
 #[tokio::test]
@@ -146,7 +146,7 @@ async fn real_dump_keeps_raw_output_in_db_status_in_results() {
 
     let stored = results.lock().unwrap().get(&(42, 11)).cloned()
         .expect("results entry must exist");
-    assert_eq!(stored.output, "Keylog extraction failed");
+    assert_eq!(stored.response.output, "Keylog extraction failed");
 
     let db_out = wait_db_output(&pool, 42, 11).expect("DB row must exist");
     assert_eq!(db_out, raw, "DB must keep the ORIGINAL raw dump output");
@@ -161,5 +161,5 @@ async fn screenshot_substring_mention_is_not_hijacked() {
 
     let stored = results.lock().unwrap().get(&(42, 12)).cloned()
         .expect("results entry must exist");
-    assert_eq!(stored.output, original);
+    assert_eq!(stored.response.output, original);
 }

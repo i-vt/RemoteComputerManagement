@@ -2,7 +2,7 @@
 
 ## Login
 
-Open the panel, enter the server URL and your credentials. The admin creates operator accounts via the **Audit Log** page or API.
+Open the panel (served by the API server, `http://127.0.0.1:8080/` by default), enter your credentials. The admin creates operator accounts via the **Users** page (admin only) or the API (`POST /api/operators`).
 
 Roles:
 - **admin** - full access, can manage operators and listeners
@@ -18,13 +18,13 @@ Navigate to **Listeners** page. Create listeners for your engagement:
 - HTTP on 80 as a fallback
 
 ### 2. Configure Auto-Recon
-On the **Listeners** page, scroll to **Auto-Recon**. Add commands that run on every new check-in:
+On the **Listeners** page, scroll to **Auto-Recon**. Add commands that run on every new check-in. Entries go through the agent command router, so OS commands need the `shell` prefix - bare commands are rejected as `Unknown command`:
 ```
-whoami /all
-hostname
-ipconfig /all
-net localgroup administrators
-systeminfo
+shell whoami /all
+shell hostname
+shell ipconfig /all
+shell net localgroup administrators
+shell systeminfo
 ```
 
 ### 3. Build Agents
@@ -102,7 +102,7 @@ curl -s -H "X-API-KEY: $KEY" \
   http://server:8080/api/hosts/3/tasks/$TASK_ID | jq .output
 ```
 
-The panel's **Queue** tab shows pending and completed tasks with live status.
+The panel's **Task Queue** page shows pending and completed tasks with live status.
 
 ## OPSEC Tips
 - Use `bg <command>` for long-running commands so they don't block

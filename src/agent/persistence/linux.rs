@@ -482,6 +482,143 @@ pub fn remove_profile(binary_path: &str) -> Result<String, String> {
 }
 
 
+// ── Full cleanup (persist:cleanup / sys:die) ──────────────────────────
+//
+// Removes every persistence artifact this install may have created. The
+// key is the stable-drop location (~/.local/bin), not operator-chosen
+// label names: any systemd unit whose contents point into the stable bin
+// dir (or at the current exe) is ours, as is any crontab entry
+// referencing those paths.
+
+/// Stable-drop path for the currently running binary, computed exactly
+/// the way stable_drop() does - but without copying anything.
+pub fn stable_path_for_current_exe() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let name = exe.file_name()?.to_string_lossy().into_owned();
+    let bin_dir = home_dir().ok()?.join(aes_str!(".local")).join(aes_str!("bin"));
+    Some(bin_dir.join(name).to_string_lossy().into_owned())
+}
+
+/// Map a remove_* result onto a per-method status line.
+/// remove_* fns signal "nothing was there" with an Ok("[~] ...") message.
+fn classify(method: &str, r: Result<String, String>) -> String {
+    match r {
+        Ok(m) if m.contains(aes_str!("[~]").as_str()) => format!("{}: not-present", method),
+        Ok(m) => format!("{}: removed ({})", method, m),
+        Err(e) => format!("{}: failed ({})", method, e),
+    }
+}
+
+pub fn cleanup_all() -> String {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let bin_dir = home_dir()
+        .map(|h| h.join(aes_str!(".local")).join(aes_str!("bin")).to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stable = stable_path_for_current_exe().unwrap_or_default();
+
+    let mut report = vec![format!(
+        "{} (exe: {}, stable: {})",
+        aes_str!("[*] Persistence cleanup"), exe, stable
+    )];
+
+    // ── systemd: user units AND (as root) system units whose ExecStart
+    // points into our stable bin dir or at the current exe. Catches units
+    // installed under arbitrary operator-chosen names.
+    let mut candidates: Vec<String> = Vec::new();
+    {
+        let mut scan_dir = |dir: &std::path::Path, candidates: &mut Vec<String>| {
+            if let Ok(entries) = fs::read_dir(dir) {
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if !p.extension().map(|x| x == aes_str!("service").as_str()).unwrap_or(false) {
+                        continue;
+                    }
+                    if let Ok(content) = fs::read_to_string(&p) {
+                        let ours = (!bin_dir.is_empty() && content.contains(&bin_dir))
+                            || (!exe.is_empty() && content.contains(&exe));
+                        if ours {
+                            if let Some(stem) = p.file_stem() {
+                                let name = stem.to_string_lossy().into_owned();
+                                if !candidates.contains(&name) {
+                                    candidates.push(name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        if let Ok(dir) = systemd_unit_dir() {
+            scan_dir(&dir, &mut candidates);
+        }
+        if running_as_root() {
+            scan_dir(std::path::Path::new(&aes_str!("/etc/systemd/system")), &mut candidates);
+        }
+    }
+    // Fallback: the label-derived unit name (covers units whose contents
+    // could not be read but which use this install's name).
+    if let Some(label) = std::path::Path::new(&exe).file_name().map(|n| n.to_string_lossy().into_owned()) {
+        if !label.is_empty() && !candidates.contains(&label) {
+            candidates.push(label);
+        }
+    }
+
+    let mut removed_units = Vec::new();
+    let mut unit_errors = Vec::new();
+    for name in &candidates {
+        match remove_systemd(name) {
+            Ok(m) if m.contains(aes_str!("[+]").as_str()) => removed_units.push(name.clone()),
+            Ok(_) => {}
+            Err(e) => unit_errors.push(format!("{name}: {e}")),
+        }
+    }
+    if !removed_units.is_empty() {
+        report.push(format!("{}: removed ({})", aes_str!("systemd"), removed_units.join(", ")));
+    } else if !unit_errors.is_empty() {
+        report.push(format!("{}: failed ({})", aes_str!("systemd"), unit_errors.join("; ")));
+    } else {
+        report.push(format!("{}: not-present", aes_str!("systemd")));
+    }
+
+    // ── cron: filter entries referencing the stable bin dir (covers all
+    // stable copies) and the raw current-exe path.
+    let mut cron_removed = false;
+    let mut cron_err: Option<String> = None;
+    for path in [&bin_dir, &exe] {
+        if path.is_empty() {
+            continue;
+        }
+        // If the exe lives inside the bin dir, the bin-dir pass already
+        // filters every line that would mention the exe.
+        if *path == exe && !bin_dir.is_empty() && exe.contains(&bin_dir) {
+            continue;
+        }
+        match remove_cron(path) {
+            Ok(m) if m.contains(aes_str!("[+]").as_str()) => cron_removed = true,
+            Ok(_) => {}
+            Err(e) => cron_err = Some(e),
+        }
+    }
+    if cron_removed {
+        report.push(format!("{}: removed", aes_str!("cron")));
+    } else if let Some(e) = cron_err {
+        report.push(format!("{}: failed ({})", aes_str!("cron"), e));
+    } else {
+        report.push(format!("{}: not-present", aes_str!("cron")));
+    }
+
+    // ── shell profile: sentinel-block removal (path arg is only used for
+    // messaging - the sentinel match is exact).
+    let profile_key = if !stable.is_empty() { &stable } else { &exe };
+    report.push(classify(&aes_str!("profile"), remove_profile(profile_key)));
+
+    report.push(aes_str!("[+] Cleanup complete"));
+    report.join("\n")
+}
+
+
 // ── Unit tests ─────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -974,6 +1111,53 @@ mod tests {
         let result = remove_profile("/no/such/agent");
         assert!(result.is_ok(), "Must not error when nothing to remove");
         assert!(result.unwrap().contains("[~]"), "Must signal nothing was removed");
+    }
+
+    // ── cleanup_all ───────────────────────────────────────────────────
+
+    #[test]
+    fn cleanup_all_removes_unit_and_profile() {
+        let h = TempHome::new("clean_all");
+        let src = fake_bin(h.path(), "agent");
+        install_user_unit("cleanup-svc", &src).unwrap();
+        install_profile(&src).unwrap();
+
+        let unit = format!("{}/.config/systemd/user/cleanup-svc.service", h.path());
+        let link = format!(
+            "{}/.config/systemd/user/default.target.wants/cleanup-svc.service",
+            h.path()
+        );
+        assert!(std::path::Path::new(&unit).exists(), "Setup: unit must exist");
+
+        let report = cleanup_all();
+        assert!(report.contains("systemd: removed"),
+            "report must show systemd removed, got:\n{report}");
+        assert!(report.contains("profile: removed"),
+            "report must show profile removed, got:\n{report}");
+
+        assert!(!std::path::Path::new(&unit).exists(), "cleanup must remove unit file");
+        assert!(std::fs::symlink_metadata(&link).is_err(), "cleanup must remove wants symlink");
+        let bashrc = format!("{}/.bashrc", h.path());
+        let content = std::fs::read_to_string(&bashrc).unwrap_or_default();
+        assert!(!content.contains("rcm-persist-start"),
+            "cleanup must strip profile sentinel, .bashrc now:\n{content}");
+    }
+
+    #[test]
+    fn cleanup_all_on_clean_system_reports_not_present() {
+        let h = TempHome::new("clean_noop");
+        let report = cleanup_all();
+        assert!(report.contains("systemd: not-present"), "got:\n{report}");
+        assert!(report.contains("profile: not-present"), "got:\n{report}");
+    }
+
+    #[test]
+    fn stable_path_for_current_exe_is_under_local_bin() {
+        let h = TempHome::new("clean_stablepath");
+        let p = stable_path_for_current_exe().expect("must resolve a stable path");
+        let expected_prefix = format!("{}/.local/bin/", h.path());
+        assert!(p.starts_with(&expected_prefix),
+            "stable path {p} must be under {expected_prefix}");
     }
 }
 

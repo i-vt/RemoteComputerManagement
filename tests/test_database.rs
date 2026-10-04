@@ -7,7 +7,7 @@ fn temp_db() -> database::DbPool {
     let path = format!("/tmp/rcm_test_{}.db", uuid::Uuid::new_v4());
     let manager = r2d2_sqlite::SqliteConnectionManager::file(&path)
         .with_init(|c| c.execute_batch(
-            "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;"
+            "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;"
         ));
     let pool = r2d2::Pool::builder().max_size(2).build(manager).unwrap();
 
@@ -41,6 +41,36 @@ fn temp_db() -> database::DbPool {
             id INTEGER PRIMARY KEY CHECK (id = 1), next_id INTEGER NOT NULL DEFAULT 1
          );
          INSERT OR IGNORE INTO session_id_seq (id, next_id) VALUES (1, 1);
+         CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY,
+            session_uuid TEXT,
+            exe_id TEXT,
+            computer_id TEXT,
+            hostname TEXT,
+            os TEXT,
+            ip_address TEXT,
+            build_id TEXT,
+            connected_at TEXT,
+            is_active INTEGER DEFAULT 0,
+            profile TEXT DEFAULT 'default'
+         );
+         CREATE TABLE IF NOT EXISTS command_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER,
+            request_id INTEGER,
+            command TEXT,
+            timestamp TEXT,
+            FOREIGN KEY(session_id) REFERENCES sessions(id)
+         );
+         CREATE TABLE IF NOT EXISTS client_outputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER,
+            request_id INTEGER,
+            output TEXT,
+            error TEXT,
+            timestamp TEXT,
+            FOREIGN KEY(session_id) REFERENCES sessions(id)
+         );
          CREATE TABLE IF NOT EXISTS server_config (key TEXT PRIMARY KEY, value BLOB);
          CREATE TABLE IF NOT EXISTS queued_tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL,
@@ -180,8 +210,96 @@ fn test_session_id_allocation() {
     let id2 = database::allocate_session_id(&conn).unwrap();
     let id3 = database::allocate_session_id(&conn).unwrap();
 
-    assert_eq!(id2, id1 + 1);
-    assert_eq!(id3, id2 + 1);
+    assert_eq!(id1, 1);
+    assert_eq!(id2, 2);
+    assert_eq!(id3, 3);
+}
+
+#[test]
+fn test_register_session_uses_allocated_id_as_primary_key() {
+    let pool = temp_db();
+    let conn = pool.get().unwrap();
+
+    let first = database::register_session(
+        &conn, "exe-a", "computer-a", "host-a", "windows", "10.0.0.2", "build-a", "default",
+    ).unwrap();
+    let second = database::register_session(
+        &conn, "exe-b", "computer-b", "host-b", "linux", "10.0.0.3", "build-b", "default",
+    ).unwrap();
+
+    assert_eq!(first, 1);
+    assert_eq!(second, 2);
+
+    let stored: Vec<(u32, String)> = {
+        let mut stmt = conn.prepare("SELECT id, hostname FROM sessions ORDER BY id").unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    assert_eq!(stored, vec![(1, "host-a".to_string()), (2, "host-b".to_string())]);
+}
+
+#[test]
+fn test_registered_session_id_satisfies_history_foreign_keys() {
+    let pool = temp_db();
+    let conn = pool.get().unwrap();
+    let session_id = database::register_session(
+        &conn, "exe", "computer", "host", "windows", "10.0.0.2", "build", "default",
+    ).unwrap();
+
+    database::log_command(&conn, session_id, 7, "whoami");
+    database::save_client_output(&conn, session_id, 7, "user", "");
+
+    let joined: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM command_history ch
+         JOIN sessions s ON s.id = ch.session_id
+         JOIN client_outputs co ON co.session_id = ch.session_id AND co.request_id = ch.request_id
+         WHERE ch.session_id = ?1 AND ch.request_id = 7",
+        [session_id],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(joined, 1);
+}
+
+#[test]
+fn test_session_id_allocation_is_unique_across_pooled_connections() {
+    let pool = std::sync::Arc::new(temp_db());
+    let mut handles = Vec::new();
+
+    for _ in 0..8 {
+        let pool = pool.clone();
+        handles.push(std::thread::spawn(move || {
+            let conn = pool.get().unwrap();
+            (0..25)
+                .map(|_| database::allocate_session_id(&conn).unwrap())
+                .collect::<Vec<_>>()
+        }));
+    }
+
+    let mut ids = handles.into_iter()
+        .flat_map(|handle| handle.join().unwrap())
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+
+    assert_eq!(ids, (1..=200).collect::<Vec<_>>());
+}
+
+#[test]
+fn test_http_listener_state_construction_does_not_allocate_session_id() {
+    let pool = temp_db();
+    let sessions: rcm::common::SharedSessions = std::sync::Arc::new(dashmap::DashMap::new());
+    let results: rcm::api::SharedResults = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
+    let _state = rcm::server::http_listener::HttpC2State::new(sessions, pool.clone(), results);
+
+    let next_id: u32 = pool.get().unwrap().query_row(
+        "SELECT next_id FROM session_id_seq WHERE id = 1",
+        [],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(next_id, 1, "listener startup must not consume or reserve session ids");
 }
 
 #[test]

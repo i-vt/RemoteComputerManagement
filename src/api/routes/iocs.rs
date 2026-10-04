@@ -99,6 +99,9 @@ pub async fn add(
     Extension(operator): Extension<OperatorInfo>,
     Json(body): Json<AddIocBody>,
 ) -> Response {
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
     let conn = db!(state);
     match database::add_ioc(
         &conn, session_id, &body.ioc_type, &body.path,
@@ -114,7 +117,11 @@ pub async fn add(
 pub async fn mark_clean(
     Path(ioc_id): Path<i64>,
     State(state): State<Arc<ApiContext>>,
+    Extension(operator): Extension<OperatorInfo>,
 ) -> Response {
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
     let conn = db!(state);
     match database::mark_ioc_cleaned(&conn, ioc_id) {
         Ok(_)  => StatusCode::NO_CONTENT.into_response(),
@@ -127,7 +134,11 @@ pub async fn mark_clean(
 pub async fn delete(
     Path(ioc_id): Path<i64>,
     State(state): State<Arc<ApiContext>>,
+    Extension(operator): Extension<OperatorInfo>,
 ) -> Response {
+    if !operator.can_execute() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
     let conn = db!(state);
     match database::delete_ioc(&conn, ioc_id) {
         Ok(_)  => StatusCode::NO_CONTENT.into_response(),

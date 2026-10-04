@@ -74,6 +74,12 @@ window.Modal = {
     _resolve(val) {
         const overlay = document.getElementById('app-modal');
         if (overlay) overlay.classList.add('hidden');
+        // Prompt mode: OK resolves with the input value, cancel with null
+        const input = document.getElementById('app-modal-input');
+        if (input) {
+            val = val === true ? input.value : null;
+            input.remove();
+        }
         if (this._resolveFunc) {
             this._resolveFunc(val);
             this._resolveFunc = null;
@@ -86,7 +92,7 @@ window.Modal = {
         }
     },
 
-    _show(msg, type, isConfirm) {
+    _show(msg, type, isConfirm, promptOpts = null) {
         const cfg = {
             info:    { icon: 'fas fa-info-circle',           cls: 'text-blue-400',   ok: 'btn btn-ghost' },
             success: { icon: 'fas fa-check-circle',          cls: 'text-green-400',  ok: 'btn btn-primary' },
@@ -99,16 +105,31 @@ window.Modal = {
 
         document.getElementById('app-modal-icon').className = cfg.icon + ' ' + cfg.cls;
         document.getElementById('app-modal-title-text').textContent = title;
-        document.getElementById('app-modal-body').innerHTML = safeMsg;
+        const body = document.getElementById('app-modal-body');
+        body.innerHTML = safeMsg;
+
+        // Prompt mode appends an input (or textarea) below the message
+        if (promptOpts) {
+            const el = document.createElement(promptOpts.multiline ? 'textarea' : 'input');
+            el.id = 'app-modal-input';
+            if (!promptOpts.multiline) el.type = 'text';
+            el.placeholder = promptOpts.placeholder || '';
+            el.className = 'form-input form-mono';
+            el.style.cssText = 'width:100%;margin-top:10px;' + (promptOpts.multiline ? 'min-height:110px;resize:vertical;' : '');
+            body.appendChild(el);
+        }
 
         const cancelBtn = document.getElementById('app-modal-cancel');
         const okBtn     = document.getElementById('app-modal-ok');
-        if (cancelBtn) cancelBtn.style.display = isConfirm ? '' : 'none';
+        if (cancelBtn) cancelBtn.style.display = (isConfirm || promptOpts) ? '' : 'none';
         if (okBtn)     okBtn.className = cfg.ok;
 
         const overlay = document.getElementById('app-modal');
         if (overlay) overlay.classList.remove('hidden');
-        setTimeout(() => { if (okBtn) okBtn.focus(); }, 60);
+        setTimeout(() => {
+            const input = document.getElementById('app-modal-input');
+            if (input) input.focus(); else if (okBtn) okBtn.focus();
+        }, 60);
     },
 
     // Non-blocking alert - returns Promise resolved with true when dismissed
@@ -124,6 +145,14 @@ window.Modal = {
         return new Promise(resolve => {
             this._resolveFunc = resolve;
             this._show(msg, type, true);
+        });
+    },
+
+    // Text prompt - returns Promise<string|null> (null when cancelled)
+    prompt(msg, opts = {}) {
+        return new Promise(resolve => {
+            this._resolveFunc = resolve;
+            this._show(msg, opts.type || 'info', false, opts);
         });
     }
 };

@@ -16,8 +16,8 @@ for every field; an optional TOML file overlays them:
 - `config.example.toml` at the repo root is the fully documented template
   (generated from `template_toml()`, pinned by a test).
 
-Sections: `server`, `transfer`, `rcm`, `logging`, `agent`, `evasion`,
-`ffi_windows`, `crypto`. Values that are genuinely tunable (limits, timeouts,
+Sections: `server`, `transfer`, `rcm`, `logging`, `agent`, `ffi_windows`,
+`crypto`. Values that are genuinely tunable (limits, timeouts,
 sizes, ports, paths, caps) read from this tree. Two categories deliberately do
 not:
 
@@ -54,7 +54,7 @@ plus `panic = "abort"` and `lto`), so function and variable names do not appear
 in `nm`/`strings` output either.
 
 Verified on the release agent binary (`cargo build --release --bin client`,
-nightly toolchain — see `rust-toolchain.toml`):
+nightly toolchain - see `rust-toolchain.toml`):
 
 - 0 DLL names, 0 WinAPI names (GetProcAddress, LoadLibrary, AmsiScanBuffer,
   EtwEventWrite, Nt*), 0 credential paths, 0 wire-protocol tokens
@@ -77,10 +77,10 @@ nightly toolchain — see `rust-toolchain.toml`):
 
 These remain readable by construction and are low-sensitivity or third-party:
 
-- `format!`/`write!`/tracing template SKELETONS (`"{} {}: {}"`) — compile-time
+- `format!`/`write!`/tracing template SKELETONS (`"{} {}: {}"`) - compile-time
   templates must stay literals; every informative fragment was hoisted into
   encrypted value arguments.
-- Attribute strings (`#[link(name)]`, ABI strings) — linker requirements.
+- Attribute strings (`#[link(name)]`, ABI strings) - linker requirements.
   Names resolved through GetProcAddress ARE encrypted; the PE import table
   itself (direct externs) is not encryptable by construction.
 - Third-party dependency literals that are not panic/std artifacts (generic

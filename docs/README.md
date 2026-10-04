@@ -11,5 +11,8 @@
 | [Rhai Extensions](extensions.md) | Writing and deploying scripted modules |
 | [Fallback & DGA](fallback.md) | Multi-host resilience configuration and domain generation |
 | [Evasion](evasion.md) | AMSI, ETW, syscalls, sleep mask, unhooking |
+| [Persistence](persistence.md) | Native `persist:*` commands and the `auto_persist` playbook |
+| [Configuration & String Encryption](config-and-encryption.md) | Typed config tree, compile-time AES string cryptor |
 | [Panel Guide](panel.md) | UI pages, keyboard shortcuts, theming |
 | [Testing](testing.md) | Running and extending the test suite |
+| [Disclaimer](disclaimer.md) | Intended use and legal terms - read before using the tool |

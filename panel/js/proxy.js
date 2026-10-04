@@ -100,6 +100,7 @@ window.ProxyManager = {
             const res = await fetch(`${cleanUrl}/api/proxies`, {
                 headers: { 'X-API-KEY': window.Auth.key }
             });
+            if(res.status === 401) return window.Auth.logout();
             if(res.ok) {
                 this.activeProxies = await res.json();
                 this.renderTable();

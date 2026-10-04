@@ -102,7 +102,11 @@ window.ReconConfig = {
         try {
             const res = await fetch(`${url}/api/config/recon`,
                 { headers: { 'X-API-KEY': window.Auth.key } });
-            if (!res.ok) return;
+            if (res.status === 401) return window.Auth.logout();
+            if (!res.ok) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-red-400 text-sm">Failed to load auto-recon config (HTTP ${res.status})</td></tr>`;
+                return;
+            }
             const entries = await res.json();
 
             if (!entries.length) {
@@ -211,6 +215,7 @@ window.ReconConfig = {
                 headers: { 'X-API-KEY': window.Auth.key, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ command: raw })
             });
+            if (res.status === 401) return window.Auth.logout();
             if (res.ok) {
                 const data = await res.json();
                 // Clear inputs
@@ -227,10 +232,12 @@ window.ReconConfig = {
 
     async remove(id) {
         const url = window.Auth.url.replace(/\/$/, '');
-        await fetch(`${url}/api/config/recon/${id}`, {
+        const res = await fetch(`${url}/api/config/recon/${id}`, {
             method: 'DELETE',
             headers: { 'X-API-KEY': window.Auth.key }
         });
+        if (res.status === 401) return window.Auth.logout();
+        if (!res.ok) this._err(`Remove failed (HTTP ${res.status})`);
         await this.refresh();
     },
 

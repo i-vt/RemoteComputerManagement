@@ -24,6 +24,7 @@ window.ExtManager = {
     async init() {
         await this.loadList();
         this._renderEditor(null, '');
+        this._syncDeployUI();
     },
 
     // ── Kind switching ────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ window.ExtManager = {
         if (dirLabel) dirLabel.textContent = kind === 'modules' ? 'modules/' : 'extensions/';
         this.loadList();
         this._renderEditor(null, '');
+        this._syncDeployUI();
     },
 
     // ── API helpers ───────────────────────────────────────────────────────────
@@ -108,9 +110,9 @@ window.ExtManager = {
     async save() {
         const name    = document.getElementById('ext-name-input')?.value.trim();
         const content = document.getElementById('ext-code-editor')?.value ?? '';
-        if (!name) { window.Notify?.toast('Enter a script name.', 'warn'); return; }
+        if (!name) { window.Notify?.toast('Enter a script name.', 'warning'); return; }
         if (!/^[a-zA-Z0-9_\-]+$/.test(name)) {
-            window.Notify?.toast('Name: letters, numbers, _ and - only.', 'warn'); return;
+            window.Notify?.toast('Name: letters, numbers, _ and - only.', 'warning'); return;
         }
         try {
             const r = await fetch(this._fileEndpoint(this._kind, name), {
@@ -132,12 +134,12 @@ window.ExtManager = {
 
     async deleteScript(name) {
         const label = `${name}.rhai  (${this._kind})`;
-        if (!confirm(`Delete "${label}"? This cannot be undone.`)) return;
+        if (!await window.Modal.confirm(`Delete "${label}"? This cannot be undone.`, 'error')) return;
         try {
             const r = await fetch(this._fileEndpoint(this._kind, name), {
                 method: 'DELETE', headers: { 'X-API-KEY': window.Auth.key },
             });
-            if (r.status === 404) { window.Notify?.toast('Already deleted.', 'warn'); }
+            if (r.status === 404) { window.Notify?.toast('Already deleted.', 'warning'); }
             else if (!r.ok) throw new Error(`HTTP ${r.status}`);
             if (this._current === name) { this._renderEditor(null, ''); this._current = null; }
             await this.loadList();
@@ -149,22 +151,47 @@ window.ExtManager = {
 
     // ── Deploy (extensions only) ──────────────────────────────────────────────
 
+    // POST /api/hosts/:id/extensions/:name - the server reads the script
+    // from ./extensions/, wraps it as ext:load and queues it to the agent.
     async deploy(sessionId) {
         if (this._kind !== 'extensions') {
-            window.Notify?.toast('Deploy is only available for extensions.', 'warn'); return;
+            window.Notify?.toast('Deploy is only available for extensions.', 'warning'); return;
         }
         const name = document.getElementById('ext-name-input')?.value.trim();
-        if (!name)      { window.Notify?.toast('Save the script first.', 'warn'); return; }
-        if (!sessionId) { window.Notify?.toast('No session selected.', 'warn'); return; }
+        if (!name) { window.Notify?.toast('Save the script first.', 'warning'); return; }
+        sessionId = sessionId || document.getElementById('ext-deploy-session')?.value;
+        if (!sessionId) { window.Notify?.toast('No session selected.', 'warning'); return; }
         try {
             const r = await fetch(
                 `${this._base()}/api/hosts/${sessionId}/extensions/${encodeURIComponent(name)}`,
                 { method: 'POST', headers: { 'X-API-KEY': window.Auth.key } });
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            window.Notify?.toast(`Deployed "${name}" to session #${sessionId}`, 'success');
+            if (r.status === 401) return window.Auth.logout();
+            const data = await r.json().catch(() => null);
+            if (!r.ok) {
+                window.Notify?.toast(`Deploy failed: ${data?.error || `HTTP ${r.status}`}`, 'error');
+                return;
+            }
+            window.Notify?.toast(data?.message || `Deployed "${name}" to session #${sessionId}`, 'success');
         } catch (e) {
             window.Notify?.toast(`Deploy failed: ${e.message}`, 'error');
         }
+    },
+
+    // Fill the deploy target dropdown from the live host list; hide the
+    // deploy controls when editing server-side modules.
+    _syncDeployUI() {
+        const sel = document.getElementById('ext-deploy-session');
+        const btn = document.getElementById('ext-deploy-btn');
+        const show = this._kind === 'extensions';
+        if (sel) sel.style.display = show ? '' : 'none';
+        if (btn) btn.style.display = show ? '' : 'none';
+        if (!show || !sel) return;
+        const prev = sel.value;
+        const hosts = window.API?.hosts || [];
+        sel.innerHTML = hosts.length
+            ? hosts.map(h => `<option value="${h.id}">#${h.id} ${h.hostname || ''}</option>`).join('')
+            : '<option value="">No active sessions</option>';
+        if (prev) sel.value = prev;
     },
 
     // ── Exposed to other modules ──────────────────────────────────────────────

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/lib.sh — Shared test helpers
+# tests/docker/scripts/lib.sh - Shared test helpers
 #
 # Source this from every test_*.sh file:
 #   source "$(dirname "$0")/lib.sh"
@@ -31,8 +31,13 @@ load_creds() {
 # ── API helpers ─────────────────────────────────────────────────────────
 
 # Generic API call. Returns body on stdout; sets $HTTP_CODE.
+# NOTE: ${3-$ADMIN_KEY} (no colon) substitutes the admin key only when the
+# argument is UNSET. An explicitly empty key ("") is sent as an empty header
+# on purpose: auth-negative tests rely on it. With the colon form the shell
+# silently upgraded empty keys to a valid admin credential, so "empty key
+# rejected" tests were never actually exercising an empty key.
 api() {
-    local method="$1" path="$2" key="${3:-$ADMIN_KEY}"
+    local method="$1" path="$2" key="${3-$ADMIN_KEY}"
     shift 2; [ $# -gt 0 ] && shift  # consume key if provided
     local body="${1:-}"
 
@@ -48,9 +53,9 @@ api() {
 }
 
 # Shorthand wrappers
-api_get()    { api GET  "$1" "${2:-$ADMIN_KEY}"; }
-api_post()   { api POST "$1" "${2:-$ADMIN_KEY}" "${3:-}"; }
-api_delete() { api DELETE "$1" "${2:-$ADMIN_KEY}" "${3:-}"; }
+api_get()    { api GET  "$1" "${2-$ADMIN_KEY}"; }
+api_post()   { api POST "$1" "${2-$ADMIN_KEY}" "${3:-}"; }
+api_delete() { api DELETE "$1" "${2-$ADMIN_KEY}" "${3:-}"; }
 
 # Login and return the API key
 login_as() {

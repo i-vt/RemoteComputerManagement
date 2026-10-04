@@ -32,4 +32,4 @@ if target_pid == "" {
 }
 
 print_log("Injecting into " + target_pid + "...");
-return native_inject_remote(target_pid, payload);
+return native_inject_remote_hijack(target_pid, payload);

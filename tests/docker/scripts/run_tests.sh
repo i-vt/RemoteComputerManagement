@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/run_tests.sh — Main integration test orchestrator
+# tests/docker/scripts/run_tests.sh - Main integration test orchestrator
 #
 # Runs test_*.sh scripts and produces a combined summary.
 # Exit code is non-zero if any test failed.
 #
 # Suite filtering via TEST_SUITE env var:
-#   TEST_SUITE=smoke   → auth, rbac, listeners, audit (no agents needed)
-#   TEST_SUITE=full    → all tests (default)
+#   TEST_SUITE=smoke   → SMOKE_TESTS only (API-only, no agents needed)
+#   TEST_SUITE=full    → SMOKE_TESTS + AGENT_TESTS (default; pivot-chain
+#                        tests are excluded, they need the pivot overlay)
 #   TEST_SUITE=pivot   → all tests including pivot chains
 #
-# Unit tests are NOT run here — they run during the Docker build stage
+# Every test_*.sh script must be classified in one of the three lists
+# below. Unclassified scripts run in the agent tier with a warning so a
+# new test can never silently fall out of the full suite.
+#
+# Unit tests are NOT run here - they run during the Docker build stage
 # and fail the build on failure. This script is integration-only.
 
 set -uo pipefail
@@ -34,23 +39,38 @@ echo ""
 
 # ── Classify tests into tiers ───────────────────────────────────────────
 # Smoke tests need only the API (no agents).
-# Full tests need agents connected.
-# Pivot tests need PIVOT_TEST=1.
+# Agent tests need the connected test agents (full suite and up).
+# Pivot tests need the pivot-chain overlay (TEST_SUITE=pivot + PIVOT_TEST=1).
 SMOKE_TESTS="test_01_auth test_02_rbac test_03_listeners test_05_webhook test_06_audit"
-AGENT_TESTS="test_04_sessions test_07_proxy test_08_windows test_10_builder_features test_11_topology test_12_hibernation"
+AGENT_TESTS="test_04_sessions test_07_proxy test_08_windows test_10_builder_features test_11_topology test_12_hibernation test_13_persistence test_14_python_extension test_15_builder_shellcode test_16_builder_evasion_guardrails test_17_stager test_18_guardrails test_19_imports"
 PIVOT_TESTS="test_09_pivot_chains"
+
+in_list() { echo "$1" | grep -qw "$2"; }
 
 should_run() {
     local name="$1"
+    local tier
+    if in_list "$SMOKE_TESTS" "$name"; then
+        tier="smoke"
+    elif in_list "$PIVOT_TESTS" "$name"; then
+        tier="pivot"
+    else
+        # Agent tier is the default for both classified agent tests and any
+        # unclassified script, so new tests always run in full/pivot suites.
+        if ! in_list "$AGENT_TESTS" "$name"; then
+            echo "  NOTE: $name is not in SMOKE/AGENT/PIVOT_TESTS; defaulting to the agent tier."
+        fi
+        tier="agent"
+    fi
     case "$TEST_SUITE" in
         smoke)
-            echo "$SMOKE_TESTS" | grep -qw "$name"
+            [ "$tier" = "smoke" ]
             ;;
-        full|pivot)
-            # full and pivot run everything; pivot tests self-skip via PIVOT_TEST env
-            return 0
+        full)
+            [ "$tier" != "pivot" ]
             ;;
         *)
+            # pivot and any future suite run everything
             return 0
             ;;
     esac

@@ -16,7 +16,7 @@
 # Depends on: c2-server healthy, admin credentials in /shared/admin_creds.json
 #
 # NOTE: The shellcode build cross-compiles the agent for
-# x86_64-pc-windows-gnu — first run can take several minutes. BUILD_TIMEOUT
+# x86_64-pc-windows-gnu - first run can take several minutes. BUILD_TIMEOUT
 # defaults to 600s here (vs 180s in test_10).
 
 set -uo pipefail
@@ -25,7 +25,7 @@ source "$(dirname "$0")/lib.sh"
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-600}"  # seconds to wait for each build
 BOOT_LEN=69
 STUB_LEN=2772
-DLL_OFF=$((BOOT_LEN + STUB_LEN))       # 2841 — DLL image starts here
+DLL_OFF=$((BOOT_LEN + STUB_LEN))       # 2841 - DLL image starts here
 
 # ── Helper: start a build and return the job ID ────────────────────────────
 start_build() {

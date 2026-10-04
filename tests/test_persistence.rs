@@ -536,6 +536,57 @@ mod linux {
         assert!(Path::new(&stable).exists(),
             "Stable copy must survive deletion of original source");
     }
+
+    // ── cleanup_all (persist:cleanup / sys:die shared helper) ───────────────
+
+    #[test]
+    fn cleanup_all_removes_systemd_and_profile_artifacts() {
+        let h = TempHome::new("cleanup_all");
+        let src = fake_bin(&h.path, "agent");
+        persist::install_user_unit("cleanup-svc", &src).unwrap();
+        persist::install_profile(&src).unwrap();
+
+        let unit = format!("{}/.config/systemd/user/cleanup-svc.service", h.path);
+        let link = format!(
+            "{}/.config/systemd/user/default.target.wants/cleanup-svc.service",
+            h.path
+        );
+        assert!(Path::new(&unit).exists(), "Setup: unit must exist");
+
+        let report = persist::cleanup_all();
+
+        // Structured per-method report must mention both methods
+        assert!(report.contains("systemd: removed"),
+            "report must show systemd removed:\n{report}");
+        assert!(report.contains("profile: removed"),
+            "report must show profile removed:\n{report}");
+
+        // Artifacts must actually be gone
+        assert!(!Path::new(&unit).exists(), "cleanup_all must remove unit file");
+        assert!(fs::symlink_metadata(&link).is_err(),
+            "cleanup_all must remove wants symlink");
+        let bashrc = format!("{}/.bashrc", h.path);
+        let content = fs::read_to_string(&bashrc).unwrap_or_default();
+        assert!(!content.contains("rcm-persist-start"),
+            "cleanup_all must strip profile sentinel:\n{content}");
+    }
+
+    #[test]
+    fn cleanup_all_on_clean_install_reports_not_present() {
+        let h = TempHome::new("cleanup_noop");
+        let report = persist::cleanup_all();
+        assert!(report.contains("systemd: not-present"), "got:\n{report}");
+        assert!(report.contains("profile: not-present"), "got:\n{report}");
+    }
+
+    #[test]
+    fn current_stable_path_is_under_local_bin() {
+        let h = TempHome::new("cleanup_stablepath");
+        let p = persist::current_stable_path().expect("must resolve a stable path");
+        let expected_prefix = format!("{}/.local/bin/", h.path);
+        assert!(p.starts_with(&expected_prefix),
+            "stable path {p} must be under {expected_prefix}");
+    }
 }
 
 // ── Handler argument-parsing tests ───────────────────────────────────────────

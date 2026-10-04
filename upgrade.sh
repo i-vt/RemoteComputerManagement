@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# upgrade.sh — Update RCM to the latest version without losing data
+# upgrade.sh - Update RCM to the latest version without losing data
 #
 # What this does, in order:
 #   1. Records the current git commit
@@ -126,7 +126,7 @@ fi
 
 # ── Step 7: Rebuild and start ──────────────────────────────────────────
 # start_docker.sh handles:
-#   - cert generation (skipped — certs already present)
+#   - cert generation (skipped - certs already present)
 #   - ownership fix (sudo chown on data dirs)
 #   - docker compose build --no-cache
 #   - docker compose up -d

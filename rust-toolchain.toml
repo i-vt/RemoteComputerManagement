@@ -19,12 +19,12 @@
 # instead, e.g. channel = "nightly-2024-12-01".
 
 # rust-src is required so the builder can pass:
-#   -Zbuild-std=std,panic_abort -Zbuild-std-features=panic_immediate_abort
+#   -Zbuild-std=std,panic_abort + RUSTFLAGS -Zunstable-options -Cpanic=immediate-abort
 # which recompiles the standard library with the flags above AND removes the
 # std panic-message strings (called `Option::unwrap()`..., thread '...'
 # panicked at, RUST_BACKTRACE) that would otherwise fingerprint the binary as
 # Rust even with location stripping enabled.
 
 [toolchain]
-channel = "nightly"
+channel = "nightly-2026-08-22"
 components = ["rust-src"]

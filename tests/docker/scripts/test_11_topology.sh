@@ -7,10 +7,10 @@
 #
 # Two test tiers:
 #
-#   API structure tests — always run; verify the endpoints return the
+#   API structure tests - always run; verify the endpoints return the
 #     correct shape even when no agents are connected (empty candidates).
 #
-#   Route inference tests — run only when at least one agent is connected
+#   Route inference tests - run only when at least one agent is connected
 #     and has reported interface data. These verify that sessions are
 #     scored and ranked correctly.
 #
@@ -37,12 +37,12 @@ RESP=$(api_get "/api/topology/plan?target=10.0.0.0/24")
 assert_http "plan returns 200 for CIDR target" "200"
 assert_contains "CIDR target has candidates array" '"candidates"' "$RESP"
 
-# Invalid target — should return 400
+# Invalid target - should return 400
 RESP=$(api_get "/api/topology/plan?target=not-an-ip")
 assert_http "plan returns 400 for invalid target" "400"
 assert_contains "error message present" '"error"' "$RESP"
 
-# Missing target parameter — should return 400
+# Missing target parameter - should return 400
 RESP=$(api_get "/api/topology/plan")
 assert_http "plan returns 400 when target missing" "400"
 
@@ -168,7 +168,7 @@ if [ -n "$VW_KEY" ]; then
     RESP=$(curl -s -o /dev/null -w '%{http_code}' \
         -H "X-API-KEY: $VW_KEY" \
         "${C2_URL}/api/topology/snapshot")
-    # Topology reads are OK for viewers — no command execution involved
+    # Topology reads are OK for viewers - no command execution involved
     if [ "$RESP" = "200" ] || [ "$RESP" = "403" ]; then
         echo "  ✓ viewer topology access handled (HTTP $RESP)"
         PASS_COUNT=$((PASS_COUNT + 1))

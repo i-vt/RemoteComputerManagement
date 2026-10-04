@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/docker/scripts/test_03_listeners.sh — Listener management
+# tests/docker/scripts/test_03_listeners.sh - Listener management
 source "$(dirname "$0")/lib.sh"
 
 suite "List listeners"

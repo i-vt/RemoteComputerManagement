@@ -104,7 +104,7 @@ pub async fn run_hibernation(
         let (mut reader, mut writer) = tokio::io::split(stream);
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
         let pivot_mgr = Arc::new(tokio::sync::Mutex::new(PivotManager::new(tx.clone())));
-        let job_mgr = Arc::new(Mutex::new(JobManager::new(tx.clone())));
+        let job_mgr = JobManager::new_shared(tx.clone());
 
         // ── Writer task ───────────────────────────────────────────────────
         // The handshake always uses raw framing; post-handshake uses the
@@ -303,9 +303,17 @@ pub async fn run_hibernation(
 
         info!("{}: {} {}", aes_str!("Hibernation check-in complete"), executed, aes_str!("tasks executed"));
 
-        // Drop the writer channel to let the writer task finish cleanly.
+        // Drop the writer channel AND the managers that hold sender clones
+        // (PivotManager.upstream_tx, JobManager.c2_tx). While any sender is
+        // alive, rx.recv() in the writer task never returns None, so
+        // awaiting it would hang the cycle after exactly one check-in.
+        // Both are recreated at the top of the next iteration. The bounded
+        // wait is belt-and-braces: a wedged writer must never kill the
+        // hibernation loop.
         drop(tx);
-        let _ = writer_task.await;
+        drop(pivot_mgr);
+        drop(job_mgr);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), writer_task).await;
 
         // ── Sleep ─────────────────────────────────────────────────────────
         sleep_cycle(&mut config).await;

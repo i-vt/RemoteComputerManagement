@@ -124,6 +124,10 @@
               onclick="window.Router.navigate('jobs',event)">
         <i class="fas fa-cogs"></i><span>Jobs</span>
       </button>
+      <button class="nav-item" data-page="queue"
+              onclick="window.Router.navigate('queue',event)">
+        <i class="fas fa-moon"></i><span>Task Queue</span>
+      </button>
       <button class="nav-item" data-page="audit"
               onclick="window.Router.navigate('audit',event)">
         <i class="fas fa-shield-alt"></i><span>Audit Log</span>
@@ -148,6 +152,9 @@
         <div class="status-dot disconnected"></div>
         <span>Disconnected</span>
       </div>
+      <button class="logout-btn" onclick="window.Auth.showChangePassword()" style="margin-bottom:6px;">
+        <i class="fas fa-key"></i> Change Password
+      </button>
       <button class="logout-btn" onclick="window.Auth.logout()">
         <i class="fas fa-sign-out-alt"></i> Sign Out
       </button>
@@ -293,6 +300,32 @@
             <button onclick="window.NetworkManager.layout()" class="btn btn-ghost btn-sm">
               <i class="fas fa-random"></i><span class="hide-mobile"> Re-layout</span>
             </button>
+            <button onclick="document.getElementById('topology-panel').classList.toggle('hidden')" class="btn btn-ghost btn-sm">
+              <i class="fas fa-route"></i><span class="hide-mobile"> Planner</span>
+            </button>
+          </div>
+        </div>
+        <div id="topology-panel" class="card hidden" style="max-height:45%;overflow-y:auto;margin-bottom:12px;">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-route" style="color:var(--accent);"></i> Route Planner</span>
+            <button onclick="window.NetworkManager.loadSnapshot()" class="btn btn-ghost btn-sm" title="Cross-session topology snapshot">
+              <i class="fas fa-camera"></i><span class="hide-mobile"> Snapshot</span>
+            </button>
+          </div>
+          <div class="card-body">
+            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+              <div style="flex:1;min-width:220px;">
+                <label class="form-label">Target IP or CIDR</label>
+                <input type="text" id="topology-target" placeholder="10.0.0.5 or 10.0.0.0/24" class="form-input form-mono"
+                       onkeydown="if(event.key==='Enter') window.NetworkManager.planRoute()">
+              </div>
+              <button onclick="window.NetworkManager.planRoute()" class="btn btn-primary">
+                <i class="fas fa-search"></i> Find Routes
+              </button>
+            </div>
+            <div id="topology-results">
+              <p class="text-gray-500 text-xs italic">Passive analysis over agent-reported interfaces - no probes are sent.</p>
+            </div>
           </div>
         </div>
         <div class="card" style="flex:1;position:relative;overflow:hidden;">
@@ -371,7 +404,7 @@
         </div>
 
         <div class="card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
-          <div style="display:flex;align-items:center;padding:9px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);gap:16px;">
+          <div id="file-list-header" style="display:flex;align-items:center;padding:9px 14px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);gap:16px;">
             <span style="width:24px;"></span>
             <span style="flex:1;">Name</span>
             <span style="width:70px;text-align:right;" class="hide-mobile">Size</span>
@@ -411,6 +444,21 @@
         <div class="flex-1 overflow-y-auto bg-gray-800/40 rounded-lg border border-gray-700"
              id="loot-container">
           <p class="text-gray-500 p-10 text-center italic">Loading…</p>
+        </div>
+
+        <!-- RCM evidence packages -->
+        <div class="bg-gray-800/40 rounded-lg border border-gray-700" style="max-height:40%;display:flex;flex-direction:column;">
+          <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+            <span class="text-xs font-bold text-gray-300 uppercase tracking-wide">
+              <i class="fas fa-archive text-purple-400 mr-1"></i> Evidence Packages (RCM custody)
+            </span>
+            <button onclick="window.RcmPackages.refresh()" class="btn btn-ghost btn-sm" title="Refresh packages">
+              <i class="fas fa-sync-alt"></i>
+            </button>
+          </div>
+          <div id="rcm-packages-body" style="overflow-y:auto;">
+            <p class="text-gray-500 p-4 text-center italic text-xs">Loading…</p>
+          </div>
         </div>
       </div>
 
@@ -548,6 +596,42 @@
             </table>
           </div>
         </div>
+
+        <!-- Reverse port forwards -->
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-exchange-alt" style="color:var(--accent);"></i> Reverse Port Forwards</span>
+            <button onclick="window.Rportfwd.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+          <div class="card-body">
+            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+              <div style="min-width:170px;">
+                <label class="form-label">Session</label>
+                <select id="rportfwd-session" class="form-select"></select>
+              </div>
+              <div>
+                <label class="form-label">Bind port (server)</label>
+                <input type="number" id="rportfwd-bind-port" placeholder="8080" min="1" max="65535" class="form-input" style="width:110px;">
+              </div>
+              <div>
+                <label class="form-label">Target host</label>
+                <input type="text" id="rportfwd-target-host" placeholder="10.0.0.5" class="form-input form-mono" style="width:170px;">
+              </div>
+              <div>
+                <label class="form-label">Target port</label>
+                <input type="number" id="rportfwd-target-port" placeholder="445" min="1" max="65535" class="form-input" style="width:110px;">
+              </div>
+              <button onclick="window.Rportfwd.start()" class="btn btn-primary btn-sm">
+                <i class="fas fa-play"></i> Start
+              </button>
+            </div>
+            <div id="rportfwd-table-wrap">
+              <p class="text-gray-500 text-xs italic">Server-side port &rarr; through agent &rarr; target host:port.</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- ── BROADCAST / TASKS ───────────────────────────────────────── -->
@@ -576,7 +660,7 @@
                 <label class="form-label">Command</label>
                 <div style="position:relative;">
                   <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-family:monospace;font-size:14px;">$</span>
-                  <input type="text" id="broadcast-input" placeholder="whoami /all"
+                  <input type="text" id="broadcast-input" placeholder="shell whoami /all"
                          class="form-input form-mono" style="padding-left:26px;">
                 </div>
               </div>
@@ -605,9 +689,14 @@
           <div class="card" style="display:flex;flex-direction:column;max-height:500px;">
             <div class="card-header">
               <span class="card-title"><i class="fas fa-scroll"></i> Execution Log</span>
-              <button onclick="window.TaskManager.clearHistory()" class="icon-btn" title="Clear">
-                <i class="fas fa-trash-alt"></i>
-              </button>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <input type="text" id="task-search" placeholder="Search broadcasts..."
+                       class="form-input" style="padding:5px 10px;font-size:12px;width:180px;"
+                       oninput="window.TaskManager.renderTable()">
+                <button onclick="window.TaskManager.loadHistory()" class="icon-btn" title="Refresh">
+                  <i class="fas fa-sync-alt"></i>
+                </button>
+              </div>
             </div>
             <div style="flex:1;overflow-y:auto;">
               <table class="data-table">
@@ -665,6 +754,25 @@
           </div>
         </div>
 
+        <!-- Webhook notifications (admin) -->
+        <div class="card" id="webhook-card" style="margin-bottom:16px;display:none;">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-bell" style="color:var(--accent);"></i> New-Session Webhook</span>
+          </div>
+          <div class="card-body" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+            <div style="flex:1;min-width:280px;">
+              <label class="form-label">Webhook URL <span style="color:var(--text-muted);font-weight:400;">(Slack/Discord/custom; fired on each new session)</span></label>
+              <input type="text" id="webhook-url" placeholder="https://hooks.slack.com/services/..." class="form-input form-mono">
+            </div>
+            <button onclick="window.ListenerManager.saveWebhook()" class="btn btn-primary btn-sm">
+              <i class="fas fa-save"></i> Save
+            </button>
+            <button onclick="window.ListenerManager.clearWebhook()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-times"></i> Clear
+            </button>
+          </div>
+        </div>
+
         <!-- Create form -->
         <div class="card" style="margin-bottom:16px;">
           <div class="card-header">
@@ -678,7 +786,8 @@
               </div>
               <div style="width:90px;">
                 <label class="form-label">Port</label>
-                <input type="number" id="new-listener-port" placeholder="443" class="form-input">
+                <input type="number" id="new-listener-port" placeholder="8443" min="1024" max="65535" class="form-input"
+                       title="Ports below 1024 are rejected - use a reverse proxy for 443/80">
               </div>
               <div style="width:150px;" class="hide-mobile">
                 <label class="form-label">Transport</label>
@@ -692,6 +801,17 @@
               <button onclick="window.ListenerManager.create()" class="btn btn-primary" style="align-self:flex-end;">
                 Create
               </button>
+            </div>
+            <div style="margin-top:10px;">
+              <label class="form-label">Traffic Profile <span style="color:var(--text-muted);font-weight:400;">(optional - malleable C2 profile)</span></label>
+              <input type="text" id="new-listener-profile" placeholder="jquery_cdn"
+                     class="form-input form-mono" list="listener-profile-list">
+              <datalist id="listener-profile-list">
+                <!-- options populated from GET /api/listeners/profiles -->
+              </datalist>
+              <div class="text-xs" style="opacity:.7;margin-top:4px;">
+                Malleable C2 profile from the server catalog (no .json extension). Leave empty for the default profile.
+              </div>
             </div>
           </div>
         </div>
@@ -863,6 +983,13 @@
                       class="btn btn-danger btn-sm" style="font-size:11px;">
                 <i class="fas fa-trash mr-1"></i>Delete
               </button>
+              <select id="ext-deploy-session" class="form-select" style="font-size:11px;width:auto;max-width:170px;"
+                      title="Target session for Deploy"></select>
+              <button id="ext-deploy-btn" onclick="window.ExtManager.deploy()"
+                      class="btn btn-primary btn-sm" style="font-size:11px;"
+                      title="Push this extension to the selected session (ext:load)">
+                <i class="fas fa-upload mr-1"></i>Deploy
+              </button>
             </div>
             <textarea id="ext-code-editor" class="form-input form-mono"
                       style="flex:1;resize:none;border:none;border-radius:0;font-size:12px;
@@ -897,29 +1024,45 @@
             <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
-                  <label class="form-label">Server Host <span style="color:var(--red);">*</span></label>
+                  <label class="form-label">Server Host <span style="color:var(--red);">*</span>
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="C2 address compiled into the agent (IP, hostname, or pipe name for named_pipe transport). Suggestions come from GET /api/server/c2-hints; free text stays fully usable."></i>
+                  </label>
                   <input type="text" id="builder-host" placeholder="10.0.0.1"
-                         class="form-input form-mono">
+                         class="form-input form-mono" list="builder-host-ips"
+                         title="C2 address compiled into the agent. Pick a suggested server IP or type any value.">
+                  <datalist id="builder-host-ips"></datalist>
                 </div>
                 <div>
-                  <label class="form-label">Port / Pipe <span style="color:var(--red);">*</span></label>
+                  <label class="form-label">Port / Pipe <span style="color:var(--red);">*</span>
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Listener port for tls/tcp_plain/http/https, or pipe name for named_pipe transport."></i>
+                  </label>
                   <input type="text" id="builder-port" placeholder="4443"
-                         class="form-input form-mono">
+                         class="form-input form-mono" title="Listener port, or pipe name for named_pipe transport.">
                 </div>
               </div>
 
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
                 <div>
-                  <label class="form-label">Platform</label>
-                  <select id="builder-platform" class="form-select">
+                  <label class="form-label">Platform
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Target OS/arch. musl builds are fully static and run on any distro (no glibc dependency)."></i>
+                  </label>
+                  <select id="builder-platform" class="form-select"
+                          title="Target platform. musl = fully static Linux binary that runs on any distro.">
                     <option value="linux">Linux x64</option>
+                    <option value="linux-musl">Linux x64 (musl static)</option>
                     <option value="windows">Windows x64</option>
                     <option value="macos">macOS x64</option>
                   </select>
+                  <div class="text-xs" style="opacity:.7;margin-top:4px;">
+                    musl builds are fully static and run on any distro.
+                  </div>
                 </div>
                 <div>
-                  <label class="form-label">Transport</label>
-                  <select id="builder-transport" class="form-select">
+                  <label class="form-label">Transport
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="How the agent talks to the C2. TLS = mutual-TLS raw socket; HTTP(S) = polling web profile; named_pipe = SMB pivoting. Hibernation mode is incompatible with HTTP(S)."></i>
+                  </label>
+                  <select id="builder-transport" class="form-select"
+                          title="Agent-to-C2 transport. format=stager requires http or https.">
                     <option value="tls">TLS</option>
                     <option value="tcp_plain">TCP plain</option>
                     <option value="http">HTTP</option>
@@ -928,13 +1071,20 @@
                   </select>
                 </div>
                 <div>
-                  <label class="form-label">Format</label>
-                  <select id="builder-format" class="form-select">
+                  <label class="form-label">Format
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Artifact type. exe/stager/pic_c work on every platform; dll/service/shellcode/donut/pe_to_shellcode/bin are Windows-only. stager fetches its stage over HTTPS from /stage/<build_id>."></i>
+                  </label>
+                  <select id="builder-format" class="form-select"
+                          title="Artifact type. Windows-only formats are disabled automatically on other platforms.">
                     <option value="exe">EXE / ELF</option>
-                    <option value="dll">DLL</option>
-                    <option value="service">Service</option>
+                    <option value="dll" data-platforms="windows">DLL</option>
+                    <option value="service" data-platforms="windows">Service</option>
                     <option value="stager">Stager</option>
-                    <option value="shellcode">Shellcode (.bin)</option>
+                    <option value="shellcode" data-platforms="windows">Shellcode (.bin)</option>
+                    <option value="donut" data-platforms="windows">Donut shellcode</option>
+                    <option value="pe_to_shellcode" data-platforms="windows">PE&rarr;Shellcode OEP</option>
+                    <option value="pic_c">Custom PIC C</option>
+                    <option value="bin" data-platforms="windows">Pipeline .bin</option>
                   </select>
                 </div>
               </div>
@@ -943,12 +1093,16 @@
               <div id="builder-shellcode-opts" style="display:none;border:1px solid var(--border,#333);border-radius:8px;padding:10px;">
                 <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
                   <div>
-                    <label class="form-label">Export hash (0x10 = DllMain only)</label>
-                    <input type="text" id="builder-sc-hash" value="0x10" class="form-input">
+                    <label class="form-label">Export hash (0x10 = DllMain only)
+                      <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="sRDI export hash filter (decimal or 0x hex); 0x10 exports only DllMain."></i>
+                    </label>
+                    <input type="text" id="builder-sc-hash" value="0x10" class="form-input" title="Export hash filter, decimal or 0x hex.">
                   </div>
                   <div>
-                    <label class="form-label">Output encoding</label>
-                    <select id="builder-sc-output" class="form-select">
+                    <label class="form-label">Output encoding
+                      <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="How the shellcode artifact is written: raw binary, base64, C array literal, or hex string."></i>
+                    </label>
+                    <select id="builder-sc-output" class="form-select" title="Shellcode output encoding.">
                       <option value="bin">Raw .bin</option>
                       <option value="b64">Base64</option>
                       <option value="c">C array</option>
@@ -956,12 +1110,16 @@
                     </select>
                   </div>
                   <div>
-                    <label class="form-label">Loader flags (0-3)</label>
-                    <input type="number" id="builder-sc-flags" value="0" min="0" max="3" class="form-input">
+                    <label class="form-label">Loader flags (0-3)
+                      <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="sRDI loader flags bitmask (0-3); 0 = defaults."></i>
+                    </label>
+                    <input type="number" id="builder-sc-flags" value="0" min="0" max="3" class="form-input" title="sRDI loader flags, 0-3.">
                   </div>
                   <div>
-                    <label class="form-label">User data blob</label>
-                    <input type="text" id="builder-sc-userdata" value="None" class="form-input">
+                    <label class="form-label">User data blob
+                      <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Opaque string appended to the shellcode for the loader to consume; 'None' = none."></i>
+                    </label>
+                    <input type="text" id="builder-sc-userdata" value="None" class="form-input" title="Opaque user data appended to the shellcode.">
                   </div>
                 </div>
                 <div class="text-xs" style="opacity:.7;margin-top:6px;">
@@ -970,9 +1128,43 @@
                 </div>
               </div>
 
+              <!-- Custom PIC C options - only relevant for format=pic_c -->
+              <div id="builder-pic-opts" style="display:none;border:1px solid var(--border,#333);border-radius:8px;padding:10px;">
+                <div>
+                  <label class="form-label">Inline PIC C source
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="C source compiled to position-independent Windows x64 shellcode; entry point is int go(void)."></i>
+                  </label>
+                  <textarea id="builder-pic-src" rows="8" class="form-input"
+                    style="font-family:monospace;white-space:pre;width:100%;"
+                    title="PIC C source; entry convention: int go(void). Blank = bundled templates/pic_template.c."
+                    placeholder="// Entry convention: int go(void) is the PIC entry point.&#10;// Start from the PEB-walk template (no CRT / WinAPI imports).&#10;int go(void) { return 0; }"></textarea>
+                </div>
+                <div class="text-xs" style="opacity:.7;margin-top:6px;">
+                  Leave empty to use the default template: templates/pic_template.c.
+                  Compiled position-independent; no runtime library available.
+                </div>
+              </div>
+
+              <!-- Pipeline options - only relevant for format=bin -->
+              <div id="builder-pipeline-opts" style="display:none;border:1px solid var(--border,#333);border-radius:8px;padding:10px;">
+                <div>
+                  <label class="form-label">Pipeline stages (comma-separated)
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Byte pipeline applied left to right: first stage selects the source artifact (pe/exe/dll/pic), following stages transform it (donut, srdi, pe_to_shellcode, sign, b64)."></i>
+                  </label>
+                  <input type="text" id="builder-pipeline" placeholder="pe,donut" class="form-input" title="Comma-separated stages, e.g. pe,donut or dll,srdi,b64.">
+                </div>
+                <div class="text-xs" style="opacity:.7;margin-top:6px;">
+                  Source stages (first): pe, exe, dll, pic. Transform stages: donut, srdi, pe_to_shellcode, sign, b64.
+                  Leave empty for the default (pe,donut on Windows).
+                </div>
+              </div>
+
               <div>
-                <label class="form-label">Traffic Profile</label>
-                <select id="builder-profile" class="form-select">
+                <label class="form-label">Traffic Profile
+                  <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Malleable C2 traffic shaping baked into the agent (default raw channel, HTTP POST, or HTTP with GIF masking)."></i>
+                </label>
+                <select id="builder-profile" class="form-select"
+                        title="Traffic profile for the C2 channel: raw length-prefixed, HTTP POST bodies, or HTTP with GIF image masking.">
                   <option value="default">Default (raw length-prefixed)</option>
                   <option value="http_post">HTTP POST</option>
                   <option value="http_image">HTTP image (GIF mask)</option>
@@ -981,60 +1173,144 @@
 
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
                 <div>
-                  <label class="form-label">Sleep (s)</label>
-                  <input type="number" id="builder-sleep" value="40" min="0" class="form-input">
+                  <label class="form-label">Sleep (s)
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Base interval between C2 check-ins, in seconds."></i>
+                  </label>
+                  <input type="number" id="builder-sleep" value="40" min="0" class="form-input" title="Base check-in interval in seconds.">
                 </div>
                 <div>
-                  <label class="form-label">Jitter min %</label>
-                  <input type="number" id="builder-jitter-min" value="20" min="0" max="100" class="form-input">
+                  <label class="form-label">Jitter min (ms)
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Extra milliseconds added to each sleep, randomized between min and max (raw ms, not a percentage; server caps at 60000)."></i>
+                  </label>
+                  <input type="number" id="builder-jitter-min" value="0" min="0" max="60000" class="form-input"
+                         title="Extra milliseconds added to each sleep, randomized between min and max. The agent interprets these as raw milliseconds, not a percentage.">
                 </div>
                 <div>
-                  <label class="form-label">Jitter max %</label>
-                  <input type="number" id="builder-jitter-max" value="10" min="0" max="100" class="form-input">
+                  <label class="form-label">Jitter max (ms)
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Upper bound of the random sleep addition (raw ms, not a percentage; server caps at 60000)."></i>
+                  </label>
+                  <input type="number" id="builder-jitter-max" value="100" min="0" max="60000" class="form-input"
+                         title="Extra milliseconds added to each sleep, randomized between min and max. The agent interprets these as raw milliseconds, not a percentage.">
                 </div>
               </div>
 
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end;">
                 <div>
-                  <label class="form-label">Bloat (MB)</label>
-                  <input type="number" id="builder-bloat" value="0" min="0" class="form-input">
+                  <label class="form-label">Bloat (MB)
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Pad the artifact with random bytes to reach this size; defeats size-based detections and some sandboxes."></i>
+                  </label>
+                  <input type="number" id="builder-bloat" value="0" min="0" class="form-input" title="Pad the artifact with random bytes up to this many MB.">
                 </div>
                 <div>
-                  <label class="form-label">Kill date (days, 0=off)</label>
-                  <input type="number" id="builder-days" value="0" min="0" class="form-input">
+                  <label class="form-label">Kill date (days, 0=off)
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Agent self-terminates this many days after build time; 0 disables."></i>
+                  </label>
+                  <input type="number" id="builder-days" value="0" min="0" class="form-input" title="Self-terminate N days after the build; 0 = never.">
                 </div>
               </div>
 
-              <label class="check-label">
+              <!-- ── Artifact Customization ──────────────────────────── -->
+              <div style="border-top:1px solid var(--border);padding-top:14px;">
+                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Artifact Customization</div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                  <div>
+                    <label class="form-label">Artifact filename <span style="color:var(--text-muted);font-weight:400;">(optional - extension added automatically)</span>
+                      <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Output filename without extension (1-64 chars of [A-Za-z0-9._-]); extension is added per format."></i>
+                    </label>
+                    <input type="text" id="builder-name" placeholder="health_probe" class="form-input form-mono" title="Output filename without extension.">
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;" data-platforms="windows">
+                    <div>
+                      <label class="form-label">Icon preset <span style="color:var(--text-muted);font-weight:400;">(Windows exe/service)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Stock .ico baked into the PE resources. Windows exe/service only."></i>
+                      </label>
+                      <select id="builder-icon-preset" class="form-select" title="Stock icon embedded into the Windows executable.">
+                        <option value="">None</option>
+                        <option value="generic_system">generic_system</option>
+                        <option value="windows_update">windows_update</option>
+                        <option value="driver">driver</option>
+                        <option value="media_player">media_player</option>
+                        <option value="document">document</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="form-label">Custom .ico <span style="color:var(--text-muted);font-weight:400;">(overrides preset)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Upload your own .ico; overrides the preset. Windows exe/service only."></i>
+                      </label>
+                      <input type="file" id="builder-icon-file" accept=".ico" class="form-input" title="Upload a custom .ico file (overrides the preset).">
+                    </div>
+                  </div>
+                  <div data-platforms="windows">
+                    <label class="form-label">PE version info <span style="color:var(--text-muted);font-weight:400;">(Windows exe/service - VERSIONINFO resource)</span>
+                      <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Strings stamped into the PE VERSIONINFO resource (right-click Properties dialog). Windows exe/service only."></i>
+                    </label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                      <input type="text" id="builder-pe-company" placeholder="CompanyName" class="form-input form-mono" title="PE VERSIONINFO: CompanyName">
+                      <input type="text" id="builder-pe-product" placeholder="ProductName" class="form-input form-mono" title="PE VERSIONINFO: ProductName">
+                      <input type="text" id="builder-pe-description" placeholder="FileDescription" class="form-input form-mono" title="PE VERSIONINFO: FileDescription">
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                        <input type="text" id="builder-pe-file-version" placeholder="FileVersion 1.2.3.4" class="form-input form-mono" title="PE VERSIONINFO: FileVersion">
+                        <input type="text" id="builder-pe-product-version" placeholder="ProductVersion 1.2.3.4" class="form-input form-mono" title="PE VERSIONINFO: ProductVersion">
+                      </div>
+                    </div>
+                  </div>
+                  <div data-platforms="linux,linux-musl">
+                    <label class="form-label">ELF .comment <span style="color:var(--text-muted);font-weight:400;">(Linux targets - embedded .comment section)</span>
+                      <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="String embedded in the ELF .comment section (visible via readelf). Linux/linux-musl only."></i>
+                    </label>
+                    <input type="text" id="builder-elf-comment" placeholder="e.g. build id or provenance string" class="form-input form-mono" title="String embedded in the ELF .comment section.">
+                  </div>
+                  <div>
+                    <label class="form-label">Custom TLS certs bundle <span style="color:var(--text-muted);font-weight:400;">(optional - all three files required)</span>
+                      <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Replace the embedded mTLS identity: ca.crt, client.crt, client.key.der. All three required; stock certs are restored after the build."></i>
+                    </label>
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+                      <input type="file" id="builder-certs-ca" accept=".crt,.pem" class="form-input" title="ca.crt">
+                      <input type="file" id="builder-certs-client" accept=".crt,.pem" class="form-input" title="client.crt">
+                      <input type="file" id="builder-certs-key" accept=".der" class="form-input" title="client.key.der">
+                    </div>
+                    <div class="text-xs" style="opacity:.7;margin-top:4px;">
+                      ca.crt, client.crt, client.key.der - embedded at compile time; stock certs are restored after the build.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <label class="check-label" title="Build with debug logging; do not deploy debug builds to real targets.">
                 <input type="checkbox" id="builder-debug">
                 Debug mode
               </label>
 
-              <!-- ── Evasion ─────────────────────────────────────────── -->
-              <div style="border-top:1px solid var(--border);padding-top:14px;">
-                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Evasion</div>
+              <!-- ── Evasion (Windows-only behavior) ────────────────── -->
+              <div style="border-top:1px solid var(--border);padding-top:14px;" data-platforms="windows">
+                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Evasion
+                  <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Windows-only behavior; on Linux/macOS the agent ignores these and degrades to plain sleep."></i>
+                </div>
                 <div style="margin-bottom:10px;">
-                  <label class="form-label">Sleep mask</label>
-                  <select id="builder-sleep-mask" class="form-select">
-                    <option value="none">None</option>
+                  <label class="form-label">Sleep mask
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="How the agent hides while sleeping between check-ins. none = plain sleep, no masking; ekko = timer-queue based image encryption; spoofed-stack = fiber-based call-stack spoofing."></i>
+                  </label>
+                  <select id="builder-sleep-mask" class="form-select"
+                          title="Sleep obfuscation: none (plain sleep), ekko (timer-based), spoofed-stack (fiber-based).">
+                    <option value="none">None (plain sleep, no masking)</option>
                     <option value="ekko" selected>Ekko (timer-based)</option>
-                    <option value="foliage">Foliage (APC-based)</option>
+                    <option value="spoofed-stack">Spoofed stack (fiber-based)</option>
                   </select>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:8px;">
-                  <label class="check-label">
+                  <label class="check-label" title="Resolve and call NT syscalls directly, bypassing userland hooks.">
                     <input type="checkbox" id="builder-indirect-syscalls" checked>
                     Indirect syscalls
                   </label>
-                  <label class="check-label">
+                  <label class="check-label" title="Spoof the call stack for API calls to defeat stack-walking detections.">
                     <input type="checkbox" id="builder-stack-spoof" checked>
                     Stack spoofing
                   </label>
-                  <label class="check-label">
+                  <label class="check-label" title="Patch AMSI and ETW in-memory on agent start.">
                     <input type="checkbox" id="builder-patch-amsi-etw" checked>
                     Patch AMSI / ETW
                   </label>
-                  <label class="check-label">
+                  <label class="check-label" title="Encrypt the agent heap while sleeping (evasion:encrypt_heap_aes runtime toggle).">
                     <input type="checkbox" id="builder-heap-encrypt" checked>
                     Heap encryption
                   </label>
@@ -1047,33 +1323,130 @@
                 <div style="display:flex;flex-direction:column;gap:10px;">
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                     <div>
-                      <label class="form-label">Domain filter <span style="color:var(--text-muted);font-weight:400;">(glob, blank = any)</span></label>
-                      <input type="text" id="builder-guard-domain" placeholder="CORP*" class="form-input form-mono">
+                      <label class="form-label">Domain filter <span style="color:var(--text-muted);font-weight:400;">(glob, blank = any)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Agent only runs when the host's domain matches this glob (e.g. CORP*); decoy-exits otherwise. Works on all platforms."></i>
+                      </label>
+                      <input type="text" id="builder-guard-domain" placeholder="CORP*" class="form-input form-mono" title="Glob the host domain must match, e.g. CORP*.">
                     </div>
                     <div>
-                      <label class="form-label">Hostname filter <span style="color:var(--text-muted);font-weight:400;">(glob, blank = any)</span></label>
-                      <input type="text" id="builder-guard-hostname" placeholder="DESKTOP-*" class="form-input form-mono">
+                      <label class="form-label">Hostname filter <span style="color:var(--text-muted);font-weight:400;">(glob, blank = any)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Agent only runs when the hostname matches this glob (e.g. DESKTOP-*); decoy-exits otherwise. Works on all platforms."></i>
+                      </label>
+                      <input type="text" id="builder-guard-hostname" placeholder="DESKTOP-*" class="form-input form-mono" title="Glob the hostname must match, e.g. DESKTOP-*.">
                     </div>
                   </div>
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                     <div>
-                      <label class="form-label">Active window start <span style="color:var(--text-muted);font-weight:400;">(hour 0-23)</span></label>
-                      <input type="number" id="builder-guard-hour-start" value="0" min="0" max="23" class="form-input">
+                      <label class="form-label">Active window start <span style="color:var(--text-muted);font-weight:400;">(hour 0-23)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Agent only operates inside this local-time window; start hour, 0-23."></i>
+                      </label>
+                      <input type="number" id="builder-guard-hour-start" value="0" min="0" max="23" class="form-input" title="Active window start hour (0-23, target local time).">
                     </div>
                     <div>
-                      <label class="form-label">Active window end <span style="color:var(--text-muted);font-weight:400;">(0 = all day)</span></label>
-                      <input type="number" id="builder-guard-hour-end" value="0" min="0" max="23" class="form-input">
+                      <label class="form-label">Active window end <span style="color:var(--text-muted);font-weight:400;">(0 = all day)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Active window end hour (0-23); 0 means no time-of-day restriction."></i>
+                      </label>
+                      <input type="number" id="builder-guard-hour-end" value="0" min="0" max="23" class="form-input" title="Active window end hour (0-23); 0 = all day.">
                     </div>
                   </div>
-                  <label class="check-label">
+                  <label class="check-label" title="Refuse to run as SYSTEM/root; decoy-exits instead (anti-sandbox). Works on all platforms.">
                     <input type="checkbox" id="builder-guard-no-system">
                     Bail if running as SYSTEM <span style="color:var(--text-muted);font-size:11px;">(anti-sandbox)</span>
                   </label>
+                  <div data-platforms="windows">
+                    <label class="form-label">Parent-process allowlist <span style="color:var(--text-muted);font-weight:400;">(comma-separated exe names, blank = any)</span></label>
+                    <input type="text" id="builder-valid-parents" placeholder="explorer.exe,winword.exe" class="form-input form-mono"
+                           title="Parent-process allowlist; agent decoy-exits if its parent is not listed. Windows only.">
+                    <div class="text-xs" style="opacity:.7;margin-top:4px;">
+                      Parent-process allowlist; agent decoy-exits if its parent is not listed.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ── Advanced ────────────────────────────────────────── -->
+              <div style="border-top:1px solid var(--border);padding-top:14px;">
+                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;cursor:pointer;user-select:none;"
+                     onclick="document.getElementById('builder-advanced').classList.toggle('hidden')">
+                  Advanced <i class="fas fa-chevron-down" style="font-size:9px;"></i>
+                </div>
+                <div id="builder-advanced" class="hidden" style="display:flex;flex-direction:column;gap:10px;">
+                  <label class="check-label" data-platforms="windows" title="Sign the PE with osslsigncode. Windows exe/dll/service only.">
+                    <input type="checkbox" id="builder-sign" checked>
+                    Authenticode signing <span style="color:var(--text-muted);font-size:11px;">(Windows exe/dll/service; blank cert path = throwaway self-signed)</span>
+                  </label>
+                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;" data-platforms="windows">
+                    <div>
+                      <label class="form-label">Signing cert <span style="color:var(--text-muted);font-weight:400;">(server path, .pfx/.p12)</span></label>
+                      <input type="text" id="builder-sign-cert" placeholder="certs/codesign.pfx" class="form-input form-mono" title="Server-side path to a .pfx/.p12; blank = throwaway self-signed cert generated per build.">
+                    </div>
+                    <div>
+                      <label class="form-label">Cert password</label>
+                      <input type="password" id="builder-sign-pass" class="form-input" title="Password for the signing .pfx, if any.">
+                    </div>
+                    <div>
+                      <label class="form-label">Timestamp URL</label>
+                      <input type="text" id="builder-sign-ts" placeholder="http://timestamp.digicert.com" class="form-input form-mono" title="RFC 3161 timestamping server URL; keeps the signature valid after cert expiry.">
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;" data-platforms="windows">
+                    <div>
+                      <label class="form-label">Signature name <span style="color:var(--text-muted);font-weight:400;">(blank = randomized)</span></label>
+                      <input type="text" id="builder-sign-name" placeholder="Contoso Updater" class="form-input form-mono" title="Program name shown in the signature dialog (osslsigncode -n); blank = randomized per build.">
+                    </div>
+                    <div>
+                      <label class="form-label">Signature URL <span style="color:var(--text-muted);font-weight:400;">(blank = randomized)</span></label>
+                      <input type="text" id="builder-sign-url" placeholder="https://example.com" class="form-input form-mono" title="Info URL embedded in the signature (osslsigncode -i); blank = randomized per build.">
+                    </div>
+                    <div>
+                      <label class="form-label">Signature CN <span style="color:var(--text-muted);font-weight:400;">(blank = randomized)</span></label>
+                      <input type="text" id="builder-sign-cn" placeholder="Contoso Ltd" class="form-input form-mono" title="Subject CN of the throwaway signing cert; blank = randomized per build.">
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div>
+                      <label class="form-label">SNI override <span style="color:var(--text-muted);font-weight:400;">(domain fronting, blank = off)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="TLS SNI presented during the handshake, different from the real C2 host (domain fronting); blank = use the C2 host."></i>
+                      </label>
+                      <input type="text" id="builder-sni-override" placeholder="cdn.example.com" class="form-input form-mono" title="Front domain sent as TLS SNI.">
+                    </div>
+                    <div>
+                      <label class="form-label">ALPN protocols <span style="color:var(--text-muted);font-weight:400;">(comma-separated)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="ALPN protocol list offered in the TLS handshake, e.g. h2,http/1.1; blank = library default."></i>
+                      </label>
+                      <input type="text" id="builder-alpn" placeholder="h2,http/1.1" class="form-input form-mono" title="Comma-separated ALPN protocols, e.g. h2,http/1.1.">
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <label class="check-label" style="align-self:end;" title="Dweller mode: agent disconnects between cycles and claims queued tasks on check-in. Incompatible with http/https transport.">
+                      <input type="checkbox" id="builder-hibernation">
+                      Hibernation mode <span style="color:var(--text-muted);font-size:11px;">(dweller; not for http/https transport)</span>
+                    </label>
+                    <div>
+                      <label class="form-label">Wake batch size <span style="color:var(--text-muted);font-weight:400;">(blank = default)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Max queued tasks a hibernating agent claims per check-in; blank = server default."></i>
+                      </label>
+                      <input type="number" id="builder-batch-size" min="1" class="form-input" title="Max queued tasks claimed per check-in (hibernation mode).">
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div>
+                      <label class="form-label">Auto-pivot port <span style="color:var(--text-muted);font-weight:400;">(blank = direct connect)</span>
+                        <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Agent automatically starts a TCP pivot listener on this port after check-in; blank = no auto-pivot."></i>
+                      </label>
+                      <input type="number" id="builder-auto-pivot-port" min="1" max="65535" placeholder="1080" class="form-input" title="Port for the automatic TCP pivot listener on the agent.">
+                    </div>
+                    <label class="check-label" style="align-self:end;" title="Skip the hypervisor/VM anti-analysis check. The agent normally decoy-exits when it detects a VM; enable for KVM/QEMU cloud VPS targets that would otherwise be refused.">
+                      <input type="checkbox" id="builder-allow-vm">
+                      Allow VMs <span style="color:var(--text-muted);font-size:11px;">(skip hypervisor check, for cloud VPS targets)</span>
+                    </label>
+                  </div>
                 </div>
               </div>
 
               <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                <button id="builder-btn" onclick="window.BuilderManager.build()" class="btn btn-primary">
+                <button id="builder-btn" onclick="window.BuilderManager.build()" class="btn btn-primary"
+                        title="Queue a cross-compile build job server-side; poll the log until the artifact is ready.">
                   <i class="fas fa-hammer"></i> Build Agent
                 </button>
                 <span id="builder-status-badge" class="hidden"></span>
@@ -1093,7 +1466,7 @@
                 <button id="blf-ok"   class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('ok')">Success</button>
               </div>
             </div>
-            <div id="builder-log" class="log-pane" style="flex:1;height:380px;border-radius:0 0 var(--r-lg) var(--r-lg);">
+            <div id="builder-log" class="log-pane" style="flex:1;min-height:260px;border-radius:0 0 var(--r-lg) var(--r-lg);">
               <div class="log-default" style="font-style:italic;">Waiting for build to start...</div>
             </div>
           </div>
@@ -1104,6 +1477,22 @@
              class="btn btn-full" style="background:var(--blue);color:#fff;border-color:var(--blue);">
             <i class="fas fa-download"></i> <span>Download agent</span>
           </a>
+          <div id="builder-public-link-row" style="display:none;margin-top:8px;gap:8px;align-items:center;">
+            <input type="text" id="builder-public-link" readonly
+                   class="form-input form-mono" style="flex:1;font-size:12px;"
+                   title="Public download link (no API key required)">
+            <button class="btn btn-ghost btn-sm" onclick="window.BuilderManager.copyPublicLink()">
+              <i class="fas fa-copy"></i> Copy link
+            </button>
+          </div>
+          <div id="builder-stage-link-row" style="display:none;margin-top:8px;gap:8px;align-items:center;">
+            <input type="text" id="builder-stage-link" readonly
+                   class="form-input form-mono" style="flex:1;font-size:12px;"
+                   title="Staged-download link for the built stager (points the stager at its stage)">
+            <button class="btn btn-ghost btn-sm" onclick="window.BuilderManager.copyStageLink()">
+              <i class="fas fa-copy"></i> Copy stage link
+            </button>
+          </div>
         </div>
 
         <!-- Previous builds -->
@@ -1164,6 +1553,57 @@
       </div>
 
       <!-- ── AUDIT LOG ──────────────────────────────────────────────── -->
+      <!-- ── TASK QUEUE (hibernating agents) ──────────────────────────── -->
+      <div id="page-queue" class="hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Task Queue</h1>
+            <p class="page-subtitle">Pre-queued commands for hibernating agents (claimed on next check-in)</p>
+          </div>
+          <div class="page-actions">
+            <button onclick="window.TaskQueue.refresh()" class="btn btn-ghost btn-sm">
+              <i class="fas fa-sync"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-body" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+            <div style="min-width:200px;">
+              <label class="form-label">Session</label>
+              <select id="queue-session" class="form-select" onchange="window.TaskQueue.refresh()"></select>
+            </div>
+            <div style="flex:1;min-width:260px;">
+              <label class="form-label">Command</label>
+              <input type="text" id="queue-command" placeholder="shell whoami" class="form-input form-mono"
+                     onkeydown="if(event.key==='Enter') window.TaskQueue.enqueue()">
+            </div>
+            <button onclick="window.TaskQueue.enqueue()" class="btn btn-primary">
+              <i class="fas fa-plus"></i> Enqueue
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-scroll-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="hide-mobile">Queued</th>
+                  <th>Command</th>
+                  <th>Status</th>
+                  <th class="hide-mobile">Result</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="queue-tbody">
+                <tr class="empty-row"><td colspan="5">Select a session to view its queue</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <div id="page-audit" class="hidden">
         <div class="page-header">
           <div>
@@ -1317,6 +1757,9 @@
       <button class="more-item" data-page="jobs" onclick="window.Router.navigate('jobs',event);window.MobileMore.close()">
         <i class="fas fa-cogs"></i><span>Jobs</span>
       </button>
+      <button class="more-item" data-page="queue" onclick="window.Router.navigate('queue',event);window.MobileMore.close()">
+        <i class="fas fa-moon"></i><span>Queue</span>
+      </button>
       <button class="more-item" data-page="audit" onclick="window.Router.navigate('audit',event);window.MobileMore.close()">
         <i class="fas fa-shield-alt"></i><span>Audit</span>
       </button>
@@ -1332,6 +1775,9 @@
         <i class="fas fa-user-circle" style="color:var(--accent);"></i>
         <span></span>
       </div>
+      <button class="more-logout" onclick="window.Auth.showChangePassword()" style="margin-bottom:6px;">
+        <i class="fas fa-key"></i> Change password
+      </button>
       <button class="more-logout" onclick="window.Auth.logout()">
         <i class="fas fa-sign-out-alt"></i> Sign out
       </button>
@@ -1357,7 +1803,9 @@
     <div class="term-input-row">
       <span class="term-prompt">$</span>
       <input type="text" id="term-input" class="term-input-field"
-             autocomplete="off" spellcheck="false" placeholder="Enter command...">
+             autocomplete="off" spellcheck="false"
+             placeholder="shell whoami - bare OS commands need the 'shell ' prefix"
+             title="Built-in commands (screenshot, jobs:list, ...) work bare; OS commands need the 'shell ' prefix, e.g. shell whoami">
     </div>
   </div>
 </div>
@@ -1411,6 +1859,39 @@
   </div>
 </div>
 
+<!-- PASSWORD MODAL (self-service change + admin reset) -->
+<div id="pw-modal" class="hidden modal-overlay" style="z-index:120;" onclick="window.Auth._pwBackdrop(event)">
+  <div class="modal-box" style="max-width:420px;min-height:unset;">
+    <div class="modal-header">
+      <div class="modal-title">
+        <i class="fas fa-key text-yellow-400"></i>
+        <span id="pw-modal-title">Change Password</span>
+      </div>
+      <button class="modal-close" onclick="window.Auth.closePasswordModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div style="padding:18px 20px 10px;display:flex;flex-direction:column;gap:12px;">
+      <div class="form-group" style="margin-bottom:0" id="pw-current-group">
+        <label class="form-label">Current password</label>
+        <input type="password" id="pw-current" class="form-input" autocomplete="current-password">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">New password (min 8 chars)</label>
+        <input type="password" id="pw-new" class="form-input" autocomplete="new-password">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Confirm new password</label>
+        <input type="password" id="pw-confirm" class="form-input" autocomplete="new-password"
+               onkeydown="if(event.key==='Enter') window.Auth.submitPasswordModal()">
+      </div>
+      <div id="pw-error" style="display:none;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);border-radius:6px;padding:9px 12px;font-size:12px;color:#f87171;"></div>
+    </div>
+    <div style="padding:4px 20px 16px;display:flex;justify-content:flex-end;gap:8px;">
+      <button class="btn btn-ghost btn-sm" onclick="window.Auth.closePasswordModal()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="window.Auth.submitPasswordModal()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
 
@@ -1451,6 +1932,9 @@ window.MobileMore = {
 <script src="/panel/js/loot.js"></script>
 <script src="/panel/js/extensions.js"></script>
 <script src="/panel/js/ioc.js"></script>
+<script src="/panel/js/rcm.js"></script>
+<script src="/panel/js/rportfwd.js"></script>
+<script src="/panel/js/taskqueue.js"></script>
 <script src="/panel/js/app.js"></script>
 </body>
 </html>

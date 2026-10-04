@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup.sh — RCM one-shot setup: generate TLS certs, start server, build agent
+# setup.sh - RCM one-shot setup: generate TLS certs, start server, build agent
 # Usage:
 #   ./setup.sh [IP] [build|tls] [--reset] [--recert]
 #   --reset   wipes c2_audit.db so a fresh admin account is created
@@ -96,7 +96,7 @@ else
         -subj "/CN=RCM-CA" 2>/dev/null
     ok "CA generated"
 
-    openssl genrsa -out server.key 2048 2>/dev/null
+    openssl genrsa -out server.key 4096 2>/dev/null
     openssl req -new -key server.key -out server.csr -subj "/CN=${C2_IP}" 2>/dev/null
     cat > server_ext.cnf <<EOF
 [v3_req]
@@ -113,7 +113,7 @@ EOF
         -out server.crt -extfile server_ext.cnf -extensions v3_req 2>/dev/null
     ok "Server cert generated (SAN: ${C2_IP})"
 
-    openssl genrsa -out client.key 2048 2>/dev/null
+    openssl genrsa -out client.key 4096 2>/dev/null
     openssl req -new -key client.key -out client.csr -subj "/CN=rcm-agent" 2>/dev/null
     openssl x509 -req -days 3650 \
         -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
@@ -151,8 +151,14 @@ done
 info "Building RCM server (release)..."
 if [[ ! -f target/release/server ]] || \
    [[ certs/server.key.der -nt target/release/server ]]; then
-    cargo build --release --bin server 2>&1 \
-        | grep -E "^(error|Compiling|Finished)" | tail -4 || true
+    # pipefail makes a failed cargo build fail this pipeline; surface it
+    # here instead of later as "Server crashed" or a missing binary.
+    if ! cargo build --release --bin server 2>&1 \
+        | grep -E "^(error|Compiling|Finished)" | tail -4; then
+        die "Server build failed - see the cargo output above."
+    fi
+    [[ -x target/release/server ]] \
+        || die "cargo reported success but target/release/server is missing."
     ok "Server compiled"
 else
     ok "Server binary is up-to-date"
@@ -296,7 +302,7 @@ echo ""
 
 # ── 10. Panel ────────────────────────────────────────────────────────────────
 # The panel is now served directly by the C2 server at http://127.0.0.1:8080/
-# No separate python server needed — same origin, no CORS issues.
+# No separate python server needed - same origin, no CORS issues.
 sep
 printf "${BOLD}  PANEL${NC}\n\n"
 printf "  ${GREEN}URL:${NC}  ${CYAN}http://127.0.0.1:8080${NC}\n\n"
