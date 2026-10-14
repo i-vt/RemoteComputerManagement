@@ -6,7 +6,7 @@
 # (docs/api.md) with realistic faux data so the full UX/UI can be exercised
 # without compiling or running the actual server, database, or agents.
 #
-#   * Serves the real panel from ./panel at http://127.0.0.1:8080/
+#   * Serves the real panel from ./panel at http://127.0.0.1:18080/
 #   * Mirrors the real API surface: auth (X-API-KEY), RBAC roles
 #     (admin/operator/viewer), sessions, commands, files, loot, builder
 #     jobs, task queue, topology, listeners, IOCs, notes, ...
@@ -20,7 +20,7 @@
 # repository root. All state is in-memory and resets on restart.
 #
 # Usage (from the repository root):
-#   python3 tests/mock_server.py [--port 8080] [--host 127.0.0.1]
+#   python3 tests/mock_server.py [--port 18080] [--host 127.0.0.1]
 # or simply:
 #   ./tests/run_mock_server.sh
 #
@@ -48,7 +48,11 @@ import zlib
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.0.0"
+# 1.1.0: login-page reload-loop fix (public c2-hints/logout, empty-key boot
+#        probes get 200 instead of 401), default port 18080, no-store statics.
+# Check the RUNNING server with: curl -si http://HOST:PORT/api/server/c2-hints
+# -> the Server header shows the version; a 401 there means an old process.
+VERSION = "1.1.0"
 START_TIME = time.time()
 
 # ── Small helpers ────────────────────────────────────────────────────────────
@@ -1016,8 +1020,11 @@ class MockHandler(BaseHTTPRequestHandler):
 
     # ── plumbing ─────────────────────────────────────────────────────────
     def log_message(self, fmt, *args):
-        sys.stdout.write("  [%s] %s\n" % (datetime.now().strftime("%H:%M:%S"),
-                                          fmt % args))
+        # Access log is opt-in (-v / RCM_MOCK_VERBOSE=1): the panel polls
+        # /api/hosts every 2s, so per-request lines drown the console.
+        if getattr(self.server, "verbose", False):
+            sys.stdout.write("  [%s] %s\n" % (datetime.now().strftime("%H:%M:%S"),
+                                              fmt % args))
 
     def _cors_origin(self):
         origin = self.headers.get("Origin")
@@ -1105,6 +1112,16 @@ class MockHandler(BaseHTTPRequestHandler):
             if protected:
                 op = self._operator()
                 if not op:
+                    # The panel fires its boot probes (see _BOOT_PROBES) at
+                    # EVERY page load - even on the login screen - and answers
+                    # a 401 with Auth.logout() + location.reload(), which makes
+                    # the login page reload-loop forever. An EMPTY key means
+                    # "nobody has logged in yet" (a stale key is non-empty and
+                    # still gets a real 401 -> one logout -> fresh login), so
+                    # serve those probes an empty list and keep the page put.
+                    if not self.headers.get("X-API-KEY") and path in _BOOT_PROBES:
+                        self._json(200, _BOOT_PROBES[path])
+                        return
                     self._send(401)  # empty body, like the real middleware
                     return
             else:
@@ -1114,7 +1131,7 @@ class MockHandler(BaseHTTPRequestHandler):
             except BrokenPipeError:
                 pass
             except Exception as exc:  # never leave the panel hanging
-                self.log_message("handler error: %r", exc)
+                sys.stderr.write("  [!] handler error: %r\n" % (exc,))  # always shown
                 try:
                     self._err(500, f"mock internal error: {exc}")
                 except Exception:
@@ -1127,6 +1144,17 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(404, "File not found", "text/plain; charset=utf-8")
 
 # ── Route table ──────────────────────────────────────────────────────────────
+# Endpoints the panel's boot sequence polls BEFORE login (TaskManager.init
+# fires modules+audit+history, LootBrowser.init fires loot; builder's
+# c2-hints is fully public above). Each empty-key probe gets a shape-correct
+# empty answer so the login screen renders "nothing yet" instead of looping.
+_BOOT_PROBES = {
+    "/api/modules": [],
+    "/api/audit":   [],
+    "/api/history": [],
+    "/api/loot":    {"entries": []},
+}
+
 ROUTES = []
 def route(method, pattern, protected=True):
     def deco(fn):
@@ -1150,11 +1178,37 @@ def _serve_panel_file(h, rel):
         return
     with open(full, "rb") as fh:
         data = fh.read()
-    h._send(200, data, mime_for(rel))
+    # no-store: a stale cached panel (left behind by whatever ran on this
+    # origin before) breaks pages silently - always re-fetch from disk.
+    h._send(200, data, mime_for(rel),
+            extra={"Cache-Control": "no-store, must-revalidate"})
+
+
+# NOTE on /pwa-service-worker.js (deliberately NOT routed -> honest 404):
+# this repo ships no service worker, but a worker registered by ANY app
+# previously served on the same origin (the real server, an older panel,
+# an unrelated dev tool) stays alive in the browser and keeps polling its
+# script URL. While it 404s it stays harmless; answering 200 can make it
+# force-reload the tab in a loop. If a stale worker haunts an origin, run
+# the mock on a DIFFERENT PORT - a new origin starts completely clean.
+# (Default port below is 18080 instead of the real server's 8080 exactly
+# so a worker left behind by the real server never interferes.)
 
 @route("GET", r"/", protected=False)
 def r_index(h, op, q):
-    _serve_panel_file(h, "index.html")
+    # index.html hardcodes the login form's Server URL to http://127.0.0.1:8080
+    # (the real server's port). Rewrite that one attribute to the address the
+    # panel was actually reached on, so first-time login just works no matter
+    # which port the mock is running on. Panel files on disk stay untouched.
+    path = os.path.join(h.server.state.repo_root, "panel", "index.html")
+    with open(path, "rb") as fh:
+        data = fh.read()
+    host = h.headers.get("Host", "")
+    if re.fullmatch(r"[A-Za-z0-9.\-]+(:\d+)?", host or ""):
+        data = data.replace(b'value="http://127.0.0.1:8080"',
+                            b'value="http://' + host.encode() + b'"', 1)
+    h._send(200, data, mime_for("index.html"),
+            extra={"Cache-Control": "no-store, must-revalidate"})
 
 @route("GET", r"/panel/(.+)", protected=False)
 def r_panel_static(h, op, q, tail):
@@ -1185,13 +1239,16 @@ def r_login(h, op, q):
 def r_me(h, op, q):
     h._json(200, {"id": op["id"], "username": op["username"], "role": op["role"]})
 
-@route("POST", r"/api/auth/logout")
+# Logout is public like on the real server (routes/mod.rs): signing out with
+# an already-expired key must still succeed so the panel can recover.
+@route("POST", r"/api/auth/logout", protected=False)
 def r_logout(h, op, q):
     st = h.server.state
     with st.lock:
         key = h.headers.get("X-API-KEY", "")
         st.api_keys.pop(key, None)
-        st.log_audit(op["username"], "logout")
+        if op:  # unauthenticated logout attempts are fine - nothing to audit
+            st.log_audit(op["username"], "logout")
     h._json(200, {"status": "logged out"})
 
 @route("POST", r"/api/auth/change_password")
@@ -1406,7 +1463,13 @@ def r_recon_del(h, op, q, rid):
 
 # ══ Listeners ════════════════════════════════════════════════════════════════
 
-@route("GET", r"/api/server/c2-hints")
+# c2-hints is public in the MOCK (the real server protects it). The panel's
+# BuilderManager.init() fires this probe at EVERY page load, unguarded, and
+# treats a 401 as "session expired" -> Auth.logout() -> location.reload().
+# Against any reachable protected server that makes the login page
+# reload-loop forever and nobody can sign in. The hints are fake anyway,
+# so the mock answers 200 pre-auth and the login page stays put.
+@route("GET", r"/api/server/c2-hints", protected=False)
 def r_c2_hints(h, op, q):
     h._json(200, {"ips": ["127.0.0.1", "10.10.0.5", "192.168.1.20"]})
 
@@ -2551,10 +2614,14 @@ def main():
     ap = argparse.ArgumentParser(
         description="RCM mock C2 server - faux APIs for panel UX/UI testing")
     ap.add_argument("--port", "-p", type=int,
-                    default=int(os.environ.get("RCM_MOCK_PORT", "8080")),
-                    help="listen port (default: 8080, same as the real server)")
+                    default=int(os.environ.get("RCM_MOCK_PORT", "18080")),
+                    help="listen port (default: 18080; the real server uses 8080 - we avoid it "
+                            "so a worker left on that origin cannot interfere)")
     ap.add_argument("--host", default=os.environ.get("RCM_MOCK_HOST", "127.0.0.1"),
                     help="bind address (default: 127.0.0.1)")
+    ap.add_argument("--verbose", "-v", action="store_true",
+                    default=os.environ.get("RCM_MOCK_VERBOSE", "") == "1",
+                    help="log every HTTP request (default: quiet console)")
     args = ap.parse_args()
 
     # The panel is served from ./panel relative to the repository root, which
@@ -2567,17 +2634,22 @@ def main():
 
     state = State(repo_root)
     server = MockHTTPServer((args.host, args.port), MockHandler, state)
+    server.verbose = args.verbose
 
     print(BANNER)
     print(f"  Mock C2 server v{VERSION} - faux data, no real agents")
     print(f"  Panel:    http://{args.host}:{args.port}/")
     print(f"  API base: http://{args.host}:{args.port}")
     print()
+    print("  If the panel ever looks stale, blank, or reload-loops, a leftover")
+    print("  service worker owns this origin - just restart on another port (-p).")
     print("  Demo logins:   admin / admin      (admin)")
     print("                 operator / operator (operator)")
     print("                 viewer / viewer     (viewer)")
     print()
     print("  A demo session will check in ~45s after startup. Ctrl+C to stop.")
+    if not args.verbose:
+        print("  Request log hidden - re-run with -v to see HTTP traffic.")
     print()
     try:
         server.serve_forever()
