@@ -6,7 +6,7 @@ A modular command-and-control framework written in Rust, built for authorized re
 ![Tests](https://img.shields.io/badge/tests-1370%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-<img width="2882" height="1910" alt="image" src="https://github.com/user-attachments/assets/9e9f5f1e-b5ea-4d75-b637-9367c78cc8c3" />
+<img width="1914" height="989" alt="image" src="https://github.com/user-attachments/assets/3abf70b0-948f-43ff-a3c3-0634f08e8684" />
 
 
 ## Features
