@@ -315,22 +315,35 @@ window.UI = {
     // HWID and evasion are hidden by default. Settings persist in
     // localStorage (rcm-sessions-cols).
 
-    _sessionCols: { flag: true, maskIp: false, os: true, scripts: true, hwid: false, evasion: false },
+    _sessionCols: { flag: true, maskIp: false, os: true, scripts: true, hwid: false,
+                    evasion: false, flagFallback: '' },
     _sessionsMenuBound: false,
-    _ipGeo: null,   // ip -> country code ('' = unresolved/private)
+    // ip -> { cc: country code ('' = unresolved), t: timestamp, priv?: true }.
+    // Successful lookups stick; failures are retried after GEO_FAIL_TTL
+    // (private ranges never retry). Legacy string values are migrated.
+    _ipGeo: null,
+    _GEO_FAIL_TTL: 3600 * 1000,
 
     _loadSessionCols() {
         try {
             const s = JSON.parse(localStorage.getItem('rcm-sessions-cols') || 'null');
             if (s && typeof s === 'object') {
                 Object.keys(this._sessionCols).forEach(k => {
-                    if (typeof s[k] === 'boolean') this._sessionCols[k] = s[k];
+                    if (typeof s[k] === typeof this._sessionCols[k]) this._sessionCols[k] = s[k];
                 });
             }
         } catch (_) { /* keep defaults */ }
         try {
             this._ipGeo = JSON.parse(localStorage.getItem('rcm-ip-geo') || '{}') || {};
         } catch (_) { this._ipGeo = {}; }
+        // Migrate legacy { ip: 'US' | '' } entries to { ip: {cc, t} }.
+        Object.keys(this._ipGeo).forEach(ip => {
+            if (typeof this._ipGeo[ip] === 'string') {
+                this._ipGeo[ip] = this._ipGeo[ip]
+                    ? { cc: this._ipGeo[ip], t: 0 }
+                    : { cc: '', t: 0 };
+            }
+        });
     },
 
     _saveSessionCols() {
@@ -389,6 +402,15 @@ window.UI = {
                     this._applySessionCols();
                 });
             });
+            const fb = document.getElementById('sessions-flag-fallback');
+            if (fb) {
+                fb.value = this._sessionCols.flagFallback || '';
+                fb.addEventListener('change', () => {
+                    this._sessionCols.flagFallback = fb.value;
+                    this._saveSessionCols();
+                    this._applySessionCols();
+                });
+            }
         }
         this._applySessionCols();
     },
@@ -418,47 +440,102 @@ window.UI = {
         return p.map((_, i) => i === p.length - 1 ? p[i] : '***').join('.');
     },
 
+    _flagImg(cc, isFallback) {
+        const style = 'vertical-align:-2px;margin-right:6px;border-radius:2px;' +
+            (isFallback ? 'border:1px dashed var(--text-muted);' : '');
+        return `<img src="https://flagcdn.com/w20/${escHtml(cc.toLowerCase())}.png" ` +
+            `width="16" alt="${escHtml(cc)}" ` +
+            `title="${isFallback ? 'Fallback flag - country lookup failed for this IP' : escHtml(cc)}" ` +
+            (isFallback ? 'class="flag-fallback" ' : '') +
+            `style="${style}">`;
+    },
+
     _ipHtml(ip) {
         const cols = this._sessionCols;
         const display = cols.maskIp ? this._maskIp(ip) : (ip || '');
         if (!cols.flag) return escHtml(display);
-        const cc = this._ipGeo?.[ip];
-        const img = cc
-            ? `<img src="https://flagcdn.com/w20/${escHtml(cc.toLowerCase())}.png" ` +
-              `width="16" alt="${escHtml(cc)}" title="${escHtml(cc)}" ` +
-              `style="vertical-align:-2px;margin-right:6px;border-radius:2px;">`
-            : `<span class="ip-flag-pending" data-ip="${escHtml(ip || '')}" style="margin-right:6px;"></span>`;
-        return img + escHtml(display);
+        const entry = this._ipGeo?.[ip];
+        if (entry && entry.cc) return this._flagImg(entry.cc, false) + escHtml(display);
+        // Auto-lookup failed (or still pending): fall back to the configured
+        // flag so unresolved IPs still show something meaningful.
+        if (cols.flagFallback) return this._flagImg(cols.flagFallback, true) + escHtml(display);
+        if (entry) return escHtml(display);   // known-unresolved, no fallback
+        return `<span class="ip-flag-pending" data-ip="${escHtml(ip || '')}" style="margin-right:6px;"></span>` +
+               escHtml(display);
     },
 
-    // Fill in a flag image once the country code is known. Resolution is
-    // best-effort: private ranges and lookup failures simply show no flag.
+    // True when we already know the answer (or a fresh failure) and don't
+    // need to hit the lookup services again.
+    _ipKnown(ip) {
+        const e = this._ipGeo?.[ip];
+        if (!e) return false;
+        if (e.cc || e.priv) return true;
+        return Date.now() - e.t < this._GEO_FAIL_TTL;
+    },
+
+    // Fill in the country code once known. Resolution chains through
+    // multiple free services and is best-effort: private ranges never
+    // resolve, transient failures retry after GEO_FAIL_TTL, and the
+    // configured fallback flag covers the rest.
     _loadFlag(ipEl, ip) {
-        if (!ip || this._ipGeo?.[ip] !== undefined) return;
+        if (!ip || this._ipKnown(ip)) return;
         if (/^(10\.|127\.|0\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fe80)/.test(ip)) {
-            this._ipGeo[ip] = '';
+            this._ipGeo[ip] = { cc: '', t: Date.now(), priv: true };
             this._saveIpGeo();
             return;
         }
-        fetch(`https://ipapi.co/${encodeURIComponent(ip)}/country_code/`)
-            .then(r => r.ok ? r.text() : '')
-            .then(cc => {
-                cc = (cc || '').trim().toUpperCase();
-                this._ipGeo[ip] = /^[A-Z]{2}$/.test(cc) ? cc : '';
-                this._saveIpGeo();
-                if (this._ipGeo[ip]) {
-                    document.querySelectorAll(`.ip-flag-pending[data-ip="${CSS.escape(ip)}"]`)
-                        .forEach(s => {
-                            const img = document.createElement('img');
-                            img.src = `https://flagcdn.com/w20/${this._ipGeo[ip].toLowerCase()}.png`;
-                            img.width = 16;
-                            img.alt = img.title = this._ipGeo[ip];
-                            img.style.cssText = 'vertical-align:-2px;margin-right:6px;border-radius:2px;';
-                            s.replaceWith(img);
-                        });
-                }
-            })
-            .catch(() => { this._ipGeo[ip] = ''; this._saveIpGeo(); });
+        this._resolveCc(ip).then(cc => {
+            this._ipGeo[ip] = { cc, t: Date.now() };
+            this._saveIpGeo();
+            if (cc) {
+                document.querySelectorAll(`.ip-flag-pending[data-ip="${CSS.escape(ip)}"]`)
+                    .forEach(s => s.replaceWith(this._flagImgEl(cc)));
+            } else {
+                // Lookup definitively failed: swap the pending spinner for the
+                // fallback flag if one is configured.
+                const fb = this._sessionCols.flagFallback;
+                if (fb) document.querySelectorAll(`.ip-flag-pending[data-ip="${CSS.escape(ip)}"]`)
+                    .forEach(s => s.replaceWith(this._flagImgEl(fb, true)));
+            }
+        });
+    },
+
+    _flagImgEl(cc, isFallback) {
+        const img = document.createElement('img');
+        img.src = `https://flagcdn.com/w20/${cc.toLowerCase()}.png`;
+        img.width = 16;
+        img.alt = cc;
+        img.title = isFallback ? 'Fallback flag - country lookup failed for this IP' : cc;
+        if (isFallback) img.className = 'flag-fallback';
+        img.style.cssText = 'vertical-align:-2px;margin-right:6px;border-radius:2px;' +
+            (isFallback ? 'border:1px dashed var(--text-muted);' : '');
+        return img;
+    },
+
+    // Try each resolver in order; '' when every service fails or the IP is
+    // not in their databases (e.g. reserved documentation ranges).
+    async _resolveCc(ip) {
+        const resolvers = [
+            async ip => {
+                const r = await fetch(`https://ipapi.co/${encodeURIComponent(ip)}/country_code/`);
+                if (!r.ok) throw new Error('ipapi ' + r.status);
+                const cc = (await r.text()).trim().toUpperCase();
+                if (!/^[A-Z]{2}$/.test(cc)) throw new Error('ipapi bad cc');
+                return cc;
+            },
+            async ip => {
+                const r = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`);
+                if (!r.ok) throw new Error('ipwho ' + r.status);
+                const d = await r.json();
+                const cc = (d.country_code || '').toUpperCase();
+                if (d.success === false || !/^[A-Z]{2}$/.test(cc)) throw new Error('ipwho bad cc');
+                return cc;
+            },
+        ];
+        for (const fn of resolvers) {
+            try { return await fn(ip); } catch (_) { /* try next */ }
+        }
+        return '';
     },
 };
 
