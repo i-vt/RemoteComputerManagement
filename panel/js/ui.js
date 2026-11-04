@@ -202,6 +202,7 @@ window.UI = {
         const tbody = document.getElementById('hosts-table');
         if (!tbody) return;
         this.ensureTableHeader();
+        this._initSessionsMenu();
 
         const currentIds = new Set(hosts.map(h => h.id));
         Array.from(tbody.children).forEach(row => {
@@ -219,10 +220,10 @@ window.UI = {
                     <td class="p-4 font-mono text-xs text-gray-500">#${h.id}</td>
                     <td class="p-4 font-bold text-white host-name"></td>
                     <td class="p-4 text-gray-300 font-mono text-sm host-ip"></td>
-                    <td class="p-4 host-os-cell"></td>
-                    <td class="p-4 font-mono text-xs text-gray-500 truncate max-w-[100px] host-hwid"></td>
-                    <td class="p-4 host-modules"></td>
-                    <td class="p-4 host-evasion"></td>
+                    <td class="p-4 host-os-cell col-os"></td>
+                    <td class="p-4 font-mono text-xs text-gray-500 truncate max-w-[100px] host-hwid col-hwid"></td>
+                    <td class="p-4 host-modules col-scripts"></td>
+                    <td class="p-4 host-evasion col-evasion"></td>
                     <td class="p-4 text-right host-actions"></td>`;
                 tbody.appendChild(row);
                 // Hydrate badge state from command history once per new row.
@@ -242,7 +243,9 @@ window.UI = {
             nameEl.innerHTML = `${safe} <span class="text-xs font-normal ${staleClass}">${seenText} ago</span>${(hibHtml || tagsHtml) ? '<br>'+hibHtml+tagsHtml : ''}`;
 
             const ipEl = row.querySelector('.host-ip');
-            if (ipEl.innerText !== h.ip) ipEl.innerText = h.ip;
+            const ipHtml = this._ipHtml(h.ip);
+            if (ipEl.innerHTML !== ipHtml) ipEl.innerHTML = ipHtml;
+            if (this._sessionCols.flag) this._loadFlag(ipEl, h.ip);
 
             const hwidEl = row.querySelector('.host-hwid');
             if (hwidEl.innerText !== h.computer_id) hwidEl.innerText = h.computer_id;
@@ -290,18 +293,173 @@ window.UI = {
 
     ensureTableHeader() {
         const theadRow = document.querySelector('#hosts-table')?.parentElement?.querySelector('thead tr');
-        if (theadRow && !theadRow.innerHTML.includes('Evasion')) {
+        if (theadRow && !theadRow.innerHTML.includes('col-evasion')) {
             theadRow.innerHTML = `
                 <th class="p-4">ID</th>
                 <th class="p-4">Hostname</th>
                 <th class="p-4">IP Address</th>
-                <th class="p-4">OS</th>
-                <th class="p-4">HWID</th>
-                <th class="p-4">Scripts</th>
-                <th class="p-4">Evasion</th>
+                <th class="p-4 col-os">OS</th>
+                <th class="p-4 col-hwid">HWID</th>
+                <th class="p-4 col-scripts">Scripts</th>
+                <th class="p-4 col-evasion">Evasion</th>
                 <th class="p-4 text-right">Actions</th>`;
         }
-    }
+    },
+
+    // ── Sessions table: column & IP display config ───────────────────
+    //
+    // The 3-dots menu in the Sessions header toggles which columns are
+    // visible and how the IP is rendered. Column visibility is pure CSS
+    // (hide-col-* classes on #page-control) so the 2s polling re-render
+    // never fights it; IP masking/flags are applied when the cell renders.
+    // HWID and evasion are hidden by default. Settings persist in
+    // localStorage (rcm-sessions-cols).
+
+    _sessionCols: { flag: true, maskIp: false, os: true, scripts: true, hwid: false, evasion: false },
+    _sessionsMenuBound: false,
+    _ipGeo: null,   // ip -> country code ('' = unresolved/private)
+
+    _loadSessionCols() {
+        try {
+            const s = JSON.parse(localStorage.getItem('rcm-sessions-cols') || 'null');
+            if (s && typeof s === 'object') {
+                Object.keys(this._sessionCols).forEach(k => {
+                    if (typeof s[k] === 'boolean') this._sessionCols[k] = s[k];
+                });
+            }
+        } catch (_) { /* keep defaults */ }
+        try {
+            this._ipGeo = JSON.parse(localStorage.getItem('rcm-ip-geo') || '{}') || {};
+        } catch (_) { this._ipGeo = {}; }
+    },
+
+    _saveSessionCols() {
+        try {
+            localStorage.setItem('rcm-sessions-cols', JSON.stringify(this._sessionCols));
+        } catch (_) { /* private mode */ }
+    },
+
+    _saveIpGeo() {
+        try {
+            localStorage.setItem('rcm-ip-geo', JSON.stringify(this._ipGeo));
+        } catch (_) { /* private mode */ }
+    },
+
+    // Lazy-bound on the first host render so the static markup is in place.
+    _initSessionsMenu() {
+        if (this._sessionsMenuBound) return;
+        this._sessionsMenuBound = true;
+        this._loadSessionCols();
+
+        const wrap = document.getElementById('sessions-cols-menu-wrap');
+        const btn  = document.getElementById('sessions-cols-menu-btn');
+        const menu = document.getElementById('sessions-cols-menu');
+        if (wrap && btn && menu) {
+            // Click "pins" the menu open (survives hover-off); clicking the
+            // dots again unpins and closes it. Without a pin, hover shows it
+            // and hover-off hides it - the hide is deferred briefly (hover
+            // intent) and cancelled the moment the pointer reaches the
+            // dropdown, so fast diagonal mouse paths can't snap it shut.
+            let pinned = false;
+            let hideTimer = null;
+            const show = () => menu.classList.remove('hidden');
+            const hide = () => menu.classList.add('hidden');
+            const cancelHide = () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } };
+            const scheduleHide = () => {
+                cancelHide();
+                hideTimer = setTimeout(() => { if (!pinned) hide(); }, 280);
+            };
+            wrap.addEventListener('mouseenter', () => { cancelHide(); show(); });
+            wrap.addEventListener('mouseleave', scheduleHide);
+            menu.addEventListener('mouseenter', cancelHide);
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                cancelHide();
+                if (pinned) { pinned = false; hide(); }
+                else        { pinned = true;  show(); }
+            });
+            document.addEventListener('click', (e) => {
+                if (!wrap.contains(e.target)) { pinned = false; cancelHide(); hide(); }
+            });
+            menu.querySelectorAll('input[data-col]').forEach(cb => {
+                cb.checked = this._sessionCols[cb.dataset.col];
+                cb.addEventListener('change', () => {
+                    this._sessionCols[cb.dataset.col] = cb.checked;
+                    this._saveSessionCols();
+                    this._applySessionCols();
+                });
+            });
+        }
+        this._applySessionCols();
+    },
+
+    _applySessionCols() {
+        const page = document.getElementById('page-control');
+        if (!page) return;
+        ['os', 'scripts', 'hwid', 'evasion'].forEach(k => {
+            page.classList.toggle('hide-col-' + k, !this._sessionCols[k]);
+        });
+        // Force immediate re-render so IP mask/flag changes show up without
+        // waiting for the next poll tick.
+        const tbody = document.getElementById('hosts-table');
+        if (tbody) tbody.innerHTML = '';
+        if (window.API?.refreshHosts) window.API.refreshHosts();
+    },
+
+    // ***.**.*.42 style masking - keeps only the last group of digits.
+    _maskIp(ip) {
+        if (!ip) return ip;
+        if (ip.includes(':')) {                       // IPv6: keep last group
+            const g = ip.split(':');
+            return g.map((_, i) => i === g.length - 1 ? g[i] : '****').join(':');
+        }
+        const p = ip.split('.');
+        if (p.length < 2) return ip;
+        return p.map((_, i) => i === p.length - 1 ? p[i] : '***').join('.');
+    },
+
+    _ipHtml(ip) {
+        const cols = this._sessionCols;
+        const display = cols.maskIp ? this._maskIp(ip) : (ip || '');
+        if (!cols.flag) return escHtml(display);
+        const cc = this._ipGeo?.[ip];
+        const img = cc
+            ? `<img src="https://flagcdn.com/w20/${escHtml(cc.toLowerCase())}.png" ` +
+              `width="16" alt="${escHtml(cc)}" title="${escHtml(cc)}" ` +
+              `style="vertical-align:-2px;margin-right:6px;border-radius:2px;">`
+            : `<span class="ip-flag-pending" data-ip="${escHtml(ip || '')}" style="margin-right:6px;"></span>`;
+        return img + escHtml(display);
+    },
+
+    // Fill in a flag image once the country code is known. Resolution is
+    // best-effort: private ranges and lookup failures simply show no flag.
+    _loadFlag(ipEl, ip) {
+        if (!ip || this._ipGeo?.[ip] !== undefined) return;
+        if (/^(10\.|127\.|0\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fe80)/.test(ip)) {
+            this._ipGeo[ip] = '';
+            this._saveIpGeo();
+            return;
+        }
+        fetch(`https://ipapi.co/${encodeURIComponent(ip)}/country_code/`)
+            .then(r => r.ok ? r.text() : '')
+            .then(cc => {
+                cc = (cc || '').trim().toUpperCase();
+                this._ipGeo[ip] = /^[A-Z]{2}$/.test(cc) ? cc : '';
+                this._saveIpGeo();
+                if (this._ipGeo[ip]) {
+                    document.querySelectorAll(`.ip-flag-pending[data-ip="${CSS.escape(ip)}"]`)
+                        .forEach(s => {
+                            const img = document.createElement('img');
+                            img.src = `https://flagcdn.com/w20/${this._ipGeo[ip].toLowerCase()}.png`;
+                            img.width = 16;
+                            img.alt = img.title = this._ipGeo[ip];
+                            img.style.cssText = 'vertical-align:-2px;margin-right:6px;border-radius:2px;';
+                            s.replaceWith(img);
+                        });
+                }
+            })
+            .catch(() => { this._ipGeo[ip] = ''; this._saveIpGeo(); });
+    },
 };
 
 // ── Evasion Status Badges ──────────────────────────────────────────────

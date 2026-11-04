@@ -15,7 +15,7 @@ window.Router = {
         if (target) {
             target.classList.remove('hidden');
             // Restore flex-display for pages that need it
-            if (['page-network', 'page-files', 'page-loot', 'page-users'].includes('page-' + pageId)) {
+            if (['page-network', 'page-files', 'page-loot', 'page-users', 'page-extensions'].includes('page-' + pageId)) {
                 target.style.display = 'flex';
             } else {
                 target.style.display = '';

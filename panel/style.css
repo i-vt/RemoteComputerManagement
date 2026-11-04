@@ -794,6 +794,158 @@ body {
 .log-pane .log-info    { color: #7dd3fc; }
 .log-pane .log-default { color: #94a3b8; }
 
+/* ── Builder: log pane ─────────────────────────────────────────────────── */
+/* Fills the Build Log card top to bottom (the card stretches to the form
+   card's height in the two-column grid) and scrolls internally. The
+   min-height only acts as a floor when the card itself is short, e.g. the
+   single-column mobile layout. */
+#builder-log {
+  flex: 1 1 auto;
+  min-height: 260px;
+  /* The pane's size must ignore its content, otherwise a long build log
+     grows the card and the whole grid row instead of scrolling. */
+  contain: size;
+}
+
+/* ── Builder: simplified / advanced mode switch ────────────────────────── */
+/* Simplified (the default) hides every collapsible group - all optional
+   configuration only exists in Advanced mode. */
+#page-builder:not(.mode-advanced) .collapse-section,
+#page-builder:not(.mode-advanced) .artifact-sub-collapse {
+  display: none !important;
+}
+.builder-mode-btn {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--text-muted);
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .12s, color .12s;
+}
+.builder-mode-btn + .builder-mode-btn { border-left: 1px solid var(--border); }
+.builder-mode-btn.active { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ── Builder: log options dropdown ─────────────────────────────────────── */
+.log-menu-wrap { position: relative; }
+.log-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 200px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--r-md);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .5);
+  padding: 6px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Invisible bridge across the 6px gap between the trigger button and the
+   dropdown: without it, moving the mouse from the button into the menu
+   briefly leaves the hover zone and the menu snaps shut. */
+.log-dropdown::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 0;
+  right: 0;
+  height: 6px;
+}
+.log-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.log-dropdown-item:hover { background: var(--bg-hover); }
+.log-dropdown-item input[type="checkbox"] { accent-color: var(--accent); }
+
+/* Sessions page: column visibility toggles (3-dots menu) */
+#page-control.hide-col-os .col-os,
+#page-control.hide-col-scripts .col-scripts,
+#page-control.hide-col-hwid .col-hwid,
+#page-control.hide-col-evasion .col-evasion {
+  display: none !important;
+}
+
+/* ── Builder: custom tooltips ──────────────────────────────────────────── */
+/* builder.js turns title attributes inside the builder page into these
+   styled, fast tooltips (the native browser tooltip is suppressed while
+   hovering and restored on leave). */
+/* Clickable Started/Finished timestamps in the previous-builds table:
+   dotted underline hints they are interactive; click flips local <-> UTC. */
+.ts-toggle {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.ts-toggle:hover { color: var(--text-primary); }
+
+#builder-tip {
+  position: fixed;
+  max-width: 300px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--r-md);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .5);
+  padding: 8px 11px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  z-index: 200;
+  pointer-events: none;
+  display: none;
+}
+
+/* ── Builder: collapsible sections ─────────────────────────────────────── */
+.collapse-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.collapse-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  padding: 8px 10px;
+  margin: 0 -10px;
+  border-radius: var(--r-md, 8px);
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  transition: background .12s;
+}
+.collapse-header:hover { background: var(--bg-hover); }
+.collapse-chevron {
+  font-size: 9px;
+  color: var(--text-muted);
+  transition: transform .15s;
+}
+.collapse-header.open .collapse-chevron { transform: rotate(180deg); }
+.collapse-body { padding-top: 12px; }
+
 /* ── Login Modal ─────────────────────────────────────────────────────── */
 #login-modal {
   position: fixed;

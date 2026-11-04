@@ -19,12 +19,19 @@ window.ExtManager = {
     _lists:   { extensions: [], modules: [] },
     _current: null,
 
+    // Auto-save: off by default; when on, unsaved changes are PUT on a timer.
+    // Settings persist in localStorage (rcm-ext-autosave).
+    _autosave: { on: false, sec: 10, _timer: null, _dirty: false, _saving: false,
+                 _last: '', _lastName: '', _failNotified: false, _menuBound: false },
+
     // ── Init ──────────────────────────────────────────────────────────────────
 
     async init() {
         await this.loadList();
         this._renderEditor(null, '');
         this._syncDeployUI();
+        this._loadAutosaveSettings();
+        this._bindAutosaveMenu();
     },
 
     // ── Kind switching ────────────────────────────────────────────────────────
@@ -121,6 +128,10 @@ window.ExtManager = {
             });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             this._current = name;
+            this._autosave._dirty    = false;
+            this._autosave._last     = content;
+            this._autosave._lastName = name;
+            this._autosave._failNotified = false;
             await this.loadList();
             this._highlightList(name);
             const dir = this._kind === 'modules' ? 'modules' : 'extensions';
@@ -192,6 +203,167 @@ window.ExtManager = {
             ? hosts.map(h => `<option value="${h.id}">#${h.id} ${h.hostname || ''}</option>`).join('')
             : '<option value="">No active sessions</option>';
         if (prev) sel.value = prev;
+    },
+
+    // ── Auto-save ─────────────────────────────────────────────────────────────
+    //
+    // Off by default. When enabled, a timer fires every `_autosave.sec`
+    // seconds and PUTs the current buffer - but only if something actually
+    // changed since the last save/load. Settings (on/off + interval) persist
+    // in localStorage; the controls live in the 3-dots menu in the editor
+    // toolbar, which opens on hover and on click.
+
+    _loadAutosaveSettings() {
+        try {
+            const s = JSON.parse(localStorage.getItem('rcm-ext-autosave') || 'null');
+            if (s && typeof s === 'object') {
+                if (typeof s.on === 'boolean') this._autosave.on = s.on;
+                if (Number.isFinite(s.sec)) {
+                    this._autosave.sec = Math.min(300, Math.max(2, Math.round(s.sec)));
+                }
+            }
+        } catch (_) { /* corrupt entry - keep defaults */ }
+    },
+
+    _saveAutosaveSettings() {
+        try {
+            localStorage.setItem('rcm-ext-autosave',
+                JSON.stringify({ on: this._autosave.on, sec: this._autosave.sec }));
+        } catch (_) { /* private mode - session-only settings */ }
+    },
+
+    // Hover opens the menu, hover-off closes it; clicking the 3 dots toggles
+    // it; a click anywhere outside also closes it (touch / keyboard paths).
+    _bindAutosaveMenu() {
+        if (this._autosave._menuBound) return;
+        const wrap = document.getElementById('ext-autosave-menu-wrap');
+        const btn  = document.getElementById('ext-autosave-menu-btn');
+        const menu = document.getElementById('ext-autosave-menu');
+        if (!wrap || !btn || !menu) return;
+        this._autosave._menuBound = true;
+
+        const show = () => menu.classList.remove('hidden');
+        const hide = () => menu.classList.add('hidden');
+
+        // Click "pins" the menu open (survives hover-off); clicking the dots
+        // again unpins and closes it. Without a pin, hover shows it and
+        // hover-off hides it - the hide is deferred briefly (hover intent)
+        // and cancelled the moment the pointer reaches the dropdown, so
+        // fast diagonal mouse paths can't snap it shut.
+        let pinned = false;
+        let hideTimer = null;
+        const cancelHide = () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } };
+        const scheduleHide = () => {
+            cancelHide();
+            hideTimer = setTimeout(() => { if (!pinned) hide(); }, 280);
+        };
+        wrap.addEventListener('mouseenter', () => { cancelHide(); show(); });
+        wrap.addEventListener('mouseleave', scheduleHide);
+        menu.addEventListener('mouseenter', cancelHide);
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            cancelHide();
+            if (pinned) { pinned = false; hide(); }
+            else        { pinned = true;  show(); }
+        });
+        document.addEventListener('click', (e) => {
+            if (!wrap.contains(e.target)) { pinned = false; cancelHide(); hide(); }
+        });
+
+        // Dirty tracking: any edit marks the buffer unsaved.
+        const markDirty = () => { this._autosave._dirty = true; };
+        document.getElementById('ext-code-editor')?.addEventListener('input', markDirty);
+        document.getElementById('ext-name-input')?.addEventListener('input', markDirty);
+
+        const tgl = document.getElementById('ext-autosave-toggle');
+        if (tgl) {
+            tgl.checked = this._autosave.on;
+            tgl.addEventListener('change', () => this._onAutosaveToggle(tgl));
+        }
+        const ivl = document.getElementById('ext-autosave-interval');
+        if (ivl) {
+            ivl.value = this._autosave.sec;
+            ivl.addEventListener('change', () => this._onAutosaveInterval(ivl));
+        }
+
+        // Restore an enabled session (e.g. page reload with autosave on).
+        if (this._autosave.on) this._autosaveStart();
+    },
+
+    _onAutosaveToggle(cb) {
+        this._autosave.on = !!cb.checked;
+        this._saveAutosaveSettings();
+        if (this._autosave.on) {
+            this._autosave._dirty = true;   // first tick syncs the current buffer
+            this._autosaveStart();
+            window.Notify?.toast(`Auto-save on - every ${this._autosave.sec}s`, 'info');
+        } else {
+            this._autosaveStop();
+            window.Notify?.toast('Auto-save off.', 'info');
+        }
+    },
+
+    _onAutosaveInterval(inp) {
+        let v = parseInt(inp.value, 10);
+        if (!Number.isFinite(v)) v = 10;
+        v = Math.min(300, Math.max(2, v));
+        inp.value = v;
+        this._autosave.sec = v;
+        this._saveAutosaveSettings();
+        if (this._autosave.on) this._autosaveStart();   // restart at new cadence
+    },
+
+    _autosaveStart() {
+        this._autosaveStop();
+        this._autosave._timer =
+            setInterval(() => this._autosaveTick(), this._autosave.sec * 1000);
+    },
+
+    _autosaveStop() {
+        if (this._autosave._timer) {
+            clearInterval(this._autosave._timer);
+            this._autosave._timer = null;
+        }
+    },
+
+    _autosaveTick() {
+        const a = this._autosave;
+        if (!a.on || a._saving || !a._dirty) return;
+        const name    = document.getElementById('ext-name-input')?.value.trim() || '';
+        const content = document.getElementById('ext-code-editor')?.value ?? '';
+        if (name === a._lastName && content === a._last) { a._dirty = false; return; }
+        // Invalid/empty name: stay quiet and retry on the next tick once fixed.
+        if (!/^[a-zA-Z0-9_\-]+$/.test(name)) return;
+        this._autosaveSave(name, content);
+    },
+
+    async _autosaveSave(name, content) {
+        const a = this._autosave;
+        a._saving = true;
+        try {
+            const r = await fetch(this._fileEndpoint(this._kind, name), {
+                method: 'PUT', headers: this._hdr(),
+                body: JSON.stringify({ content }),
+            });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            this._current = name;
+            a._dirty = false;
+            a._last = content;
+            a._lastName = name;
+            a._failNotified = false;
+            await this.loadList();
+            this._highlightList(name);
+            const dir = this._kind === 'modules' ? 'modules' : 'extensions';
+            window.Notify?.toast(`Auto-saved ./${dir}/${name}.rhai`, 'success');
+        } catch (e) {
+            // One failure toast per outage, reset on the next successful save.
+            if (!a._failNotified) {
+                a._failNotified = true;
+                window.Notify?.toast(`Auto-save failed: ${e.message}`, 'error');
+            }
+        } finally {
+            a._saving = false;
+        }
     },
 
     // ── Exposed to other modules ──────────────────────────────────────────────
@@ -285,6 +457,11 @@ window.ExtManager = {
         if (nameEl)  nameEl.value = name ?? '';
         if (codeEl)  codeEl.value = content || (name ? '' : (this._kind === 'modules' ? modStub : extStub));
         if (titleEl) titleEl.textContent = name ? `${name}.rhai` : `New ${this._kind.slice(0, -1)}`;
+
+        // Fresh buffer: nothing unsaved, snapshot as the new baseline.
+        this._autosave._dirty    = false;
+        this._autosave._last     = codeEl ? codeEl.value : '';
+        this._autosave._lastName = name || '';
     },
 
     _esc(s) {

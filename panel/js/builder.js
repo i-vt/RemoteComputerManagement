@@ -39,88 +39,37 @@
         return el ? el.checked : false;
     }
 
-    // ── Log pane - scrollable ring-buffer with line numbers & filters ─
+    // ── Log pane - scrollable ring-buffer with line numbers ────────────
+    // Sizing lives in style.css (#builder-log): viewport-relative clamp
+    // plus a vertical resize handle. No fixed pixel heights here.
 
-    var _logLines   = [];   // { type, text, cls } - never exceeds MAX_LINES entries
-    var _logFilter  = 'all';
-    var _lineCounter = 0;   // monotonic; absolute line numbers never reset mid-build
+    var _logLines     = [];   // { text, cls } - never exceeds MAX_LINES entries
+    var _lineCounter  = 0;    // monotonic; absolute line numbers never reset mid-build
+    var _anchorBottom = true; // when true, new lines force-scroll the pane
 
-    var MAX_LINES = 50;     // hard cap; oldest row evicted when exceeded
-
-    var LOG_TYPE = {
-        'text-green-400':  'ok',
-        'text-red-400':    'error',
-        'text-yellow-400': 'warn',
-        'text-cyan-400':   'info',
-    };
+    var MAX_LINES = 50;      // hard cap; oldest row evicted when exceeded
 
     function logEl()    { return document.getElementById('builder-log'); }
     function logTable() { return document.getElementById('builder-log-table'); }
 
-    // Apply (or re-apply) scroll constraints to the log container.
-    // Called from both init() and clearLog() so the container is always
-    // properly sized whether or not a build has started yet.
-    function _applyScrollStyle() {
-        var el = logEl();
-        if (!el) return;
-        // flex:1 in the HTML lets the element grow with its flex parent,
-        // which makes the overflow never fire. Override to a fixed size.
-        el.style.flex        = 'none';
-        el.style.height      = '380px';
-        el.style.maxHeight   = '380px';
-        el.style.overflowY   = 'auto';
-        el.style.overflowX   = 'hidden';
-    }
-
     function clearLog() {
         _logLines    = [];
-        _logFilter   = 'all';
         _lineCounter = 0;
 
         var el = logEl();
         if (!el) return;
 
         el.style.padding = '0';
-        _applyScrollStyle();
         el.innerHTML = '<table id="builder-log-table" style="width:100%;border-collapse:collapse;table-layout:fixed;"></table>';
-
-        _updateFilterBtns();
-        _showFilters(false);
-    }
-
-    function _showFilters(show) {
-        var bar = document.getElementById('builder-log-filters');
-        if (bar) bar.style.display = show ? 'flex' : 'none';
-    }
-
-    function _updateFilterBtns() {
-        ['all','info','warn','ok'].forEach(function(k) {
-            var btn = document.getElementById('blf-' + k);
-            if (!btn) return;
-            var isActive = (k === _logFilter);
-            btn.style.background  = isActive ? 'var(--bg-hover)'    : '';
-            btn.style.color       = isActive ? 'var(--text-primary)' : '';
-            btn.style.borderColor = isActive ? 'var(--border-light)' : '';
-        });
-    }
-
-    function _isVisible(type) {
-        if (_logFilter === 'all')  return true;
-        if (_logFilter === 'info') return type === 'info' || type === 'dim';
-        if (_logFilter === 'warn') return type === 'warn';
-        if (_logFilter === 'ok')   return type === 'ok' || type === 'error';
-        return true;
     }
 
     function appendLog(text, cls) {
-        var type = LOG_TYPE[cls] || 'dim';
-
         // Assign an absolute line number before capping so numbers keep
         // climbing even as old rows are evicted from the front.
         _lineCounter++;
         var lineNum = _lineCounter;
 
-        _logLines.push({ type: type, text: text, cls: cls || 'text-gray-300' });
+        _logLines.push({ text: text, cls: cls || 'text-gray-300' });
 
         var tbl = logTable();
         if (!tbl) {
@@ -130,8 +79,6 @@
         }
 
         var tr = document.createElement('tr');
-        tr.dataset.ltype = type;
-        if (!_isVisible(type)) tr.style.display = 'none';
 
         // Line-number cell (narrow, right-aligned, non-selectable)
         var tdN = document.createElement('td');
@@ -166,34 +113,238 @@
         tbl.appendChild(tr);
 
         // ── Ring-buffer cap: evict the oldest row once we exceed MAX_LINES ──
-        // _logLines is trimmed first so _isVisible stays in sync with the DOM.
         if (_logLines.length > MAX_LINES) {
             _logLines.shift();
             var oldest = tbl.querySelector('tr');
             if (oldest) oldest.remove();
         }
 
-        // Show the filter toolbar as soon as the first line arrives
-        if (_logLines.length === 1) _showFilters(true);
-
-        // Auto-scroll to the latest line
+        // Auto-scroll to the latest line only while anchored to the bottom
         var el = logEl();
-        if (el) el.scrollTop = el.scrollHeight;
+        if (el && _anchorBottom) el.scrollTop = el.scrollHeight;
     }
 
-    function filterLog(f) {
-        _logFilter = f;
-        _updateFilterBtns();
+    // ── Log options menu (3-dot dropdown on the log card) ──────────────
 
-        var tbl = logTable();
-        if (tbl) {
-            tbl.querySelectorAll('tr').forEach(function(tr) {
-                tr.style.display = _isVisible(tr.dataset.ltype) ? '' : 'none';
-            });
+    function _closeLogMenuOnOutside(e) {
+        var menu = document.getElementById('builder-log-menu');
+        var btn  = document.getElementById('builder-log-menu-btn');
+        if (!menu || menu.classList.contains('hidden')) {
+            document.removeEventListener('click', _closeLogMenuOnOutside);
+            return;
         }
+        if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
+        menu.classList.add('hidden');
+        document.removeEventListener('click', _closeLogMenuOnOutside);
+    }
 
+    function toggleLogMenu(ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        var menu = document.getElementById('builder-log-menu');
+        if (!menu) return;
+        var opening = menu.classList.contains('hidden');
+        menu.classList.toggle('hidden');
+        if (opening) {
+            // Defer so the click that opened the menu doesn't close it again.
+            setTimeout(function () {
+                document.addEventListener('click', _closeLogMenuOnOutside);
+            }, 0);
+        } else {
+            document.removeEventListener('click', _closeLogMenuOnOutside);
+        }
+    }
+
+    function setLogAnchor(on) {
+        _anchorBottom = !!on;
         var el = logEl();
-        if (el) el.scrollTop = el.scrollHeight;
+        if (_anchorBottom && el) el.scrollTop = el.scrollHeight;
+    }
+
+    function copyLog() {
+        var text = _logLines.map(function (l) { return l.text; }).join('\n');
+        if (!text) {
+            if (window.Notify) window.Notify.toast('Log is empty.', 'info', 3000);
+            return;
+        }
+        copyText(text, 'Log copied to clipboard');
+    }
+
+    // ── Collapsible form sections ──────────────────────────────────────
+
+    function toggleSection(bodyId, hdr) {
+        var body = document.getElementById(bodyId);
+        if (!body) return;
+        body.classList.toggle('hidden');
+        if (hdr && hdr.classList) {
+            hdr.classList.toggle('open', !body.classList.contains('hidden'));
+        }
+    }
+
+    function openSection(bodyId) {
+        var body = document.getElementById(bodyId);
+        if (!body || !body.classList.contains('hidden')) return;
+        body.classList.remove('hidden');
+        var hdr = body.previousElementSibling;
+        if (hdr && hdr.classList) hdr.classList.add('open');
+    }
+
+    // ── Simplified / Advanced mode ─────────────────────────────────────
+    // Simplified (default, pure CSS - the page starts without the
+    // mode-advanced class) shows only the core build fields. Advanced
+    // reveals every collapsible group on top of that.
+
+    function setMode(mode) {
+        var advanced = mode === 'advanced';
+        var page = document.getElementById('page-builder');
+        if (page) page.classList.toggle('mode-advanced', advanced);
+        ['simplified', 'advanced'].forEach(function (m) {
+            var btn = document.getElementById('builder-mode-' + m);
+            if (btn) btn.classList.toggle('active', m === mode);
+        });
+    }
+
+    // ── Artifact randomizer ────────────────────────────────────────────
+    // The generator itself lives in js/builder/randomize.js (loaded
+    // before this file) and is exposed as window.ArtifactRandomizer.
+    // builder.js only wires the button up and reports a clear error if
+    // the module failed to load.
+
+    function randomizeArtifact() {
+        if (window.ArtifactRandomizer && typeof window.ArtifactRandomizer.randomize === 'function') {
+            window.ArtifactRandomizer.randomize();
+            return;
+        }
+        if (window.Notify) {
+            window.Notify.toast('Randomizer unavailable: js/builder/randomize.js not loaded.', 'error');
+        }
+    }
+
+    // ── Custom tooltips ────────────────────────────────────────────────
+    // Every element inside the builder page that carries a title
+    // attribute gets a styled tooltip (see #builder-tip in style.css).
+    // The native browser tooltip is suppressed while hovering - the
+    // title attribute is parked in data-tip-orig and restored on leave -
+    // so it still works as a fallback everywhere else.
+
+    var _tipBoxEl  = null;
+    var _tipTarget = null;
+
+    function tipBox() {
+        if (!_tipBoxEl) {
+            _tipBoxEl = document.createElement('div');
+            _tipBoxEl.id = 'builder-tip';
+            document.body.appendChild(_tipBoxEl);
+        }
+        return _tipBoxEl;
+    }
+
+    function showTip(target) {
+        var text = target.getAttribute('title');
+        if (!text) return;
+        target.setAttribute('data-tip-orig', text);
+        target.removeAttribute('title');
+        var box = tipBox();
+        box.textContent = text;
+        box.style.display = 'block';
+        var r  = target.getBoundingClientRect();
+        var bw = box.offsetWidth, bh = box.offsetHeight;
+        var left = r.left + (r.width - bw) / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
+        var top = r.bottom + 8;
+        if (top + bh > window.innerHeight - 8) top = r.top - bh - 8;
+        if (top < 8) top = r.bottom + 8;
+        box.style.left = left + 'px';
+        box.style.top  = top + 'px';
+    }
+
+    function hideTip(target) {
+        if (_tipBoxEl) _tipBoxEl.style.display = 'none';
+        if (target) {
+            var orig = target.getAttribute('data-tip-orig');
+            if (orig) {
+                target.setAttribute('title', orig);
+                target.removeAttribute('data-tip-orig');
+            }
+        }
+    }
+
+    function bindTooltips() {
+        var page = document.getElementById('page-builder');
+        if (!page || page.dataset.tooltipsBound === '1') return;
+        page.dataset.tooltipsBound = '1';
+
+        page.addEventListener('mouseover', function (e) {
+            var t = e.target.closest ? e.target.closest('[title]') : null;
+            if (t && page.contains(t)) {
+                if (_tipTarget && _tipTarget !== t) hideTip(_tipTarget);
+                _tipTarget = t;
+                showTip(t);
+                return;
+            }
+            if (_tipTarget && !_tipTarget.contains(e.target)) {
+                hideTip(_tipTarget);
+                _tipTarget = null;
+            }
+        });
+
+        page.addEventListener('mouseout', function (e) {
+            if (!_tipTarget) return;
+            if (e.relatedTarget && _tipTarget.contains(e.relatedTarget)) return;
+            hideTip(_tipTarget);
+            _tipTarget = null;
+        });
+
+        page.addEventListener('click', function () {
+            if (_tipTarget) {
+                hideTip(_tipTarget);
+                _tipTarget = null;
+            }
+        }, true);
+    }
+
+    // ── Time formatting ────────────────────────────────────────────────
+    // ISO-8601 UTC timestamps from the API are rendered in the browser's
+    // local timezone and locale; unparseable values fall back to the raw
+    // string with the T/Z decoration stripped.
+
+    function fmtTime(iso) {
+        if (!iso) return '-';
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) {
+            return String(iso).replace('T', ' ').replace(/\.\d+Z?$/, '');
+        }
+        return d.toLocaleString();
+    }
+
+    // Plain UTC rendering, e.g. "2026-11-02 14:27:49 UTC" - used when the
+    // user clicks a timestamp to toggle it from local time back to UTC.
+    function utcTimeStr(iso) {
+        if (!iso) return '-';
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return fmtTime(iso);
+        return d.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '') + ' UTC';
+    }
+
+    // Clicking a Started/Finished timestamp flips it between the browser's
+    // locale rendering and the raw UTC value (delegated, so rows re-rendered
+    // by refreshJobList keep working).
+    function bindTimeToggle() {
+        var tbody = document.getElementById('builder-jobs-tbody');
+        if (!tbody || tbody.dataset.tsBound === '1') return;
+        tbody.dataset.tsBound = '1';
+        tbody.addEventListener('click', function (ev) {
+            var span = ev.target && ev.target.closest ? ev.target.closest('.ts-toggle') : null;
+            if (!span) return;
+            var iso = span.getAttribute('data-utc') || '';
+            if (!iso) return;
+            if (span.classList.contains('show-utc')) {
+                span.textContent = fmtTime(iso);
+                span.classList.remove('show-utc');
+            } else {
+                span.textContent = utcTimeStr(iso);
+                span.classList.add('show-utc');
+            }
+        });
     }
 
     // ── Status badge / button ──────────────────────────────────────────
@@ -539,10 +690,10 @@
 
     // ── Copy helpers for the public download link ──────────────────────
 
-    function copyText(text) {
+    function copyText(text, okMsg) {
         var done = function (ok) {
             if (window.Notify) window.Notify.toast(
-                ok ? 'Public link copied to clipboard' : 'Copy failed - select and copy manually',
+                ok ? (okMsg || 'Copied to clipboard') : 'Copy failed - select and copy manually',
                 ok ? 'success' : 'error');
         };
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -569,7 +720,7 @@
 
     function copyPublicLink() {
         var el = document.getElementById('builder-public-link');
-        if (el && el.value) copyText(el.value);
+        if (el && el.value) copyText(el.value, 'Public link copied to clipboard');
     }
 
     function copyStageLink() {
@@ -685,9 +836,14 @@
                 var sIcon = j.status === 'success' ? 'fa-check-circle'
                           : j.status === 'failed'  ? 'fa-times-circle'
                           : 'fa-spinner fa-spin';
-                var ts    = (j.started_at  || '').replace('T', ' ').replace(/\.\d+Z?$/, '');
-                var fin   = (j.finished_at || '').replace('T', ' ').replace(/\.\d+Z?$/, '');
+                var ts    = fmtTime(j.started_at);
+                var fin   = fmtTime(j.finished_at);
                 var art   = j.artifact_name ? escStr(j.artifact_name) : '';
+
+                var finCell = j.finished_at
+                    ? '<span class="ts-toggle" data-utc="' + escStr(j.finished_at) + '" '
+                      + 'title="Click to toggle between local time and UTC">' + escStr(fin) + '</span>'
+                    : '-';
 
                 var dlBtn = (j.status === 'success' && art)
                     ? '<button onclick="window.BuilderManager.downloadJob(\'' + escStr(j.job_id) + '\')" '
@@ -712,8 +868,10 @@
                     + '<td class="p-3 font-mono text-xs text-gray-500">' + escStr(j.job_id.slice(0,8)) + '</td>'
                     + '<td class="p-3"><span class="px-2 py-0.5 rounded text-xs font-bold ' + sCls + '">'
                     +   '<i class="fas ' + sIcon + ' mr-1"></i>' + escStr(j.status) + '</span></td>'
-                    + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + escStr(ts) + '</td>'
-                    + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + escStr(fin || '-') + '</td>'
+                    + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">'
+                    +   '<span class="ts-toggle" data-utc="' + escStr(j.started_at || '') + '" '
+                    +     'title="Click to toggle between local time and UTC">' + escStr(ts) + '</span></td>'
+                    + '<td class="p-3 text-xs text-gray-400 font-mono hide-mobile">' + finCell + '</td>'
                     + '<td class="p-3">' + dlBtn + linkBtn + viewBtn + '</td>'
                     + '</tr>';
             }).join('');
@@ -802,10 +960,6 @@
 
     window.BuilderManager = {
         init: function () {
-            // Constrain the log container immediately on page load so it is
-            // already the right size before any build is started or viewed.
-            _applyScrollStyle();
-
             // Show the per-format option blocks only for the selected format,
             // and force platform=windows for the Windows-only formats
             // (shellcode / donut / pe_to_shellcode / bin).
@@ -817,9 +971,14 @@
             var syncFormatOpts = function () {
                 if (!fmtSel) return;
                 var fmt = fmtSel.value;
-                if (scOpts)   scOpts.style.display   = fmt === 'shellcode' ? '' : 'none';
-                if (picOpts)  picOpts.style.display  = fmt === 'pic_c'     ? '' : 'none';
-                if (pipeOpts) pipeOpts.style.display = fmt === 'bin'       ? '' : 'none';
+                var scOn   = fmt === 'shellcode';
+                var picOn  = fmt === 'pic_c';
+                var pipeOn = fmt === 'bin';
+                if (scOpts)   scOpts.style.display   = scOn   ? '' : 'none';
+                if (picOpts)  picOpts.style.display  = picOn  ? '' : 'none';
+                if (pipeOpts) pipeOpts.style.display = pipeOn ? '' : 'none';
+                // The selected format has its own options - surface them.
+                if (scOn || picOn || pipeOn) openSection('builder-fmt-opts-body');
                 if (fmt === 'shellcode' || fmt === 'donut' || fmt === 'pe_to_shellcode' || fmt === 'bin') {
                     if (platSel && platSel.value !== 'windows') {
                         platSel.value = 'windows';
@@ -833,15 +992,22 @@
             syncFormatOpts();
             applyPlatformVisibility();
             loadC2Hints();
+            bindTooltips();
+            bindTimeToggle();
         },
-        build:          build,
-        downloadJob:    downloadJob,
-        viewJob:        viewJob,
-        refreshJobList: refreshJobList,
-        filterLog:      filterLog,
-        copyPublicLink: copyPublicLink,
-        copyStageLink:  copyStageLink,
-        copyLink:       copyLink,
+        build:            build,
+        downloadJob:      downloadJob,
+        viewJob:          viewJob,
+        refreshJobList:   refreshJobList,
+        toggleSection:    toggleSection,
+        randomizeArtifact: randomizeArtifact,
+        setMode:          setMode,
+        toggleLogMenu:    toggleLogMenu,
+        setLogAnchor:     setLogAnchor,
+        copyLog:          copyLog,
+        copyPublicLink:   copyPublicLink,
+        copyStageLink:    copyStageLink,
+        copyLink:         copyLink,
     };
 
 }());
