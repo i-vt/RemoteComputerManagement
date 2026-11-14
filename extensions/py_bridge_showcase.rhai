@@ -5,17 +5,21 @@
 // one is reported inline and does not abort the rest.
 //
 // Args:
-//   args[0] = venv path      (default "/tmp/.rcm_showcase_venv")
+//   args[0] = venv path      ("auto"/"-" or omitted = OS-aware default:
+//                             %TEMP%\.rcm_showcase_venv on Windows,
+//                             /tmp/.rcm_showcase_venv elsewhere)
 //   args[1] = sections       ("all" = 1-8, or a comma list, e.g. "1,3,4,7")
-//   args[2] = "install"      also run section 10 (interpreter bootstrap)
+//   args[2] = "install"      bootstrap the interpreter UP FRONT if none is on
+//                            PATH, then also demo bootstrap in section 10
 //   args[3] = "offensive"    also run section 9 (offensive packages)
 // Sections 9 and 10 are heavy/networked, so they are gated behind their
 // flags even under "all". Section 99 deletes the demo venv (not in "all").
 //
 // Examples:
 //   ext:load <b64>                                   # sections 1-8
+//   ext:load <b64> auto all install                  # + bootstrap (no python? fine)
 //   ext:load <b64> /var/tmp/sv all offensive         # + offensive minimal tier
-//   ext:load <b64> /var/tmp/sv 99                    # cleanup
+//   ext:load <b64> auto 99                           # cleanup
 //
 // Run it through the py_showcase_orchestrator module to see how a
 // server-side module delegates all Python work to the agent.
@@ -43,6 +47,7 @@ fn sec_discovery() {
         out += "python_version     -> " + internal_python_version(interp) + "\n";
     } else {
         out += "python_version     -> skipped (none on PATH)\n";
+        out += "hint               -> rerun with args[2] = \"install\" to bootstrap a portable runtime\n";
     }
     // Where a portable runtime would come from if bootstrap had to download one.
     out += "pbs_url            -> " + clip(internal_python_pbs_url()) + "\n";
@@ -79,13 +84,17 @@ fn sec_exec_system(interp_ok) {
 // internal_venv_exists / internal_venv_create_with / internal_venv_python_path
 // (internal_venv_create = same but insists on PATH python; _delete in sec 99)
 
-fn sec_venv(venv, interp) {
+fn sec_venv(venv, interp_ok) {
     let out = banner("3. VENV LIFECYCLE");
-    let ex = internal_venv_exists(venv);
-    out += "venv_exists        -> " + ex + "\n";
-    if ex != "true" {
+    if !interp_ok {
+        return out + "skipped: no interpreter on PATH (rerun with args[2] = \"install\")\n";
+    }
+    let interp = internal_python_find();
+    out += "venv_exists        -> " + internal_venv_exists(venv) + "\n";
+    if internal_venv_exists(venv) != "true" {
         let r = internal_venv_create_with(interp, venv);
         out += "venv_create_with   -> " + clip(r) + "\n";
+        if !ok(r) { return out; }
     }
     out += "venv_python_path   -> " + internal_venv_python_path(venv) + "\n";
     out
@@ -263,11 +272,18 @@ fn sec_cleanup(venv) {
 
 print_python_log("py_bridge_showcase: start");
 
-let venv     = "/tmp/.rcm_showcase_venv";
+// OS-aware scratch location: %TEMP% on Windows, /tmp elsewhere. Forward
+// slashes are used even on Windows — both Rust's Path and CPython accept
+// mixed separators, and it keeps this string escape-free.
+let base = internal_env("TEMP");
+if base == "Not Found" { base = "/tmp"; }
+
+let venv        = base + "/.rcm_showcase_venv";
+let install_dir = base + "/.rcm_showcase_runtime";
 let sections = "all";
 let do_install   = false;
 let do_offensive = false;
-if args.len() > 0 { venv     = args[0]; }
+if args.len() > 0 && args[0] != "auto" && args[0] != "-" { venv = args[0]; }
 if args.len() > 1 { sections = args[1]; }
 if args.len() > 2 && args[2] == "install"   { do_install   = true; }
 if args.len() > 3 && args[3] == "offensive" { do_offensive = true; }
@@ -290,6 +306,22 @@ let s99 = sel.contains(",99,");
 let interp = internal_python_find();
 let interp_ok = ok(interp);
 
+// With the install flag, bootstrap the interpreter UP FRONT (only when none
+// is on PATH) so every selected section below runs against a real Python.
+// Section 10 still demonstrates the bootstrap calls, but hits the cheap path.
+let setup_note = "not requested";
+if do_install && !interp_ok {
+    let ensured = internal_python_ensure(install_dir);
+    if ok(ensured) {
+        interp = ensured;
+        interp_ok = true;
+        setup_note = "ensured -> " + ensured;
+    } else {
+        setup_note = "FAILED -> " + clip(ensured);
+    }
+}
+print_python_log("py_bridge_showcase: setup " + setup_note);
+
 let needs_venv = s4 || s5 || s6 || s7 || s8 || s9;
 let venv_ok = true;
 if needs_venv {
@@ -306,10 +338,11 @@ let report = "=== PYTHON BRIDGE SHOWCASE ===\n";
 report += "venv=" + venv + " sections=" + sections +
           " install=" + do_install.to_string() +
           " offensive=" + do_offensive.to_string() + "\n";
+report += "bootstrap_setup    -> " + setup_note + "\n";
 
 if s1  { report += sec_discovery(); }
 if s2  { report += sec_exec_system(interp_ok); }
-if s3  { report += sec_venv(venv, interp); }
+if s3  { report += sec_venv(venv, interp_ok); }
 if s4 && venv_ok { report += sec_pip(venv); }
 else if s4 { report += banner("4. PIP ON THE FLY") + "skipped: no usable interpreter/venv\n"; }
 if s5 && venv_ok { report += sec_run_in_venv(venv); }
@@ -318,7 +351,7 @@ if s7 && venv_ok { report += sec_sessions(venv); }
 if s8 && venv_ok { report += sec_files(venv, interp_ok); }
 else if s8 { report += banner("8. SCRIPT FILES") + "skipped: no usable venv\n"; }
 if s9  { report += sec_offensive(venv); }
-if s10 { report += sec_bootstrap("/tmp/.rcm_showcase_runtime", venv); }
+if s10 { report += sec_bootstrap(install_dir, venv); }
 if s99 { report += sec_cleanup(venv); }
 
 if needs_venv && !venv_ok {
