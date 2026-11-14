@@ -7,9 +7,11 @@
 // agent-side extension, and the module's job is orchestration.
 //
 // All module args are forwarded verbatim to the extension:
-//   args[0] = venv path    (default "/tmp/.rcm_showcase_venv")
+//   args[0] = venv path    ("auto"/"-" or omitted = OS-aware default:
+//                           %TEMP% on Windows, /tmp elsewhere)
 //   args[1] = sections     ("all" or a comma list, e.g. "1,3,4,7")
-//   args[2] = "install"    -> extension also runs section 10 (bootstrap)
+//   args[2] = "install"    -> extension bootstraps Python up front when the
+//                             target has none, then demos it in section 10
 //   args[3] = "offensive"  -> extension also runs section 9 (offensive tiers)
 //
 // Run:
