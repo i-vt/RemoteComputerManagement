@@ -5,7 +5,7 @@ pipeline {
   stages {
     stage('Lint & Unit Test') {
       steps {
-        //sh 'cargo fmt --all -- --check'
+        // Upstream isn't rustfmt/clippy-enforced; tests are the project's gate.
         sh 'cargo clippy --all-targets || echo "clippy: warnings present (advisory)"'
         sh './run_tests.sh'
       }
