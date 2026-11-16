@@ -51,80 +51,84 @@ fn collect(venv, label) {
 
     // 3. Run the inventory. The Python side prints exactly ONE JSON line to
     //    stdout; internal_python_in_venv_json returns just that line.
-    //    stdlib only, single-quoted strings only (this text lives inside a
-    //    Rhai string literal), no backslashes (chr(92) is used for Windows).
-    let py_code = "
-import json, os, platform, shutil, socket
-
-def read_file(path):
-    try:
-        with open(path, 'r') as f:
-            return f.read().strip()
-    except Exception:
-        return None
-
-info = {}
-info['hostname'] = socket.gethostname()
-info['user'] = os.environ.get('USER') or os.environ.get('USERNAME') or 'unknown'
-info['os'] = platform.platform()
-info['arch'] = platform.machine()
-info['cpus'] = os.cpu_count() or 0
-info['python'] = platform.python_version()
-info['cwd'] = os.getcwd()
-
-# Uptime (Linux /proc, best-effort elsewhere -> -1)
-up = read_file('/proc/uptime')
-info['uptime_sec'] = int(float(up.split()[0])) if up else -1
-
-# Total RAM (POSIX sysconf, best-effort elsewhere -> -1)
-try:
-    info['mem_total_mb'] = int(os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') / 1048576)
-except Exception:
-    info['mem_total_mb'] = -1
-
-# Primary disk usage (C:\\ on Windows via chr(92), / elsewhere)
-root = '/' if os.name != 'nt' else 'C:' + chr(92)
-try:
-    du = shutil.disk_usage(root)
-    info['disk_total_gb'] = round(du.total / 1073741824, 1)
-    info['disk_used_pct'] = round(100.0 * du.used / du.total, 1)
-except Exception:
-    info['disk_total_gb'] = -1
-    info['disk_used_pct'] = -1
-
-# Primary IP: UDP connect sends no traffic, only picks the egress interface;
-# falls back to hostname resolution, then loopback.
-info['primary_ip'] = '127.0.0.1'
-try:
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.settimeout(2)
-    s.connect(('192.0.2.1', 80))
-    info['primary_ip'] = s.getsockname()[0]
-    s.close()
-except Exception:
-    try:
-        info['primary_ip'] = socket.gethostbyname(socket.gethostname())
-    except Exception:
-        pass
-
-# Listening TCP ports from /proc/net/tcp{,6} (state 0A = LISTEN); the hex
-# port is the second half of the local_address field. Empty elsewhere.
-listeners = []
-try:
-    for path in ['/proc/net/tcp', '/proc/net/tcp6']:
-        with open(path, 'r') as f:
-            next(f)
-            for line in f:
-                parts = line.split()
-                if parts[3] == '0A':
-                    listeners.append(int(parts[1].split(':')[1], 16))
-except Exception:
-    pass
-info['listen_count'] = len(set(listeners))
-info['listen_ports'] = sorted(set(listeners))[:32]
-
-print(json.dumps(info))
-";
+    //    stdlib only, single-quoted strings only, no backslashes (chr(92) is
+    //    used for Windows).
+    //
+    //    Rhai string literals cannot span multiple lines ("Open string is not
+    //    terminated"), so the Python source is assembled from an array of
+    //    line literals joined by newlines.
+    let py_code = [
+        "import json, os, platform, shutil, socket",
+        "",
+        "def read_file(path):",
+        "    try:",
+        "        with open(path, 'r') as f:",
+        "            return f.read().strip()",
+        "    except Exception:",
+        "        return None",
+        "",
+        "info = {}",
+        "info['hostname'] = socket.gethostname()",
+        "info['user'] = os.environ.get('USER') or os.environ.get('USERNAME') or 'unknown'",
+        "info['os'] = platform.platform()",
+        "info['arch'] = platform.machine()",
+        "info['cpus'] = os.cpu_count() or 0",
+        "info['python'] = platform.python_version()",
+        "info['cwd'] = os.getcwd()",
+        "",
+        "# Uptime (Linux /proc, best-effort elsewhere -> -1)",
+        "up = read_file('/proc/uptime')",
+        "info['uptime_sec'] = int(float(up.split()[0])) if up else -1",
+        "",
+        "# Total RAM (POSIX sysconf, best-effort elsewhere -> -1)",
+        "try:",
+        "    info['mem_total_mb'] = int(os.sysconf('SC_PHYS_PAGES') * os.sysconf('SC_PAGE_SIZE') / 1048576)",
+        "except Exception:",
+        "    info['mem_total_mb'] = -1",
+        "",
+        "# Primary disk usage (C:\\ on Windows via chr(92), / elsewhere)",
+        "root = '/' if os.name != 'nt' else 'C:' + chr(92)",
+        "try:",
+        "    du = shutil.disk_usage(root)",
+        "    info['disk_total_gb'] = round(du.total / 1073741824, 1)",
+        "    info['disk_used_pct'] = round(100.0 * du.used / du.total, 1)",
+        "except Exception:",
+        "    info['disk_total_gb'] = -1",
+        "    info['disk_used_pct'] = -1",
+        "",
+        "# Primary IP: UDP connect sends no traffic, only picks the egress interface;",
+        "# falls back to hostname resolution, then loopback.",
+        "info['primary_ip'] = '127.0.0.1'",
+        "try:",
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+        "    s.settimeout(2)",
+        "    s.connect(('192.0.2.1', 80))",
+        "    info['primary_ip'] = s.getsockname()[0]",
+        "    s.close()",
+        "except Exception:",
+        "    try:",
+        "        info['primary_ip'] = socket.gethostbyname(socket.gethostname())",
+        "    except Exception:",
+        "        pass",
+        "",
+        "# Listening TCP ports from /proc/net/tcp{,6} (state 0A = LISTEN); the hex",
+        "# port is the second half of the local_address field. Empty elsewhere.",
+        "listeners = []",
+        "try:",
+        "    for path in ['/proc/net/tcp', '/proc/net/tcp6']:",
+        "        with open(path, 'r') as f:",
+        "            next(f)",
+        "            for line in f:",
+        "                parts = line.split()",
+        "                if parts[3] == '0A':",
+        "                    listeners.append(int(parts[1].split(':')[1], 16))",
+        "except Exception:",
+        "    pass",
+        "info['listen_count'] = len(set(listeners))",
+        "info['listen_ports'] = sorted(set(listeners))[:32]",
+        "",
+        "print(json.dumps(info))",
+    ].join("\n");
 
     print_python_log("py_host_inventory: running inventory in " + venv);
     let out = internal_python_in_venv_json(venv, py_code);
