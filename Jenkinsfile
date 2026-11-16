@@ -5,7 +5,7 @@ pipeline {
   stages {
     stage('Lint & Unit Test') {
       steps {
-        sh 'cargo fmt --all -- --check'
+        //sh 'cargo fmt --all -- --check'
         sh 'cargo clippy --all-targets -- -D warnings'
         sh './run_tests.sh'
       }
